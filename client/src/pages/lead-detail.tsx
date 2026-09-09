@@ -20,6 +20,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { CrewSuggestionsDialog } from "@/components/crew-suggestions-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { JobOrderTicket } from "@/components/job-order-ticket";
+import { PaymentReconciliationPanel } from "@/components/PaymentReconciliationPanel";
 import { JobSetupWorkspace } from "@/components/job-setup-workspace";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -1946,6 +1947,8 @@ export default function LeadDetailPage() {
                 </CardContent>
               </Card>
             )}
+
+        {hasAdminAccess ? <PaymentReconciliationPanel leadId={lead.id} /> : null}
 
         {/* === Sticky Customer Summary Bar === */}
         {hasAdminAccess && (
