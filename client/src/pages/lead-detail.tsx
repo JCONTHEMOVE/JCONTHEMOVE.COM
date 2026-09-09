@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { customerNotesFromDetails } from "@shared/leadDetails";
+import { manualDispatchMissingSetup } from "@shared/manualDispatchReadiness";
 import { useRoute, Link, useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -1302,6 +1303,7 @@ export default function LeadDetailPage() {
     || offlineCloseoutMutation.isPending
     || sendQuoteMutation.isPending
     || applyPackageDraftMutation.isPending;
+  const dispatchMissingSetup = manualDispatchMissingSetup(lead);
   const nextStep = (() => {
     if (canCloseOutPastJob) {
       return {
@@ -1353,8 +1355,10 @@ export default function LeadDetailPage() {
     if (statusKey === "paid" || ((statusKey === "quoted" || statusKey === "available") && quoteSent)) {
       return {
         key: "dispatch",
-        title: "Payment is ready",
-        detail: "Mark paid and dispatch assigned crew. This sends the crew/customer dispatch notifications.",
+        title: dispatchMissingSetup.length ? "Finish dispatch setup" : "Confirm payment & dispatch",
+        detail: dispatchMissingSetup.length
+          ? `Save ${dispatchMissingSetup.join(", ")} in Job Setup before dispatching.`
+          : "Only continue after confirming full payment was received. This records payment and sends dispatch notifications.",
         button: "Mark Paid & Dispatch",
         icon: Zap,
       };
@@ -1401,6 +1405,7 @@ export default function LeadDetailPage() {
         openOfflineCloseout();
         break;
       case "dispatch":
+        if (dispatchMissingSetup.length) return;
         markAsPaidMutation.mutate();
         break;
       case "start":
@@ -1434,7 +1439,7 @@ export default function LeadDetailPage() {
     <Button
       size="sm"
       onClick={handleNextStep}
-      disabled={actionPending || nextStep.key === "done" || (nextStep.key === "send_quote" && !leadHasQuote)}
+      disabled={actionPending || nextStep.key === "done" || (nextStep.key === "send_quote" && !leadHasQuote) || (nextStep.key === "dispatch" && dispatchMissingSetup.length > 0)}
       className="bg-cyan-500 font-bold text-slate-950 hover:bg-cyan-400"
       data-testid="button-job-ticket-next-step"
     >
@@ -1492,7 +1497,7 @@ export default function LeadDetailPage() {
       <div className="max-w-4xl mx-auto px-4 py-6">
         {/* Header */}
         <div className="mb-5">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
             <Button
               variant="ghost"
               size="sm"
@@ -1503,7 +1508,7 @@ export default function LeadDetailPage() {
               <ArrowLeft className="h-4 w-4" />
               Back
             </Button>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -1616,8 +1621,8 @@ export default function LeadDetailPage() {
               </div>
               <Button
                 onClick={handleNextStep}
-                disabled={actionPending || nextStep.key === "done" || (nextStep.key === "send_quote" && !leadHasQuote)}
-                className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white"
+                disabled={actionPending || nextStep.key === "done" || (nextStep.key === "send_quote" && !leadHasQuote) || (nextStep.key === "dispatch" && dispatchMissingSetup.length > 0)}
+                className="min-h-11 w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white"
                 data-testid="button-primary-next-step"
               >
                 {actionPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <NextIcon className="h-4 w-4 mr-2" />}

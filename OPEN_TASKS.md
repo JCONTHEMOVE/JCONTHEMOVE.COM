@@ -36,6 +36,7 @@ Updated September 9, 2026. This register distinguishes checked code from live se
 
 ## Verification recorded in this pass
 
+- Mobile lead follow-up: dispatch now explains missing saved price, valid service date and distinct named crew, and stays disabled until those fields are ready. The manual mark-paid route checks the same requirements before dispatch payment writes (the separate completed-job path is unchanged). Readiness tests cover zero/invalid prices, impossible dates and duplicate/incomplete crew; they do not prove the full route or owner workflow. Header actions now wrap and crew-selection rows have 44px minimum height. Authenticated phone/desktop acceptance remains open.
 - Existing Node 20 worktree: all 48 server test files passed before the notes change; the added notes test passed separately.
 - Phone route-alias regression and all 19 monitoring tests passed after their fixes.
 - Disposable Quick Book/regional SQL applied three times; status/FK constraints, indexes, agreement columns and transcript retention passed. This does not test production schema drift.
