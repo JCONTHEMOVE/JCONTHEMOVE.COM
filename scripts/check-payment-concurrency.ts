@@ -53,6 +53,9 @@ try {
   const nextUnlock = await acquireJobDisbursementLock(lockPool, 424242);
   assert.ok(nextUnlock);
   await nextUnlock();
+  // This section verifies legacy recipient settlement independently of the
+  // disabled canonical reward integration (the synthetic job has a refund).
+  delete process.env.JOB_PAYMENT_LEDGER_ENABLED;
   await testPool.query(`CREATE TABLE job_jcmoves_ledger(id int PRIMARY KEY,lead_id text,recipient_user_id text,
     reward_kind text,token_amount numeric,quote_total numeric,rate_per_dollar numeric,metadata jsonb);
     CREATE TABLE rewards(user_id text,reward_type text,token_amount numeric,cash_value numeric,status text,

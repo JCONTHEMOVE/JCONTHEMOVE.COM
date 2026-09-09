@@ -38,6 +38,7 @@ import { getJobRateCard } from "./jobRateCard";
 import { emitJobEvent } from "./jobEventBus";
 import { calculateCustomerRewardBase } from "../../shared/giftCardBonuses";
 import { settleJobLedgerRecipient } from "./jobLedgerSettlement";
+import { readCanonicalRewardBasis } from "./canonicalRewardBasis";
 import { acquireJobDisbursementLock } from "./jobDisbursementLock";
 
 const TOKEN_PRICE            = 0.00000508432;
@@ -198,6 +199,9 @@ export function calculateCrewPoolAllocation(
  * (including the lead), with whole-token rounding remainder going to the lead.
  */
 async function disburseRateCardJcMoves(leadId: string, lead: Lead & { crewLeadUserId?: string | null; jcmovesRewardBase?: string | null }) {
+  const canonical = process.env.JOB_PAYMENT_LEDGER_ENABLED === "true";
+  if (canonical && process.env.JOB_PAYMENT_REWARDS_ENABLED !== "true") return null;
+  const canonicalBasis = canonical ? await readCanonicalRewardBasis(leadId) : null;
   const { rows: paymentRows } = await pool.query<{ payment_paid_at: Date | null; jcmoves_reward_base: string | null }>(
     "SELECT payment_paid_at, jcmoves_reward_base FROM leads WHERE id = $1 LIMIT 1",
     [leadId],
@@ -212,19 +216,19 @@ async function disburseRateCardJcMoves(leadId: string, lead: Lead & { crewLeadUs
   }
 
   const rateCard = await getJobRateCard();
-  const quoteTotal = Number(paymentRows[0]?.jcmoves_reward_base || lead.jcmovesRewardBase || lead.totalPrice || lead.basePrice || 0);
+  const quoteTotal = canonicalBasis?.quoteTotalUsd ?? Number(paymentRows[0]?.jcmoves_reward_base || lead.jcmovesRewardBase || lead.totalPrice || lead.basePrice || 0);
   if (!Number.isFinite(quoteTotal) || quoteTotal <= 0) {
     console.warn(`[JCMOVES] ${leadId} has no finalized quote; ledger issuance deferred.`);
     return null;
   }
   const poolTokens = Math.round(quoteTotal * rateCard.jcmovesPerDollar);
-  const giftCardTenderResult = await pool.query<{ gift_card_funded_usd: string }>(
+  const giftCardTenderResult = canonicalBasis ? null : await pool.query<{ gift_card_funded_usd: string }>(
     `SELECT COALESCE(SUM(gift_card_paid_amount), 0)::text AS gift_card_funded_usd
        FROM square_invoices
       WHERE lead_id=$1 AND status='paid'`,
     [leadId],
   );
-  const giftCardFundedUsd = Math.min(quoteTotal, Number(giftCardTenderResult.rows[0]?.gift_card_funded_usd || 0));
+  const giftCardFundedUsd = canonicalBasis?.giftFundedUsd ?? Math.min(quoteTotal, Number(giftCardTenderResult?.rows[0]?.gift_card_funded_usd || 0));
   const customerEligibleQuoteTotal = calculateCustomerRewardBase(quoteTotal, giftCardFundedUsd);
   let customerPoolTokens = Math.round(customerEligibleQuoteTotal * rateCard.jcmovesPerDollar);
   const crewAllocation = calculateCrewPoolAllocation(poolTokens, [

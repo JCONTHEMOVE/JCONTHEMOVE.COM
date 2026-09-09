@@ -4,11 +4,17 @@ import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { pool } from "../server/db";
 import { settleJobLedgerRecipient } from "../server/services/jobLedgerSettlement";
+import { JOB_PAYMENT_LEDGER_SCHEMA } from "../server/services/jobPaymentLedger";
+import { readCanonicalRewardBasis } from "../server/services/canonicalRewardBasis";
+import { recordConfirmedJobRefund } from "../server/services/jobPaymentRefunds";
 
 if (!process.argv[2]) throw new Error("Provide an installed PGlite dist/index.js path");
 const { PGlite } = await import(pathToFileURL(resolve(process.argv[2])).href);
 const database = new PGlite();
 const previous = pool.connect;
+const previousLedgerFlag = process.env.JOB_PAYMENT_LEDGER_ENABLED;
+const previousRewardFlag = process.env.JOB_PAYMENT_REWARDS_ENABLED;
+delete process.env.JOB_PAYMENT_LEDGER_ENABLED;
 let failWallet = true;
 (pool as any).connect = async () => ({ query: async (sql: string, args?: unknown[]) => {
   if (failWallet && sql.includes("UPDATE wallet_accounts")) throw new Error("injected wallet failure");
@@ -41,8 +47,42 @@ try {
   await database.exec("UPDATE job_jcmoves_ledger SET metadata='{}' WHERE id=1");
   await assert.rejects(settleJobLedgerRecipient(retry), /requires reconciliation/);
   assert.equal(Number((await database.query("SELECT token_balance::text FROM wallet_accounts")).rows[0].token_balance), 1000);
+  await database.exec(`CREATE TABLE leads(id varchar PRIMARY KEY,total_price numeric,status text,payment_paid_at timestamptz);
+    CREATE TABLE quote_revisions(id varchar PRIMARY KEY,lead_id varchar,revision int,status text,
+      approved_at timestamptz,customer_total numeric,currency text);
+    INSERT INTO leads VALUES('canonical',100,'completed',NOW());
+    INSERT INTO quote_revisions VALUES('quote','canonical',1,'approved',NOW(),100,'USD');`);
+  await database.exec(JOB_PAYMENT_LEDGER_SCHEMA);
+  await database.exec(`INSERT INTO job_confirmed_payments(provider,provider_payment_id,lead_id,quote_revision_id,
+    amount_cents,currency,tender_type,gift_funded_cents,paid_at)
+    VALUES('square:sandbox','mixed','canonical','quote',10000,'USD','mixed',4000,NOW());
+    INSERT INTO job_jcmoves_ledger VALUES(2,'canonical','gift-customer','customer_paid_completed_pool',600,60,10,'{}');`);
+  process.env.JOB_PAYMENT_LEDGER_ENABLED = "true";
+  delete process.env.JOB_PAYMENT_REWARDS_ENABLED;
+  await assert.rejects(readCanonicalRewardBasis("canonical"), /disabled/);
+  process.env.JOB_PAYMENT_REWARDS_ENABLED = "true";
+  const basis = await readCanonicalRewardBasis("canonical");
+  assert.equal(basis.customerEligibleUsd, 60);
+  assert.equal(basis.giftFundedUsd, 40);
+  const canonicalRecipient = { ...retry, ledgerId: 2, leadId: "canonical", userId: "gift-customer" };
+  await database.exec("UPDATE job_jcmoves_ledger SET quote_total=100 WHERE id=2");
+  await assert.rejects(settleJobLedgerRecipient(canonicalRecipient), /funding differs/);
+  await database.exec("UPDATE job_jcmoves_ledger SET quote_total=60 WHERE id=2");
+  assert.equal(await settleJobLedgerRecipient(canonicalRecipient), true);
+  assert.equal(Number((await database.query("SELECT token_balance::text FROM wallet_accounts WHERE user_id='gift-customer'")).rows[0].token_balance), 600);
+  await database.exec("UPDATE leads SET status='new' WHERE id='canonical'");
+  await assert.rejects(readCanonicalRewardBasis("canonical"), /completed and paid/);
+  await database.exec("UPDATE leads SET status='completed' WHERE id='canonical'");
+  await recordConfirmedJobRefund({ provider: "square:sandbox", providerPaymentId: "mixed", providerRefundId: "refund",
+    amountCents: 100, giftFundedCents: 0, currency: "USD", refundedAt: "2026-09-09T14:00:00Z" });
+  await assert.rejects(readCanonicalRewardBasis("canonical"), /requires reward reconciliation/);
+  console.log("PASS: canonical reward flag, gift exclusion, funding mismatch, completion gate and refund hold");
   console.log("PASS: immutable award on rate-change retry, atomic rollback, replay, identity and ambiguous-history rejection");
 } finally {
   pool.connect = previous;
+  if (previousLedgerFlag === undefined) delete process.env.JOB_PAYMENT_LEDGER_ENABLED;
+  else process.env.JOB_PAYMENT_LEDGER_ENABLED = previousLedgerFlag;
+  if (previousRewardFlag === undefined) delete process.env.JOB_PAYMENT_REWARDS_ENABLED;
+  else process.env.JOB_PAYMENT_REWARDS_ENABLED = previousRewardFlag;
   await database.close();
 }

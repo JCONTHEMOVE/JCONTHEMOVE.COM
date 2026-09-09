@@ -1,4 +1,5 @@
 import { pool } from "../db";
+import { lockCanonicalRewardBasis } from "./canonicalRewardBasis";
 const TOKEN_PRICE = 0.00000508432;
 export type JobLedgerRecipient = {
   ledgerId: number;
@@ -21,6 +22,8 @@ export async function settleJobLedgerRecipient(input: JobLedgerRecipient): Promi
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const canonicalBasis = process.env.JOB_PAYMENT_LEDGER_ENABLED === "true"
+      ? await lockCanonicalRewardBasis(client, input.leadId) : null;
     const { rows: ledgerRows } = await client.query<{
       lead_id: string; recipient_user_id: string; reward_kind: string;
       token_amount: string; quote_total: string; rate_per_dollar: string;
@@ -43,6 +46,13 @@ export async function settleJobLedgerRecipient(input: JobLedgerRecipient): Promi
     if (ledgerRows[0].metadata?.walletCreditedAt) {
       await client.query("COMMIT");
       return false;
+    }
+    if (canonicalBasis) {
+      const expectedQuote = input.rewardType === "customer_paid_completed_pool"
+        ? canonicalBasis.customerEligibleUsd : canonicalBasis.quoteTotalUsd;
+      if (Math.round(quoteTotal * 100) !== Math.round(expectedQuote * 100)) {
+        throw new Error("Persisted reward funding differs from canonical payments; reconciliation required");
+      }
     }
 
     const existingReward = await client.query(
