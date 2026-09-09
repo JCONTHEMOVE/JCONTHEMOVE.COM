@@ -11,25 +11,36 @@ export async function classifyCanonicalInvoicePayment(input: {
   if (!input.orderId || !Number.isFinite(input.invoiceAmount) || input.invoiceAmount <= 0) {
     throw new Error("Canonical invoice requires a stored order and positive amount");
   }
-  const report = await getJobPaymentReconciliation(input.leadId);
-  if (!report?.enabled || !report.totals || report.approvedTotalCents === null
-      || report.reviewReasons.some(reason => ['missing_approved_usd_quote', 'quote_total_mismatch', 'refund_requires_review'].includes(reason))) {
-    throw new Error("Canonical invoice requires payment reconciliation");
-  }
-  const { rows } = await pool.query<{ paid: string }>(
-    `SELECT COALESCE(SUM(amount_cents),0)::text AS paid FROM job_confirmed_payments
-     WHERE lead_id=$1 AND metadata->>'squareOrderId'=$2 AND provider IN ('square:production','square:sandbox')`,
-    [input.leadId, input.orderId],
-  );
-  const orderPaid = Number(rows[0].paid);
-  if (!Number.isSafeInteger(orderPaid) || orderPaid < Math.round(input.invoiceAmount * 100)) {
-    throw new Error("Canonical invoice is waiting for verified order payments");
-  }
-  // Classify cumulative verified funding, never the invoice's paid label.
-  const classification = classifyJobInvoicePayment({
-    invoiceAmount: report.paidCents / 100, jobTotal: report.approvedTotalCents / 100,
-    depositRequired: input.depositRequired, depositAmount: input.depositAmount,
-    depositAlreadyPaid: false,
-  });
-  return { ...classification, invoiceAmount: input.invoiceAmount };
+  const client = await pool.connect();
+  try {
+    // Order coverage and job coverage must come from the same snapshot. A
+    // payment arriving between separate reads must not acknowledge an invoice
+    // using its new order coverage but stale cumulative job coverage.
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    const report = await getJobPaymentReconciliation(input.leadId, client);
+    if (!report?.enabled || !report.totals || report.approvedTotalCents === null
+        || report.reviewReasons.some(reason => ['missing_approved_usd_quote', 'quote_total_mismatch', 'refund_requires_review'].includes(reason))) {
+      throw new Error("Canonical invoice requires payment reconciliation");
+    }
+    const { rows } = await client.query<{ paid: string }>(
+      `SELECT COALESCE(SUM(amount_cents),0)::text AS paid FROM job_confirmed_payments
+       WHERE lead_id=$1 AND metadata->>'squareOrderId'=$2 AND provider IN ('square:production','square:sandbox')`,
+      [input.leadId, input.orderId],
+    );
+    const orderPaid = Number(rows[0].paid);
+    if (!Number.isSafeInteger(orderPaid) || orderPaid < Math.round(input.invoiceAmount * 100)) {
+      throw new Error("Canonical invoice is waiting for verified order payments");
+    }
+    // Classify cumulative verified funding, never the invoice's paid label.
+    const classification = classifyJobInvoicePayment({
+      invoiceAmount: report.paidCents / 100, jobTotal: report.approvedTotalCents / 100,
+      depositRequired: input.depositRequired, depositAmount: input.depositAmount,
+      depositAlreadyPaid: false,
+    });
+    await client.query("COMMIT");
+    return { ...classification, invoiceAmount: input.invoiceAmount };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally { client.release(); }
 }

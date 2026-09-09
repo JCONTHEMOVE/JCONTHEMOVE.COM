@@ -1,14 +1,17 @@
 import { pool } from "../db";
 import { reconcileJobPaymentTotals } from "./jobPaymentLedgerPolicy";
 import { JOB_PAYMENT_TOTALS_SQL } from "./jobPaymentLedger";
+import type { PoolClient } from "@neondatabase/serverless";
 
-export async function getJobPaymentReconciliation(leadId: string) {
+/** An internal caller may supply its own repeatable-read transaction; that
+ * caller owns commit, rollback and connection release. */
+export async function getJobPaymentReconciliation(leadId: string, transaction?: PoolClient) {
   if (process.env.JOB_PAYMENT_LEDGER_ENABLED !== "true") return { enabled: false as const };
   if (!leadId?.trim() || leadId.length > 255) throw new Error("Invalid job ID");
   // One read-only transaction gives the summary and payment list one snapshot.
-  const client = await pool.connect();
+  const client = transaction || await pool.connect();
   try {
-    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    if (!transaction) await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     const { rows: jobs } = await client.query<{
       id: string; status: string; total_price: string | null; payment_paid_at: string | null;
       tokens_disbursed_at: string | null; completion_rewarded_at: string | null;
@@ -19,7 +22,7 @@ export async function getJobPaymentReconciliation(leadId: string) {
         SELECT id,customer_total,currency FROM quote_revisions WHERE lead_id=l.id
           AND approved_at IS NOT NULL AND status IN ('approved','sent') ORDER BY revision DESC LIMIT 1
       ) q ON true WHERE l.id=$1`, [leadId]);
-    if (!jobs.length) { await client.query("COMMIT"); return null; }
+    if (!jobs.length) { if (!transaction) await client.query("COMMIT"); return null; }
     const job = jobs[0];
     const { rows: sums } = await client.query<{ paid: string; gift: string; count: string; refunded: string; refund_count: string }>(JOB_PAYMENT_TOTALS_SQL, [leadId]);
     const paidCents = Number(sums[0].paid);
@@ -52,7 +55,7 @@ export async function getJobPaymentReconciliation(leadId: string) {
     }>(`SELECT status,attempts,next_attempt_at,lease_expires_at,last_failure_code,completed_at
       FROM job_reward_queue WHERE lead_id=$1`, [leadId]);
     if (rewardQueue[0]?.status === 'retry') reasons.push('reward_retry_pending');
-    await client.query("COMMIT");
+    if (!transaction) await client.query("COMMIT");
     return { enabled: true as const, leadId, status: job.status, quoteRevisionId: job.quote_id,
       paidMarkerAt: job.payment_paid_at, rewardRecordedAt, paidCents, giftFundedCents,
       approvedTotalCents: totals ? totalCents : null, totals, reviewReasons: reasons,
@@ -63,7 +66,7 @@ export async function getJobPaymentReconciliation(leadId: string) {
       automaticRewardsEnabled: process.env.JOB_PAYMENT_REWARDS_ENABLED === 'true'
         && process.env.JOB_PAYMENT_REWARD_WORKER_ENABLED === 'true' };
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
+    if (!transaction) await client.query("ROLLBACK").catch(() => undefined);
     throw error;
-  } finally { client.release(); }
+  } finally { if (!transaction) client.release(); }
 }

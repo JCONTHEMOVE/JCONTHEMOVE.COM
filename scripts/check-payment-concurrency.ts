@@ -11,6 +11,7 @@ import { creditJobCash } from "../server/services/jobCashCredit";
 import { recordJobRevenue } from "../server/services/jobRevenueAllocation";
 import { createInvoiceEffectClaims, SQUARE_INVOICE_CLAIM_UPGRADE } from "../server/services/squareInvoiceEffectClaims";
 import { createSquareEventClaims, SQUARE_EVENT_CLAIM_UPGRADE } from "../server/services/squareEventClaims";
+import { classifyCanonicalInvoicePayment } from "../server/services/canonicalInvoicePayment";
 
 const url = new URL(process.env.TEST_DATABASE_URL || "http://missing");
 if (url.protocol !== "postgresql:" || !["127.0.0.1", "localhost"].includes(url.hostname)
@@ -182,6 +183,35 @@ try {
     assert.equal(await eventAttempts[1].fail(originalEvent.claim, 'stale'), false);
   } finally { claimClients.forEach(client => client.release()); }
   console.log('PASS: distinct PostgreSQL sessions race invoice/event claims and expired reclaims with one winner');
+  await testPool.query(`ALTER TABLE leads ADD COLUMN tokens_disbursed_at timestamptz,
+    ADD COLUMN completion_rewarded_at timestamptz;
+    INSERT INTO leads(id,total_price,status) VALUES('invoice-snapshot',100,'new');
+    INSERT INTO quote_revisions VALUES('snapshot-quote','invoice-snapshot',1,'approved',NOW(),100,'USD');`);
+  const defaultTestConnect = pool.connect;
+  let insertBetweenReads = true;
+  pool.connect = (async () => {
+    const client = await testPool.connect();
+    return {
+      query: async (sql: string, args?: unknown[]) => {
+        if (insertBetweenReads && sql.includes("metadata->>'squareOrderId'")) {
+          insertBetweenReads = false;
+          // A different connection commits after the reconciliation snapshot
+          // was read but before its order-coverage SELECT executes.
+          await confirmJobPayment({ ...payment, provider: 'square:production', providerPaymentId: 'snapshot-payment',
+            leadId: 'invoice-snapshot', quoteRevisionId: 'snapshot-quote', amountCents: 10000,
+            metadata: { squareOrderId: 'snapshot-order' } });
+        }
+        return client.query(sql, args);
+      }, release: () => client.release(),
+    };
+  }) as unknown as typeof pool.connect;
+  try {
+    const snapshotInvoice = { leadId: 'invoice-snapshot', orderId: 'snapshot-order', invoiceAmount: 100 };
+    await assert.rejects(classifyCanonicalInvoicePayment(snapshotInvoice), /waiting for verified order payments/);
+    assert.equal(insertBetweenReads, false);
+    assert.equal((await classifyCanonicalInvoicePayment(snapshotInvoice)).kind, 'paid_in_full');
+  } finally { pool.connect = defaultTestConnect; }
+  console.log('PASS: concurrent payment cannot mix old job coverage with new order coverage; retry sees full payment');
   console.log("PASS: canonical gift-funded reward replay and observed refund/settlement lock contention");
   console.log("PASS: separate PostgreSQL sessions, duplicate/concurrent payments, competing refunds, advisory lock and exactly-once wallet settlement");
 } finally {
