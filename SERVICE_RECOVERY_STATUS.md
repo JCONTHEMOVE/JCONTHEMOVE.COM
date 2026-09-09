@@ -1,5 +1,17 @@
 # JC ON THE MOVE service recovery
 
+## Current status — September 9, 2026
+
+The September 6–7 sections below are historical incident evidence. Their statements that the apex outage remains active, Cloudflare is signed out, and the release changes are unpushed are superseded by this update and `OPEN_TASKS.md`.
+
+- Cloudflare apex restoration is complete: active rule `f14b13f5da1e4b4582616580b2913a0e` returns a 308 to HTTPS www and preserves path/query. Both hosts and booking routes passed checks, including referral preservation.
+- Draft PR #10 contains the reviewed release candidate and subsequent booking/payment fixes. Full CI passed at `d4932f58` in run 34379369852; later changes require separate validation. Nothing has been merged or deployed.
+- The live public booking path was exercised through final review with synthetic contact information and no submission. A misleading inventory price preview and truncated moving label were corrected on the draft branch; live acceptance after deployment remains open.
+- Railway production database ownership is confirmed in Replit by matching standalone PGHOST. Seven-day point-in-time recovery is enabled, scheduled backups are off, and an isolated restore drill remains unverified. The other two connected Neon projects do not match production.
+- Remaining implementation includes the canonical payment ledger, refunds and admin reconciliation. Owner acceptance remains necessary for payment/reward, push-device receipt, mailbox workflows and campaign delivery. The requested refund policy is still awaiting a response.
+
+Use `OPEN_TASKS.md` for the current completion register. The historical investigation below is retained to explain the original failure and verification limits.
+
 ## September 7 customer failure follow-up
 
 At approximately 10:10 AM America/Chicago, live HTTP checks returned 522 for `https://jconthemove.com/`, 200 for `https://www.jconthemove.com/` and `/book`, and ready for the `www` health endpoint (database connected; release `25b985e4`). A read-only lookup in the workspace-configured database found no leads, contacts, or bookings matching the phone number in the customer's screenshot, normalized to the last ten digits. This does not prove the customer used that phone number in the form or establish their exact failure path. The screenshot does not identify their URL or submission error.
