@@ -1,4 +1,5 @@
 import { pool } from "../db";
+import type { PoolClient } from "@neondatabase/serverless";
 import { validateConfirmedJobPayment, reconcileJobPaymentTotals, type ConfirmedJobPayment } from "./jobPaymentLedgerPolicy";
 
 // Additive and deliberately not registered in boot or provider routes yet.
@@ -53,14 +54,19 @@ export const JOB_PAYMENT_TOTALS_SQL = `
  * This foundation does not issue rewards, dispatch work, or accept refunds.
  * It remains unwired until adapters, migration/restore and refund gates pass.
  */
-export async function confirmJobPayment(payment: ConfirmedJobPayment) {
+export async function confirmJobPayment(payment: ConfirmedJobPayment, options: {
+  /** Internal transaction composition; the caller owns commit/rollback. */
+  transaction?: PoolClient;
+  /** Used only while atomically recording a refund and its original payment. */
+  deferSettlement?: boolean;
+} = {}) {
   if (process.env.JOB_PAYMENT_LEDGER_ENABLED !== "true") {
     throw new Error("Canonical payment ledger is disabled");
   }
   validateConfirmedJobPayment(payment);
-  const client = await pool.connect();
+  const client = options.transaction || await pool.connect();
   try {
-    await client.query("BEGIN");
+    if (!options.transaction) await client.query("BEGIN");
     // Serialize all rails for a job, not just duplicate events from one rail.
     const { rows: leads } = await client.query<{ total_price: string | null; status: string }>(
       "SELECT total_price, status FROM leads WHERE id=$1 FOR UPDATE", [payment.leadId],
@@ -110,20 +116,20 @@ export async function confirmJobPayment(payment: ConfirmedJobPayment) {
     const reconciliation = reconcileJobPaymentTotals(totalCents, paidCents, giftFundedCents);
     // Existing legacy markers are not cleared by an incomplete new-ledger
     // backfill. Migration/reconciliation must resolve those before activation.
-    if (reconciliation.paidInFull) {
+    if (reconciliation.paidInFull && !options.deferSettlement) {
       await client.query(
         "UPDATE leads SET payment_paid_at=COALESCE(payment_paid_at,$2::timestamptz) WHERE id=$1",
         [payment.leadId, totals[0].settled_at],
       );
     }
-    await client.query("COMMIT");
+    if (!options.transaction) await client.query("COMMIT");
     return { ...reconciliation, duplicate: inserted.rows.length === 0, paidCents, giftFundedCents,
       quoteRevisionId: activeQuote.id, completed: leads[0].status === "completed",
       requiresOwnerReview: Number(totals[0].refund_count) > 0, rewardsTriggered: false as const };
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
+    if (!options.transaction) await client.query("ROLLBACK").catch(() => undefined);
     throw error;
   } finally {
-    client.release();
+    if (!options.transaction) client.release();
   }
 }

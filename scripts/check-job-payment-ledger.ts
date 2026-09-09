@@ -8,7 +8,7 @@ import { confirmJobPayment, JOB_PAYMENT_LEDGER_SCHEMA } from "../server/services
 import type { ConfirmedJobPayment } from "../server/services/jobPaymentLedgerPolicy";
 import { verifyAndConfirmSquarePayment } from "../server/services/squareJobPaymentVerification";
 import { getJobPaymentReconciliation } from "../server/services/jobPaymentReconciliation";
-import { recordConfirmedJobRefund } from "../server/services/jobPaymentRefunds";
+import { recordConfirmedJobRefund, recordConfirmedPaymentAndRefund } from "../server/services/jobPaymentRefunds";
 
 if (!process.argv[2]) throw new Error("Provide an installed PGlite dist/index.js path");
 const { PGlite } = await import(pathToFileURL(resolve(process.argv[2])).href);
@@ -28,12 +28,13 @@ try {
   await database.exec(`CREATE TABLE leads(id varchar PRIMARY KEY, total_price numeric(10,2),
     status text NOT NULL, payment_paid_at timestamptz,tokens_disbursed_at timestamptz,completion_rewarded_at timestamptz);
     INSERT INTO leads(id,total_price,status,payment_paid_at) VALUES ('job',2000,'completed',NULL),('other',2000,'new',NULL),
-      ('rollback',100,'completed',NULL);
+      ('rollback',100,'completed',NULL),('refund-first',100,'completed',NULL);
     CREATE TABLE quote_revisions(id varchar PRIMARY KEY, lead_id varchar REFERENCES leads(id),
       revision int, status text, approved_at timestamptz, customer_total numeric(10,2), currency text);
     INSERT INTO quote_revisions VALUES ('quote','job',1,'approved',NOW(),2000,'USD'),
       ('other-quote','other',1,'approved',NOW(),2000,'USD'),
-      ('rollback-quote','rollback',1,'approved',NOW(),100,'USD');`);
+      ('rollback-quote','rollback',1,'approved',NOW(),100,'USD'),
+      ('refund-first-quote','refund-first',1,'approved',NOW(),100,'USD');`);
   for (let repeat = 0; repeat < 3; repeat++) await database.exec(JOB_PAYMENT_LEDGER_SCHEMA);
   const base: ConfirmedJobPayment = { provider: "square", providerPaymentId: "deposit", leadId: "job",
     quoteRevisionId: "quote", amountCents: 60000, currency: "USD", tenderType: "card", giftFundedCents: 0,
@@ -104,6 +105,23 @@ try {
   assert.equal(refundReport.refundedCents, 10000);
   assert.ok(refundReport.reviewReasons.includes("refund_requires_review"));
   assert.ok(refundReport.reviewReasons.includes("paid_marker_without_ledger_coverage"));
+  const refundFirstPayment = { ...base, leadId: "refund-first", quoteRevisionId: "refund-first-quote",
+    providerPaymentId: "refund-first-payment", amountCents: 10000 };
+  const refundFirst = { ...refund, providerPaymentId: "refund-first-payment", providerRefundId: "refund-first-id", giftFundedCents: 0 };
+  await assert.rejects(recordConfirmedPaymentAndRefund(refundFirstPayment, { ...refundFirst, amountCents: 10001 }), /exceeds/);
+  assert.equal((await database.query("SELECT COUNT(*)::int AS n FROM job_confirmed_payments WHERE lead_id='refund-first'")).rows[0].n, 0);
+  const caughtUp = await recordConfirmedPaymentAndRefund(refundFirstPayment, refundFirst);
+  assert.equal(caughtUp.paymentDuplicate, false);
+  assert.equal(caughtUp.duplicate, false);
+  assert.equal((await database.query("SELECT payment_paid_at FROM leads WHERE id='refund-first'")).rows[0].payment_paid_at, null);
+  const caughtUpReplay = await recordConfirmedPaymentAndRefund(refundFirstPayment, refundFirst);
+  assert.equal(caughtUpReplay.paymentDuplicate, true);
+  assert.equal(caughtUpReplay.duplicate, true);
+  const caughtUpReport = await getJobPaymentReconciliation("refund-first");
+  assert.ok(caughtUpReport?.enabled);
+  assert.equal(caughtUpReport.paidCents, 0);
+  assert.equal(caughtUpReport.paymentCount, 1);
+  assert.equal(caughtUpReport.refundCount, 1);
   const rollbackPayment = { ...base, leadId: "rollback", quoteRevisionId: "rollback-quote", providerPaymentId: "retry", amountCents: 10000 };
   failSettlement = true;
   await assert.rejects(confirmJobPayment(rollbackPayment), /injected/);

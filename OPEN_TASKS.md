@@ -4,6 +4,7 @@ Updated September 9, 2026. This register distinguishes checked code from live se
 
 ## Current release and service
 
+- User priority: Replit first, then potentially up to two Neon databases. Start with the existing Replit project and its production database; additional databases are optional, not a requirement to create or migrate them. The supplied production hostname already matches Replit's production database.
 - Public readiness on `www.jconthemove.com` reports Railway, a connected database, and commit `25b985e4`.
 - Domain restoration passed: Cloudflare rule `f14b13f5da1e4b4582616580b2913a0e` redirects apex requests to HTTPS www with status 308, preserving path, query and method. HTTP/HTTPS home and booking probes passed, including Matt referral rendering.
 - The candidate contains the pre-existing Quick Book, phone entry and push readiness changes plus completion fixes. The application candidate has not been deployed; the Cloudflare domain repair is live.

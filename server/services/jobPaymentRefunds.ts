@@ -1,4 +1,7 @@
 import { pool } from "../db";
+import type { PoolClient } from "@neondatabase/serverless";
+import { confirmJobPayment } from "./jobPaymentLedger";
+import type { ConfirmedJobPayment } from "./jobPaymentLedgerPolicy";
 
 export interface ConfirmedJobRefund {
   provider: string; providerPaymentId: string; providerRefundId: string;
@@ -8,7 +11,7 @@ export interface ConfirmedJobRefund {
 /** Record a server-verified, completed refund. No wallet deductions or provider
  * refund requests are made. An owner must reconcile any existing paid/reward
  * markers before automatic reward processing can be enabled. */
-export async function recordConfirmedJobRefund(refund: ConfirmedJobRefund) {
+export async function recordConfirmedJobRefund(refund: ConfirmedJobRefund, transaction?: PoolClient) {
   if (process.env.JOB_PAYMENT_LEDGER_ENABLED !== "true") throw new Error("Canonical payment ledger is disabled");
   for (const value of [refund.provider, refund.providerPaymentId, refund.providerRefundId]) {
     if (typeof value !== "string" || !value.trim() || value.length > 255) throw new Error("Invalid refund identity");
@@ -19,9 +22,9 @@ export async function recordConfirmedJobRefund(refund: ConfirmedJobRefund) {
       || !Number.isFinite(Date.parse(refund.refundedAt))) {
     throw new Error("Invalid confirmed refund amount, currency or timestamp");
   }
-  const client = await pool.connect();
+  const client = transaction || await pool.connect();
   try {
-    await client.query("BEGIN");
+    if (!transaction) await client.query("BEGIN");
     const { rows: payments } = await client.query<{
       id: string; lead_id: string; amount_cents: string; gift_funded_cents: string;
     }>(`SELECT id::text,lead_id,amount_cents::text,gift_funded_cents::text FROM job_confirmed_payments
@@ -48,9 +51,28 @@ export async function recordConfirmedJobRefund(refund: ConfirmedJobRefund) {
         || refunded - gift > Number(payment.amount_cents) - Number(payment.gift_funded_cents)) {
       throw new Error("Refund exceeds the original payment or its funding allocation");
     }
-    await client.query("COMMIT");
+    if (!transaction) await client.query("COMMIT");
     return { leadId: payment.lead_id, duplicate: inserted.rows.length === 0, refundedCents: refunded,
       requiresOwnerReview: true as const, rewardsReversed: false as const };
+  } catch (error) {
+    if (!transaction) await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally { if (!transaction) client.release(); }
+}
+
+/** Catch up an out-of-order refund using a freshly verified original payment.
+ * Both facts commit together, and this path never sets the job's paid marker. */
+export async function recordConfirmedPaymentAndRefund(payment: ConfirmedJobPayment, refund: ConfirmedJobRefund) {
+  if (process.env.JOB_PAYMENT_LEDGER_ENABLED !== "true") throw new Error("Canonical payment ledger is disabled");
+  if (payment.provider !== refund.provider || payment.providerPaymentId !== refund.providerPaymentId
+      || payment.currency !== refund.currency) throw new Error("Refund does not belong to this payment");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const original = await confirmJobPayment(payment, { transaction: client, deferSettlement: true });
+    const result = await recordConfirmedJobRefund(refund, client);
+    await client.query("COMMIT");
+    return { ...result, paymentDuplicate: original.duplicate };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw error;
