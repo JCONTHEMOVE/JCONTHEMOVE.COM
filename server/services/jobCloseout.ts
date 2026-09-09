@@ -293,7 +293,7 @@ export async function approveCustomerCloseout(token: string) {
     } catch (error) {
       console.error("[job-closeout] zero-balance reward disbursement failed:", error);
     }
-    await emitCustomerLifecycleEvent({
+    if (!canonicalApproval) await emitCustomerLifecycleEvent({
       leadId: closeout.lead_id,
       type: "final_payment_received",
       eventKey: `${closeout.lead_id}:financially_complete:${closeout.id}`,
@@ -329,6 +329,7 @@ export async function approveCustomerCloseout(token: string) {
     const attached = await attachCanonicalFinalInvoice({ leadId:closeout.lead_id,closeoutId:closeout.id,
       quoteId:canonicalApproval.quoteRevisionId,invoiceId:invoice.squareInvoiceId,invoiceUrl:invoice.invoiceUrl,balanceDue });
     if (attached.status === 'paid') return { ok:true,status:'paid',balanceDue:0,invoiceUrl:null };
+    return { ok:true,status:'balance_due',balanceDue,invoiceUrl:invoice.invoiceUrl };
   } else {
     await pool.query(
       `UPDATE job_closeouts SET status='balance_due', customer_approved_at=COALESCE(customer_approved_at,NOW()),

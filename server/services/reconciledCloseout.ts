@@ -1,6 +1,7 @@
 import { pool } from '../db';
 import { JOB_PAYMENT_TOTALS_SQL } from './jobPaymentLedger';
 import { enqueueJobReward } from './jobRewardQueue';
+import { queuePaidCloseoutNotice, queueFinalInvoiceNotice } from './jobFinancialNotifications';
 import { finishJobInvoiceReconciliation, invoiceReconciliationWorkerEnabled, type InvoiceReconciliationClaim } from './jobInvoiceReconciliationQueue';
 
 export type ReconciledInvoiceEvidence = {
@@ -55,6 +56,7 @@ export async function finishReconciledCloseout(claim: InvoiceReconciliationClaim
       await client.query(`UPDATE leads SET closeout_status='paid',financial_status='paid',final_balance_amount=0,
         final_invoice_url=NULL,payment_paid_at=COALESCE(payment_paid_at,$2::timestamptz) WHERE id=$1`,[claim.lead_id,sums.settled_at]);
       await enqueueJobReward(client,claim.lead_id);
+      await queuePaidCloseoutNotice(client,{leadId:claim.lead_id,closeoutId:closeout.id,quoteId:quote.id,totalCents:total});
       closed = true;
     }
     if (!await finishJobInvoiceReconciliation(claim,true,client)) throw new Error('Reconciliation completion lost its claim');
@@ -99,6 +101,7 @@ export async function attachCanonicalFinalInvoice(input: {
     await client.query("UPDATE job_closeouts SET status='balance_due',square_invoice_id=$2,updated_at=NOW() WHERE id=$1",[input.closeoutId,input.invoiceId]);
     await client.query("UPDATE leads SET closeout_status='balance_due',financial_status='balance_due',final_invoice_url=$2,final_balance_amount=$3 WHERE id=$1",
       [input.leadId,input.invoiceUrl,input.balanceDue]);
+    await queueFinalInvoiceNotice(client,{...input,amountCents:Math.round(input.balanceDue*100)});
     await client.query('COMMIT');
     return { status:'balance_due' as const };
   } catch(error) { await client.query('ROLLBACK').catch(()=>undefined); throw error; }

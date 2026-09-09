@@ -9,6 +9,7 @@ const database = await createDisposableLedgerDatabase(process.argv[2]);
 const previousConnect = pool.connect, previousQuery = pool.query;
 let failLeadWrite = false;
 let failCloseoutWrite = false;
+let failNoticeWrite = false;
 let beforeConnect: (() => Promise<void>) | undefined;
 const previousLedgerFlag = process.env.JOB_PAYMENT_LEDGER_ENABLED;
 pool.query = ((sql: string, args?: unknown[]) => {
@@ -23,6 +24,7 @@ pool.connect = (async () => {
   return { query: async (sql: string, args?: unknown[]) => {
   if (failLeadWrite && sql.includes('UPDATE leads SET')) throw new Error('injected lead update failure');
   if (failCloseoutWrite && sql.includes('UPDATE job_closeouts SET')) throw new Error('injected closeout update failure');
+  if (failNoticeWrite && sql.includes('INSERT INTO job_financial_notifications')) throw new Error('injected notice write failure');
   return database.query(sql, args);
 }, release() {} };
 }) as typeof pool.connect;
@@ -134,7 +136,13 @@ try {
   }
   await confirmJobPayment({ ...deposit, providerPaymentId: 'closeout-balance', quoteRevisionId: approvedCloseout.quoteRevisionId, amountCents: 9000 });
   await database.exec("UPDATE job_closeouts SET status='awaiting_customer',balance_due=0 WHERE id='closeout'");
+  failNoticeWrite=true;
+  await assert.rejects(approveCanonicalCloseout('closeout'),/injected notice write failure/);
+  failNoticeWrite=false;
+  assert.equal((await database.query("SELECT status FROM job_closeouts WHERE id='closeout'")).rows[0].status,'awaiting_customer');
+  assert.equal((await database.query("SELECT * FROM job_financial_notifications WHERE lead_id='closeout-job'")).rows.length,0);
   assert.equal((await approveCanonicalCloseout('closeout')).balanceDue, 0);
+  assert.equal((await database.query("SELECT * FROM job_financial_notifications WHERE lead_id='closeout-job'")).rows.length,1);
   assert.equal((await database.query("SELECT status FROM job_closeouts WHERE id='closeout'")).rows[0].status, 'paid');
   assert.ok((await database.query("SELECT payment_paid_at FROM leads WHERE id='closeout-job'")).rows[0].payment_paid_at);
   console.log('PASS: canonical closeout rejects unfunded zero balance, rolls back final quote, reuses retry quote and settles verified coverage');

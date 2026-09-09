@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { pool } from '../db';
 import { JOB_PAYMENT_TOTALS_SQL } from './jobPaymentLedger';
 import { enqueueJobReward } from './jobRewardQueue';
+import { queuePaidCloseoutNotice } from './jobFinancialNotifications';
 
 /** Called only after the closeout's customer token/email authorization. */
 export async function approveCanonicalCloseout(closeoutId: string) {
@@ -62,6 +63,7 @@ export async function approveCanonicalCloseout(closeoutId: string) {
       await client.query(`UPDATE leads SET closeout_status='paid',financial_status='paid',
         payment_paid_at=COALESCE(payment_paid_at,$2::timestamptz) WHERE id=$1`, [job.id, sums.settled_at]);
       if (job.status === 'completed') await enqueueJobReward(client, job.id);
+      await queuePaidCloseoutNotice(client,{leadId:job.id,closeoutId,quoteId:quoteRevisionId,totalCents:finalCents});
     }
     await client.query('COMMIT');
     return { quoteRevisionId, balanceDue: expectedBalance / 100, invoiceDueDate,

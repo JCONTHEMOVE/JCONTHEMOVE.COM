@@ -14,8 +14,10 @@ const flags = ['JOB_PAYMENT_LEDGER_ENABLED','JOB_INVOICE_RECONCILIATION_ENABLED'
   'SQUARE_JOB_PAYMENT_LEDGER_ENABLED','SQUARE_ENVIRONMENT','SQUARE_PRODUCTION_ACCESS_TOKEN','SQUARE_PRODUCTION_LOCATION_ID','NODE_ENV'] as const;
 const previous = flags.map(flag => process.env[flag]);
 let failFinalization = false;
+let failNotification = false;
 pool.query = ((sql: string, args?: unknown[]) => {
   if (failFinalization && sql.includes('UPDATE leads SET closeout_status')) throw new Error('Injected financial closeout failure');
+  if (failNotification && sql.includes('INSERT INTO job_financial_notifications')) throw new Error('Injected notification persistence failure');
   return database.query(sql, args);
 }) as typeof pool.query;
 pool.connect = (async () => ({ query: pool.query, release() {} })) as typeof pool.connect;
@@ -56,7 +58,7 @@ try {
     },
   };
   const reset = async () => {
-    await database.exec(`DELETE FROM job_confirmed_refunds; DELETE FROM job_confirmed_payments;
+    await database.exec(`DELETE FROM job_financial_notifications; DELETE FROM job_confirmed_refunds; DELETE FROM job_confirmed_payments;
       DELETE FROM job_invoice_reconciliation_queue; UPDATE leads SET payment_paid_at=NULL,closeout_status='balance_due',
         financial_status='balance_due',final_balance_amount=90,final_invoice_url='https://example.invalid/invoice';
       UPDATE job_closeouts SET status='approved',balance_due=90;
@@ -70,6 +72,11 @@ try {
   await assert.rejects(attachCanonicalFinalInvoice(attachment),/Injected financial closeout failure/);
   failFinalization=false;
   assert.equal((await database.query('SELECT status FROM job_closeouts')).rows[0].status,'approved');
+  failNotification=true;
+  await assert.rejects(attachCanonicalFinalInvoice(attachment),/notification persistence failure/);
+  failNotification=false;
+  assert.equal((await database.query('SELECT status FROM job_closeouts')).rows[0].status,'approved');
+  assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,0);
   assert.equal((await attachCanonicalFinalInvoice(attachment)).status,'balance_due');
   await database.exec('DELETE FROM job_invoice_reconciliation_queue');
   assert.equal(await enqueueInvoiceReconciliationBacklog(),1);
@@ -87,6 +94,21 @@ try {
   assert.equal(attached.status,'paid','late HTTP completion cannot restore balance due');
   assert.equal((await database.query('SELECT financial_status,final_invoice_url FROM leads')).rows[0].financial_status,'paid');
   assert.equal((await database.query('SELECT final_invoice_url FROM leads')).rows[0].final_invoice_url,null);
+  assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,2);
+  await database.exec("UPDATE job_financial_notifications SET status='sent' WHERE kind='final_payment_received'; UPDATE job_invoice_reconciliation_queue SET status='pending',next_attempt_at=NOW()");
+  assert.equal((await processOneJobInvoiceReconciliation(api)).status,'done');
+  assert.equal((await database.query("SELECT status FROM job_financial_notifications WHERE kind='final_payment_received'")).rows[0].status,'sent');
+  assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,2,'financial retry does not duplicate notices');
+  await reset(); await pay('notice-rollback',9000); failNotification=true;
+  assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry');
+  failNotification=false;
+  assert.equal((await database.query('SELECT status FROM job_closeouts')).rows[0].status,'approved');
+  assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,0);
+  await database.exec("UPDATE job_invoice_reconciliation_queue SET next_attempt_at=NOW()-INTERVAL '1 minute'");
+  assert.equal((await processOneJobInvoiceReconciliation(api)).status,'done');
+  assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,1);
+  assert.equal(cancels,1);
+  console.log('PASS: financial notices commit with closeout/invoice attachment, roll back on persistence failure, and preserve sent state on retry');
   await reset(); await pay('closeout-rollback',9000); failFinalization=true;
   assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry');
   failFinalization=false;
