@@ -3,6 +3,7 @@ import { createDisposableLedgerDatabase } from './disposable-ledger-database';
 import { pool } from '../server/db';
 import { approveQuoteRevision, ensureQuoteRevisionInfrastructure, getLatestApprovedQuote, saveQuoteDraft } from '../server/services/quoteRevisions';
 import { approveCanonicalCloseout } from '../server/services/canonicalCloseoutApproval';
+import { assertCanonicalFinalInvoicePublication } from '../server/services/canonicalInvoicePublication';
 import { confirmJobPayment, JOB_PAYMENT_LEDGER_SCHEMA } from '../server/services/jobPaymentLedger';
 const database = await createDisposableLedgerDatabase(process.argv[2]);
 const previousConnect = pool.connect, previousQuery = pool.query;
@@ -87,11 +88,42 @@ try {
   assert.equal(retriedCloseout.quoteRevisionId, approvedCloseout.quoteRevisionId);
   assert.equal(retriedCloseout.invoiceDueDate, '2030-01-01', 'retry retains the persisted due date instead of recalculating it');
   assert.equal(retriedCloseout.invoiceRequestKey, approvedCloseout.invoiceRequestKey);
-  if (process.argv.includes('--reproduce-late-final-invoice')) {
-    // Opt-in characterization of an OPEN release blocker, not a passing safety gate.
-    // Provider behavior is simulated; approval, payment ledger and invoice orchestration are real.
-    const { reproduceLateFinalInvoice } = await import('./reproduce-late-final-invoice');
-    await reproduceLateFinalInvoice({
+  const publication = { leadId: 'closeout-job', closeoutId: 'closeout',
+    quoteRevisionId: approvedCloseout.quoteRevisionId, amount: 90 };
+  await assertCanonicalFinalInvoicePublication(publication);
+  await confirmJobPayment({ ...deposit, providerPaymentId: 'publication-partial',
+    quoteRevisionId: approvedCloseout.quoteRevisionId, amountCents: 1000 });
+  await assert.rejects(assertCanonicalFinalInvoicePublication(publication), /coverage changed/);
+  await database.exec("DELETE FROM job_confirmed_payments WHERE provider_payment_id='publication-partial'");
+  await assert.rejects(assertCanonicalFinalInvoicePublication({ ...publication, amount: 0 }), /positive amount/);
+  await assert.rejects(assertCanonicalFinalInvoicePublication({ ...publication, closeoutId: 'wrong-job-closeout' }), /approval changed/);
+  await assert.rejects(assertCanonicalFinalInvoicePublication({ ...publication, quoteRevisionId: 'original-closeout-quote' }), /approval changed/);
+  for (const update of ["status='customer_rejected'", 'customer_approved_at=NULL',
+    "pricing_snapshot='{}'::jsonb", 'calculated_final_total=121', 'balance_due=91']) {
+    const original = (await database.query("SELECT * FROM job_closeouts WHERE id='closeout'")).rows[0];
+    await database.exec(`UPDATE job_closeouts SET ${update} WHERE id='closeout'`);
+    await assert.rejects(assertCanonicalFinalInvoicePublication(publication), /reconciliation required/);
+    await database.query(`UPDATE job_closeouts SET status=$1,customer_approved_at=$2,
+      pricing_snapshot=$3::jsonb,calculated_final_total=$4,balance_due=$5 WHERE id='closeout'`,
+    [original.status, original.customer_approved_at, JSON.stringify(original.pricing_snapshot),
+      original.calculated_final_total, original.balance_due]);
+  }
+  await database.exec("UPDATE leads SET total_price=121 WHERE id='closeout-job'");
+  await assert.rejects(assertCanonicalFinalInvoicePublication(publication), /approval changed/);
+  await database.exec("UPDATE leads SET total_price=120 WHERE id='closeout-job'");
+  // Even a numerically adjusted balance must not auto-publish after a refund.
+  await database.exec(`INSERT INTO job_confirmed_refunds(provider,provider_refund_id,payment_id,
+    amount_cents,gift_funded_cents,currency,refunded_at)
+    SELECT provider,'publication-refund',id,1,0,'USD',NOW() FROM job_confirmed_payments
+    WHERE provider_payment_id='closeout-deposit';
+    UPDATE job_closeouts SET balance_due=90.01 WHERE id='closeout';`);
+  await assert.rejects(assertCanonicalFinalInvoicePublication({ ...publication, amount: 90.01 }), /coverage changed/);
+  await database.exec(`DELETE FROM job_confirmed_refunds WHERE provider_refund_id='publication-refund';
+    UPDATE job_closeouts SET balance_due=90 WHERE id='closeout';`);
+  await assertCanonicalFinalInvoicePublication(publication);
+  {
+    const { checkLateFinalInvoicePublication } = await import('./check-late-final-invoice');
+    await checkLateFinalInvoicePublication({
       approval: retriedCloseout,
       recordLatePayment: () => confirmJobPayment({ ...deposit, providerPaymentId: 'closeout-balance',
         quoteRevisionId: approvedCloseout.quoteRevisionId, amountCents: 9000 }),

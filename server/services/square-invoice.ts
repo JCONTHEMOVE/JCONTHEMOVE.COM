@@ -5,6 +5,7 @@ import type { InvoicePurpose } from "@shared/regionalAutomation";
 import { getSquareAccessToken, getSquareEnvironment, getSquareLocationId } from "./squareConfig";
 import { squareInvoiceRequestKeys, persistSquareInvoiceOnce } from './squareInvoiceRetry';
 import { recordSquareInvoicePublication } from './squareInvoicePublication';
+import { assertCanonicalFinalInvoicePublication } from './canonicalInvoicePublication';
 
 export type InvoiceDeliveryMethod = "email" | "sms" | "both" | "none";
 
@@ -282,6 +283,10 @@ export class SquareInvoiceService {
 
     if (['canceled', 'failed', 'refunded'].includes(savedInvoice.status)) {
       throw new Error('Square invoice is closed; reconciliation is required before retrying');
+    }
+    if (process.env.JOB_PAYMENT_LEDGER_ENABLED === 'true' && options.purpose === 'final_balance') {
+      await assertCanonicalFinalInvoicePublication({ leadId: lead.id, amount,
+        closeoutId: options.closeoutId, quoteRevisionId: options.quoteRevisionId });
     }
     const publishResponse = await client.invoices.publish({
       invoiceId: squareInvoice.id!,

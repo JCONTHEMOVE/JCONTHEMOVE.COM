@@ -3,10 +3,10 @@ import type { SquareClient } from 'square';
 import type { Lead, SquareInvoice } from '@shared/schema';
 import { SquareInvoiceService } from '../server/services/square-invoice';
 
-/** Invoked only by the disposable quote-approval harness's explicit diagnostic flag.
- * Success means the defect was reproduced. It does NOT mean invoices are safe to release.
+/** Regression for the previously reproduced prepublication payment interleaving.
+ * Provider behavior is simulated; approval/ledger/publication guard are real.
  */
-export async function reproduceLateFinalInvoice(input: {
+export async function checkLateFinalInvoicePublication(input: {
   approval: { balanceDue: number; invoiceDueDate: string; invoiceRequestKey: string; quoteRevisionId: string };
   recordLatePayment: () => Promise<unknown>;
   paidCents: () => Promise<number>;
@@ -46,16 +46,18 @@ export async function reproduceLateFinalInvoice(input: {
       },
     } });
   const previousFetch = globalThis.fetch;
-  globalThis.fetch = async () => { throw new Error('Diagnostic must not contact a live provider'); };
+  globalThis.fetch = async () => { throw new Error('Regression must not contact a live provider'); };
   try {
-    await service.createInvoiceForLead({ id: 'closeout-job', firstName: 'Synthetic', lastName: 'Customer',
+    await assert.rejects(service.createInvoiceForLead({ id: 'closeout-job', firstName: 'Synthetic', lastName: 'Customer',
       email: 'synthetic@example.invalid', phone: null, serviceType: 'moving' } as Lead,
     input.approval.balanceDue, 'Synthetic final balance', input.approval.invoiceDueDate, 'none',
     { purpose: 'final_balance', closeoutId: 'closeout', quoteRevisionId: input.approval.quoteRevisionId,
-      idempotencyKey: input.approval.invoiceRequestKey });
-    assert.equal(published, true);
+      idempotencyKey: input.approval.invoiceRequestKey }), /payment coverage changed/);
+    assert.equal(published, false, 'late payment must prevent publication');
+    assert.equal(await input.paidCents(), 12000);
     assert.equal(invoiceCents, 9000);
     assert.equal(Number(saved?.amount), 90);
-    console.log('REPRODUCED OPEN RELEASE BLOCKER: $120 job fully funded before publication still publishes/persists a $90 final invoice. Simulated provider; no live invoice.');
+    assert.equal(saved?.status, 'draft', 'retain unpublished provider identity for recovery');
+    console.log('PASS: payment committed during invoice creation prevents publication and retains the recovery draft; post-check/payment races remain outside this test');
   } finally { globalThis.fetch = previousFetch; }
 }

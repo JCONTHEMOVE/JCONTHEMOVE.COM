@@ -4,6 +4,7 @@ import type { Lead, SquareInvoice } from '@shared/schema';
 
 // Import the real service against a disposable address; any accidental I/O fails.
 process.env.DATABASE_URL = 'postgres://test:test@localhost:1/invoice_retry_test';
+process.env.JOB_PAYMENT_LEDGER_ENABLED = 'false';
 const { pool } = await import('../../db');
 pool.query = (() => { throw new Error('Unexpected database query'); }) as typeof pool.query;
 pool.connect = (() => { throw new Error('Unexpected database connection'); }) as typeof pool.connect;
@@ -78,6 +79,7 @@ function fixture(lostResponse?: Phase, localFailure?: 'before' | 'after' | 'publ
     run: (amount = 90, description = 'Agreed moving balance') => service.createInvoiceForLead(
       lead, amount, description, '2030-09-15', 'none', {
         idempotencyKey: 'closeout-1:quote-1', quoteRevisionId: 'quote-1', closeoutId: 'closeout-1',
+        purpose: 'final_balance',
       }),
   };
 }
