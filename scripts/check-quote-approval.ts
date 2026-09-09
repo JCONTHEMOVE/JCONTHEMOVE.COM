@@ -1,21 +1,30 @@
 import assert from 'node:assert/strict';
 import { createDisposableLedgerDatabase } from './disposable-ledger-database';
 import { pool } from '../server/db';
-import { approveQuoteRevision, ensureQuoteRevisionInfrastructure, getLatestApprovedQuote } from '../server/services/quoteRevisions';
+import { approveQuoteRevision, ensureQuoteRevisionInfrastructure, getLatestApprovedQuote, saveQuoteDraft } from '../server/services/quoteRevisions';
 import { approveCanonicalCloseout } from '../server/services/canonicalCloseoutApproval';
 import { confirmJobPayment, JOB_PAYMENT_LEDGER_SCHEMA } from '../server/services/jobPaymentLedger';
 const database = await createDisposableLedgerDatabase(process.argv[2]);
 const previousConnect = pool.connect, previousQuery = pool.query;
 let failLeadWrite = false;
 let failCloseoutWrite = false;
+let beforeConnect: (() => Promise<void>) | undefined;
 const previousLedgerFlag = process.env.JOB_PAYMENT_LEDGER_ENABLED;
-pool.query = ((sql: string, args?: unknown[]) => sql.includes('CREATE TABLE IF NOT EXISTS quote_revisions')
-  ? database.exec(sql).then(() => ({ rows: [] })) : database.query(sql, args)) as typeof pool.query;
-pool.connect = (async () => ({ query: async (sql: string, args?: unknown[]) => {
+pool.query = ((sql: string, args?: unknown[]) => {
+  if (/pricing_versions|pricing_rules/.test(sql)) return Promise.reject(new Error('Synthetic fixture uses fallback pricing'));
+  return sql.includes('CREATE TABLE IF NOT EXISTS quote_revisions')
+    ? database.exec(sql).then(() => ({ rows: [] })) : database.query(sql, args);
+}) as typeof pool.query;
+pool.connect = (async () => {
+  const hook = beforeConnect;
+  beforeConnect = undefined;
+  await hook?.();
+  return { query: async (sql: string, args?: unknown[]) => {
   if (failLeadWrite && sql.includes('UPDATE leads SET')) throw new Error('injected lead update failure');
   if (failCloseoutWrite && sql.includes('UPDATE job_closeouts SET')) throw new Error('injected closeout update failure');
   return database.query(sql, args);
-}, release() {} })) as typeof pool.connect;
+}, release() {} };
+}) as typeof pool.connect;
 try {
   await database.exec(`CREATE TABLE users(id varchar PRIMARY KEY);
     INSERT INTO users VALUES('owner');
@@ -95,6 +104,28 @@ try {
   await assert.rejects(approveQuoteRevision({ ...input, quoteId: 'older-draft' }), /newer quote revision/);
   assert.equal((await getLatestApprovedQuote('job'))?.id, 'replacement');
   console.log('PASS: actual quote approval rolls back quote/history/lead together, retries and rejects duplicate approval');
+  await database.exec(`ALTER TABLE leads ADD COLUMN from_address text, ADD COLUMN to_address text,
+    ADD COLUMN confirmed_from_address text, ADD COLUMN confirmed_to_address text,
+    ADD COLUMN confirmed_date text, ADD COLUMN move_date text, ADD COLUMN crew_size integer,
+    ADD COLUMN confirmed_hours numeric, ADD COLUMN total_special_items_fee numeric;
+    INSERT INTO leads(id,service_type,crew_size,confirmed_hours,quote_notes,from_address)
+      VALUES('draft-race','moving',2,2,'Original notes','Address TBD');`);
+  for (const update of ["crew_size=3", "confirmed_hours=4", "quote_notes='Changed notes'",
+    "quote_snapshot='{\"serviceStops\":[]}'::jsonb", "booking_id='changed-booking'"]) {
+    beforeConnect = async () => { await database.exec(`UPDATE leads SET ${update} WHERE id='draft-race'`); };
+    await assert.rejects(saveQuoteDraft({leadId:'draft-race',actorUserId:'owner'}), /Job details changed/);
+    assert.equal(Number((await database.query("SELECT count(*) AS n FROM quote_revisions WHERE lead_id='draft-race'")).rows[0].n), 0);
+  }
+  const fresh = await saveQuoteDraft({leadId:'draft-race',actorUserId:'owner'});
+  assert.equal(fresh.notes, 'Changed notes');
+  assert.equal(fresh.bookingId, 'changed-booking');
+  beforeConnect = async () => { await database.exec("UPDATE leads SET quote_notes='Newer notes' WHERE id='draft-race'"); };
+  await assert.rejects(saveQuoteDraft({leadId:'draft-race',actorUserId:'owner'}), /Job details changed/);
+  assert.equal((await database.query('SELECT notes FROM quote_revisions WHERE id=$1',[fresh.id])).rows[0].notes, 'Changed notes');
+  const retried = await saveQuoteDraft({leadId:'draft-race',actorUserId:'owner'});
+  assert.equal(retried.id, fresh.id);
+  assert.equal(retried.notes, 'Newer notes');
+  console.log('PASS: draft rejects job edits committed during calculation before insert/update, and fresh retries preserve current details');
 } finally {
   pool.connect = previousConnect; pool.query = previousQuery;
   if (previousLedgerFlag === undefined) delete process.env.JOB_PAYMENT_LEDGER_ENABLED;
