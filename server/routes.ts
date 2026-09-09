@@ -24497,13 +24497,21 @@ Thank you for your business!
       const prevStatus = invoice.status;
       const newStatus = await squareInvoiceService.syncInvoiceStatus(invoice.squareInvoiceId);
 
-      // If status just transitioned to paid, mint JCMOVES USD and record revenue split
-      if (newStatus === 'paid' && prevStatus !== 'paid' && invoice.leadId) {
+      // Invoice PAID is not job paid-in-full. Canonical mode settles only from
+      // verified payment records, so status sync must not bypass that pipeline.
+      if (newStatus === 'paid' && prevStatus !== 'paid' && invoice.leadId
+          && process.env.JOB_PAYMENT_LEDGER_ENABLED !== 'true') {
         const lead = await storage.getLead(invoice.leadId);
-        const amountUsd = parseFloat(lead?.totalPrice || lead?.basePrice || invoice.amount || "0");
-        if (amountUsd > 0) {
-          await recordRevenueSplit(amountUsd, invoice.leadId, 'invoice_sync');
-          await creditJcMovesUsd(invoice.leadId, amountUsd, 'invoice_sync');
+        if (lead) {
+          const payment = classifyJobInvoicePayment({
+            invoiceAmount: invoice.amount, jobTotal: lead.totalPrice,
+            depositAmount: lead.depositAmount, depositRequired: lead.depositRequired,
+            depositAlreadyPaid: lead.depositPaid, invoicePurpose: invoice.purpose,
+          });
+          if (payment.kind === 'paid_in_full') {
+            await recordRevenueSplit(payment.jobTotal, invoice.leadId, 'invoice_sync');
+            await creditJcMovesUsd(invoice.leadId, payment.jobTotal, 'invoice_sync');
+          }
         }
       }
 
