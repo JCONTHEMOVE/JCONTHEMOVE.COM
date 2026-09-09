@@ -1,6 +1,7 @@
 // CI-only disposable PostgreSQL acceptance. Never uses DATABASE_URL.
 import assert from "node:assert/strict";
 import pg from "pg";
+import type { PoolClient } from "@neondatabase/serverless";
 import { pool } from "../server/db";
 import { JOB_PAYMENT_LEDGER_SCHEMA, confirmJobPayment } from "../server/services/jobPaymentLedger";
 import { recordConfirmedJobRefund } from "../server/services/jobPaymentRefunds";
@@ -14,6 +15,7 @@ const testPool = new pg.Pool({ connectionString: url.href, max: 8, connectionTim
   options: "-c search_path=jc_ledger_concurrency -c statement_timeout=10000" });
 const previous = pool.connect;
 const previousFlag = process.env.JOB_PAYMENT_LEDGER_ENABLED;
+const previousRewardFlag = process.env.JOB_PAYMENT_REWARDS_ENABLED;
 pool.connect = testPool.connect.bind(testPool) as unknown as typeof pool.connect;
 process.env.JOB_PAYMENT_LEDGER_ENABLED = "true";
 let createdSchema = false;
@@ -71,11 +73,59 @@ try {
   const wallet = (await testPool.query("SELECT token_balance::text,total_earned::text FROM wallet_accounts")).rows[0];
   assert.equal(Number(wallet.token_balance), 1000);
   assert.equal(Number(wallet.total_earned), 1000);
+  process.env.JOB_PAYMENT_LEDGER_ENABLED = "true";
+  process.env.JOB_PAYMENT_REWARDS_ENABLED = "true";
+  await testPool.query(`INSERT INTO leads VALUES('canonical',100,'completed',NULL),('refund-race',100,'completed',NULL);
+    INSERT INTO quote_revisions VALUES('canonical-quote','canonical',1,'approved',NOW(),100,'USD'),
+      ('race-quote','refund-race',1,'approved',NOW(),100,'USD');
+    INSERT INTO job_jcmoves_ledger VALUES(2,'canonical','canonical-customer','customer_paid_completed_pool',600,60,10,'{}'),
+      (3,'refund-race','race-customer','customer_paid_completed_pool',600,60,10,'{}');`);
+  await confirmJobPayment({ ...payment, providerPaymentId: "canonical-payment", leadId: "canonical",
+    quoteRevisionId: "canonical-quote", amountCents: 10000, giftFundedCents: 4000 });
+  await confirmJobPayment({ ...payment, providerPaymentId: "race-payment", leadId: "refund-race",
+    quoteRevisionId: "race-quote", amountCents: 10000, giftFundedCents: 4000 });
+  const canonicalRecipient = { ...recipient, ledgerId: 2, leadId: "canonical", userId: "canonical-customer" };
+  const canonicalAwards = await Promise.all([settleJobLedgerRecipient(canonicalRecipient), settleJobLedgerRecipient(canonicalRecipient)]);
+  assert.equal(canonicalAwards.filter(Boolean).length, 1);
+  assert.equal(Number((await testPool.query("SELECT token_balance FROM wallet_accounts WHERE user_id='canonical-customer'")).rows[0].token_balance), 600);
+
+  const refundWriter = await testPool.connect();
+  let waitingAward: Promise<unknown> | undefined;
+  try {
+    await refundWriter.query("BEGIN");
+    await refundWriter.query("SELECT id FROM leads WHERE id='refund-race' FOR UPDATE");
+    const blockerPid = (await refundWriter.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+    waitingAward = settleJobLedgerRecipient({ ...recipient, ledgerId: 3, leadId: "refund-race", userId: "race-customer" })
+      .then(() => ({ credited: true }), error => ({ error }));
+    // Observe actual PostgreSQL blocking rather than assuming Promise timing.
+    let blocked = false;
+    const deadline = Date.now() + 5000;
+    while (!blocked && Date.now() < deadline) {
+      const result = await testPool.query("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1::int=ANY(pg_blocking_pids(pid))) AS blocked", [blockerPid]);
+      blocked = result.rows[0].blocked;
+      if (!blocked) await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.ok(blocked, "reward settlement must wait for the refund's job lock");
+    await recordConfirmedJobRefund({ ...refund, providerPaymentId: "race-payment", providerRefundId: "race-refund", amountCents: 100 },
+      refundWriter as unknown as PoolClient);
+    await refundWriter.query("COMMIT");
+    const outcome = await waitingAward as { error?: unknown };
+    assert.match(String(outcome.error), /requires reward reconciliation/);
+    assert.equal((await testPool.query("SELECT COUNT(*)::int AS n FROM wallet_accounts WHERE user_id='race-customer'")).rows[0].n, 0);
+    assert.equal((await testPool.query("SELECT COUNT(*)::int AS n FROM rewards WHERE user_id='race-customer'")).rows[0].n, 0);
+  } finally {
+    await refundWriter.query("ROLLBACK");
+    refundWriter.release();
+    if (waitingAward) await waitingAward;
+  }
+  console.log("PASS: canonical gift-funded reward replay and observed refund/settlement lock contention");
   console.log("PASS: separate PostgreSQL sessions, duplicate/concurrent payments, competing refunds, advisory lock and exactly-once wallet settlement");
 } finally {
   pool.connect = previous;
   if (previousFlag === undefined) delete process.env.JOB_PAYMENT_LEDGER_ENABLED;
   else process.env.JOB_PAYMENT_LEDGER_ENABLED = previousFlag;
+  if (previousRewardFlag === undefined) delete process.env.JOB_PAYMENT_REWARDS_ENABLED;
+  else process.env.JOB_PAYMENT_REWARDS_ENABLED = previousRewardFlag;
   try {
     if (createdSchema) await testPool.query("DROP SCHEMA jc_ledger_concurrency CASCADE");
   } finally { await testPool.end(); }
