@@ -4,6 +4,9 @@ Updated September 9, 2026. This register distinguishes checked code from live se
 
 ## Current release and service
 
+- Latest application validation: full CI passed at `58948c09e7544d3be1f0a471ec40ed7b61617c7c`, run 34385247389. This includes the refund adapter, dedicated reward lock connection and immutable reward settlement retry fixes. Release remains a draft; no application deployment occurred.
+- Replit isolated-preview investigation: inspected Publishing overview, Adjust settings and Manage on the original project. No isolated-preview action was exposed in those panels. The available development-to-production database copy explicitly overwrites existing production data and was left unchecked. A separate recovery destination is still needed; documentation describing previews alone does not establish one for this project.
+- September 9 Replit recovery update: enabled automatic daily backups with seven-day retention on the existing Production Database. The UI confirms `Scheduled backups On · kept 7 days`; PITR remains `On · last 7 days`. It still reports `No backups yet`, so first-backup success and isolated restore are not verified. No live restore, credential rotation or database migration occurred. This supersedes the earlier scheduled-backups-off observations below.
 - User priority: Replit first, then potentially up to two Neon databases. Start with the existing Replit project and its production database; additional databases are optional, not a requirement to create or migrate them. The supplied production hostname already matches Replit's production database.
 - Public readiness on `www.jconthemove.com` reports Railway, a connected database, and commit `25b985e4`.
 - Domain restoration passed: Cloudflare rule `f14b13f5da1e4b4582616580b2913a0e` redirects apex requests to HTTPS www with status 308, preserving path, query and method. HTTP/HTTPS home and booking probes passed, including Matt referral rendering.

@@ -5,10 +5,10 @@
 The September 6–7 sections below are historical incident evidence. Their statements that the apex outage remains active, Cloudflare is signed out, and the release changes are unpushed are superseded by this update and `OPEN_TASKS.md`.
 
 - Cloudflare apex restoration is complete: active rule `f14b13f5da1e4b4582616580b2913a0e` returns a 308 to HTTPS www and preserves path/query. Both hosts and booking routes passed checks, including referral preservation.
-- Draft PR #10 contains the reviewed release candidate and subsequent booking/payment fixes. Full CI passed at `d4932f58` in run 34379369852; later changes require separate validation. Nothing has been merged or deployed.
+- Draft PR #10 contains the reviewed release candidate and subsequent booking/payment/reward fixes. Full CI passed at `58948c09` in run 34385247389, including types, server tests, monitoring tests, build and PWA checks. Nothing has been merged or deployed.
 - The live public booking path was exercised through final review with synthetic contact information and no submission. A misleading inventory price preview and truncated moving label were corrected on the draft branch; live acceptance after deployment remains open.
-- Railway production database ownership is confirmed in Replit by matching standalone PGHOST. Seven-day point-in-time recovery is enabled, scheduled backups are off, and an isolated restore drill remains unverified. The other two connected Neon projects do not match production.
-- Remaining implementation includes the canonical payment ledger, refunds and admin reconciliation. Owner acceptance remains necessary for payment/reward, push-device receipt, mailbox workflows and campaign delivery. The requested refund policy is still awaiting a response.
+- Railway production database ownership is confirmed in Replit by matching standalone PGHOST. Seven-day point-in-time recovery and daily backups with seven-day retention are enabled. First-backup completion and an isolated restore drill remain unverified. The other two connected Neon projects do not match production.
+- The candidate implements a disabled canonical payment ledger, verified Square payment/refund adapters and admin reconciliation. Automatic reward integration, live acceptance and release gates remain open. Owner acceptance remains necessary for payment/reward, push-device receipt, mailbox workflows and campaign delivery. The requested refund policy is still awaiting a response.
 
 Use `OPEN_TASKS.md` for the current completion register. The historical investigation below is retained to explain the original failure and verification limits.
 
@@ -94,3 +94,8 @@ This document combines the checked-out source, `MASTER_GAME_PLAN.md`, `PRODUCTIO
 This is a consolidated working status, not an export or literal merge of every historical conversation. The task-list interface exposes at most 50 recent unpinned tasks per call, and older turns have not all been read. Historical claims are labeled as such and do not substitute for current production proof.
 
 The worktree contains pre-existing, unfinished changes across Quick Book, push and operations. They were preserved. GitHub CLI is not signed in. No application release, production payment, customer/crew message, or database mutation was performed by this recovery investigation.
+# September 9 Replit backup update
+
+The existing Replit Production Database now has automatic daily backups enabled with seven-day retention. After saving, its Settings panel confirmed `Scheduled backups On · kept 7 days`; point-in-time recovery remains on for seven days. The database is Active at approximately 103.86 MB. The panel still says `No backups yet`: enabling the schedule is not evidence of a completed backup or successful recovery.
+
+An isolated recovery drill remains required. No live restore, credential rotation, migration or additional Neon database was performed. Replit's [data recovery documentation](https://docs.replit.com/features/data-and-storage/data-recovery) says backups run daily near midnight in the browser's time zone. Its [deployment preview documentation](https://docs.replit.com/features/data-and-storage/development-and-production#test-changes-with-a-deployment-preview) describes an isolated production copy for migration testing; availability for this project still needs inspection.
