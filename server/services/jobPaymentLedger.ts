@@ -1,5 +1,6 @@
 import { pool } from "../db";
 import type { PoolClient } from "@neondatabase/serverless";
+import { JOB_REWARD_QUEUE_SCHEMA, enqueueJobReward } from "./jobRewardQueue";
 import { validateConfirmedJobPayment, reconcileJobPaymentTotals, type ConfirmedJobPayment } from "./jobPaymentLedgerPolicy";
 
 // Additive and deliberately not registered in boot or provider routes yet.
@@ -38,6 +39,7 @@ export const JOB_PAYMENT_LEDGER_SCHEMA = `
     UNIQUE(provider,provider_refund_id)
   );
   CREATE INDEX IF NOT EXISTS idx_job_confirmed_refunds_payment ON job_confirmed_refunds(payment_id);
+  ${JOB_REWARD_QUEUE_SCHEMA}
 `;
 
 export const JOB_PAYMENT_TOTALS_SQL = `
@@ -121,6 +123,9 @@ export async function confirmJobPayment(payment: ConfirmedJobPayment, options: {
         "UPDATE leads SET payment_paid_at=COALESCE(payment_paid_at,$2::timestamptz) WHERE id=$1",
         [payment.leadId, totals[0].settled_at],
       );
+      if (leads[0].status === "completed" && Number(totals[0].refund_count) === 0) {
+        await enqueueJobReward(client, payment.leadId);
+      }
     }
     if (!options.transaction) await client.query("COMMIT");
     return { ...reconciliation, duplicate: inserted.rows.length === 0, paidCents, giftFundedCents,

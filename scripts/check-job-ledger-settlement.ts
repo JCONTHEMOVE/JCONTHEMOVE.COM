@@ -7,11 +7,14 @@ import { settleJobLedgerRecipient } from "../server/services/jobLedgerSettlement
 import { JOB_PAYMENT_LEDGER_SCHEMA } from "../server/services/jobPaymentLedger";
 import { readCanonicalRewardBasis } from "../server/services/canonicalRewardBasis";
 import { recordConfirmedJobRefund } from "../server/services/jobPaymentRefunds";
+import { enqueueJobReward, claimJobReward, finishJobReward } from "../server/services/jobRewardQueue";
 
 if (!process.argv[2]) throw new Error("Provide an installed PGlite dist/index.js path");
 const { PGlite } = await import(pathToFileURL(resolve(process.argv[2])).href);
 const database = new PGlite();
 const previous = pool.connect;
+const previousQuery = pool.query;
+pool.query = ((sql: string, args?: unknown[]) => database.query(sql, args)) as typeof pool.query;
 const previousLedgerFlag = process.env.JOB_PAYMENT_LEDGER_ENABLED;
 const previousRewardFlag = process.env.JOB_PAYMENT_REWARDS_ENABLED;
 delete process.env.JOB_PAYMENT_LEDGER_ENABLED;
@@ -60,7 +63,28 @@ try {
   process.env.JOB_PAYMENT_LEDGER_ENABLED = "true";
   delete process.env.JOB_PAYMENT_REWARDS_ENABLED;
   await assert.rejects(readCanonicalRewardBasis("canonical"), /disabled/);
+  assert.equal(await claimJobReward(), null);
   process.env.JOB_PAYMENT_REWARDS_ENABLED = "true";
+  const queueClient = await pool.connect();
+  assert.equal(await enqueueJobReward(queueClient, "canonical"), true);
+  assert.equal(await enqueueJobReward(queueClient, "canonical"), false);
+  queueClient.release();
+  const firstClaim = await claimJobReward();
+  assert.ok(firstClaim);
+  assert.equal(await claimJobReward(), null);
+  await database.exec("UPDATE job_reward_queue SET lease_expires_at=NOW()-INTERVAL '1 second'");
+  const replacement = await claimJobReward();
+  assert.ok(replacement);
+  assert.notEqual(firstClaim.lease_token, replacement.lease_token);
+  assert.equal(await finishJobReward(firstClaim, true), false);
+  assert.equal(await finishJobReward(replacement, false), true);
+  assert.equal(await claimJobReward(), null);
+  await database.exec("UPDATE job_reward_queue SET next_attempt_at=NOW()-INTERVAL '1 second'");
+  const retryClaim = await claimJobReward();
+  assert.ok(retryClaim);
+  assert.equal(await finishJobReward(retryClaim, true), true);
+  assert.equal(await claimJobReward(), null);
+  console.log("PASS: durable reward queue deduplication, expiry, stale-worker fencing and retry scheduling");
   const basis = await readCanonicalRewardBasis("canonical");
   assert.equal(basis.customerEligibleUsd, 60);
   assert.equal(basis.giftFundedUsd, 40);
@@ -80,6 +104,7 @@ try {
   console.log("PASS: immutable award on rate-change retry, atomic rollback, replay, identity and ambiguous-history rejection");
 } finally {
   pool.connect = previous;
+  pool.query = previousQuery;
   if (previousLedgerFlag === undefined) delete process.env.JOB_PAYMENT_LEDGER_ENABLED;
   else process.env.JOB_PAYMENT_LEDGER_ENABLED = previousLedgerFlag;
   if (previousRewardFlag === undefined) delete process.env.JOB_PAYMENT_REWARDS_ENABLED;
