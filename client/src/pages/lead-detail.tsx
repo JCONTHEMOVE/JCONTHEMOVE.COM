@@ -1542,7 +1542,7 @@ export default function LeadDetailPage() {
           </div>
           
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl font-bold text-foreground">
+            <h1 className="min-w-0 max-w-full text-2xl font-bold text-foreground [overflow-wrap:anywhere]">
               {lead.workerVisibility?.customerIdentity === false
                 ? "Customer details protected"
                 : `${lead.firstName || ""} ${lead.lastName || ""}`.trim()}
@@ -1682,10 +1682,10 @@ export default function LeadDetailPage() {
                       href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(jobBrief.address)}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-start gap-1 text-sm font-medium hover:underline"
+                      className="flex min-w-0 max-w-full items-start gap-1 text-sm font-medium hover:underline"
                       data-testid="link-job-brief-map"
                     >
-                      <span className="break-words">{jobBrief.address}</span>
+                      <span className="min-w-0 [overflow-wrap:anywhere]">{jobBrief.address}</span>
                       <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     </a>
                   ) : (

@@ -36,6 +36,7 @@ Updated September 9, 2026. This register distinguishes checked code from live se
 
 ## Verification recorded in this pass
 
+- Long-content mobile check: the full synthetic lead page initially expanded to 709px inside a 320px frame. Customer names, crew names/roles and the address link now wrap within their containers. Browser measurements after the fix found no horizontal overflow at 320/390/768/1280px frame widths (305/375/753/1265px content widths after scrollbar space). Crew rows retain at least 44px height. This uses local synthetic data with writes disabled, not live owner-account or device acceptance. Dispatch-readiness application commit 67590774 passed full CI run 34399301016 before this layout-only follow-up.
 - Mobile lead follow-up: dispatch now explains missing saved price, valid service date and distinct named crew, and stays disabled until those fields are ready. The manual mark-paid route checks the same requirements before dispatch payment writes (the separate completed-job path is unchanged). Readiness tests cover zero/invalid prices, impossible dates and duplicate/incomplete crew; they do not prove the full route or owner workflow. Header actions now wrap and crew-selection rows have 44px minimum height. Authenticated phone/desktop acceptance remains open.
 - Existing Node 20 worktree: all 48 server test files passed before the notes change; the added notes test passed separately.
 - Phone route-alias regression and all 19 monitoring tests passed after their fixes.
