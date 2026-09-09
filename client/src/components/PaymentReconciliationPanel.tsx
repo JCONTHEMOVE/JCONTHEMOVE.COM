@@ -14,6 +14,7 @@ const reviewLabels: Record<string, string> = {
   ledger_covered_without_paid_marker: "Recorded payments cover the quote, but the job is not marked paid.",
   overpayment: "Recorded payments exceed the approved quote.",
   reward_marker_requires_review: "A reward is marked issued while completion or payment evidence is incomplete.",
+  refund_requires_review: "A refund is recorded. Review the job's paid status and any previously issued rewards.",
 };
 
 export function PaymentReconciliationView({ report }: { report: Report }) {
@@ -24,11 +25,11 @@ export function PaymentReconciliationView({ report }: { report: Report }) {
       <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">{report.reviewReasons.map((reason) => <li key={reason}>{reviewLabels[reason] || "An additional reconciliation check needs review."}</li>)}</ul>
     </div> : <p className="text-sm">No mismatch found in the recorded payment totals.</p>}
     <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-      {[["Approved quote", dollars(report.approvedTotalCents)], ["Recorded payments", dollars(report.paidCents)],
+      {[["Approved quote", dollars(report.approvedTotalCents)], ["Net payments", dollars(report.paidCents)],
         ["Remaining", dollars(report.totals?.outstandingCents ?? null)], ["Gift-funded", dollars(report.giftFundedCents)]].map(([label, value]) =>
         <div key={label}><dt className="text-muted-foreground">{label}</dt><dd className="font-semibold">{value}</dd></div>)}
     </dl>
-    <p className="text-xs text-muted-foreground">Refunds are not reconciled here yet. Reward markers show recorded issuance, not verified wallet balances.</p>
+    <p className="text-xs text-muted-foreground">Verified refunds are deducted from net payments. Reward markers show recorded issuance, not verified wallet balances. Reward reversal requires review.</p>
     <dl className="space-y-1 text-xs">
       <div><dt className="inline font-medium">Paid marker: </dt><dd className="inline">{report.paidMarkerAt ? new Date(report.paidMarkerAt).toLocaleString() : "Not recorded"}</dd></div>
       <div><dt className="inline font-medium">Reward marker: </dt><dd className="inline">{report.rewardRecordedAt ? new Date(report.rewardRecordedAt).toLocaleString() : "Not recorded"}</dd></div>
@@ -42,6 +43,14 @@ export function PaymentReconciliationView({ report }: { report: Report }) {
         <p className="mt-1 break-all text-xs text-muted-foreground">Quote revision: {payment.quote_revision_id}</p>
       </li>)}</ul>}
     {report.paymentsTruncated ? <p className="text-xs text-muted-foreground">Showing the latest 100 payments. Totals include all recorded payments.</p> : null}
+    <h3 className="text-sm font-semibold">Recorded refunds ({report.refundCount}) · {dollars(report.refundedCents)}</h3>
+    {report.refunds.length === 0 ? <p className="text-sm text-muted-foreground">No verified refunds recorded.</p> :
+      <ul className="space-y-2">{report.refunds.map((refund) => <li key={refund.id} className="rounded-lg border p-3 text-sm">
+        <p className="font-medium">{refund.provider} · {dollars(Number(refund.amount_cents))}</p>
+        <p className="mt-1 break-all font-mono text-xs">{refund.provider_refund_id}</p>
+        <p className="mt-1 break-all text-xs text-muted-foreground">Payment: {refund.provider_payment_id}</p>
+      </li>)}</ul>}
+    {report.refundsTruncated ? <p className="text-xs text-muted-foreground">Showing the latest 100 refunds. Totals include all recorded refunds.</p> : null}
   </div>;
 }
 

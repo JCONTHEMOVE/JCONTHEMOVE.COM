@@ -8,6 +8,7 @@ import { confirmJobPayment, JOB_PAYMENT_LEDGER_SCHEMA } from "../server/services
 import type { ConfirmedJobPayment } from "../server/services/jobPaymentLedgerPolicy";
 import { verifyAndConfirmSquarePayment } from "../server/services/squareJobPaymentVerification";
 import { getJobPaymentReconciliation } from "../server/services/jobPaymentReconciliation";
+import { recordConfirmedJobRefund } from "../server/services/jobPaymentRefunds";
 
 if (!process.argv[2]) throw new Error("Provide an installed PGlite dist/index.js path");
 const { PGlite } = await import(pathToFileURL(resolve(process.argv[2])).href);
@@ -84,6 +85,25 @@ try {
   assert.equal(settled.completed, true);
   assert.equal(settled.rewardsTriggered, false);
   assert.ok((await database.query("SELECT payment_paid_at FROM leads WHERE id='job'")).rows[0].payment_paid_at);
+  const refund = { provider: "square", providerPaymentId: "balance", providerRefundId: "refund-one",
+    amountCents: 10000, giftFundedCents: 5000, currency: "USD" as const, refundedAt: "2026-09-09T13:00:00Z" };
+  assert.equal((await recordConfirmedJobRefund(refund)).duplicate, false);
+  assert.equal((await recordConfirmedJobRefund(refund)).duplicate, true);
+  await assert.rejects(recordConfirmedJobRefund({ ...refund, amountCents: 10001 }), /conflicts/);
+  await assert.rejects(recordConfirmedJobRefund({ ...refund, providerRefundId: "too-much", amountCents: 200000 }), /exceeds/);
+  await assert.rejects(recordConfirmedJobRefund({ ...refund, providerRefundId: "wrong-funding", providerPaymentId: "deposit", amountCents: 100, giftFundedCents: 100 }), /funding/);
+  await assert.rejects(recordConfirmedJobRefund({ ...refund, providerPaymentId: "unknown" }), /original payment/);
+  const afterRefund = await confirmJobPayment(base);
+  assert.equal(afterRefund.paidCents, 190000);
+  assert.equal(afterRefund.giftFundedCents, 45000);
+  assert.equal(afterRefund.paidInFull, false);
+  assert.equal(afterRefund.requiresOwnerReview, true);
+  const refundReport = await getJobPaymentReconciliation("job");
+  assert.ok(refundReport?.enabled);
+  assert.equal(refundReport.refundCount, 1);
+  assert.equal(refundReport.refundedCents, 10000);
+  assert.ok(refundReport.reviewReasons.includes("refund_requires_review"));
+  assert.ok(refundReport.reviewReasons.includes("paid_marker_without_ledger_coverage"));
   const rollbackPayment = { ...base, leadId: "rollback", quoteRevisionId: "rollback-quote", providerPaymentId: "retry", amountCents: 10000 };
   failSettlement = true;
   await assert.rejects(confirmJobPayment(rollbackPayment), /injected/);
@@ -98,8 +118,8 @@ try {
   await database.exec("UPDATE quote_revisions SET currency='EUR' WHERE id='rollback-quote'");
   await assert.rejects(confirmJobPayment(rollbackPayment), /approved quote/);
   await assert.rejects(database.query("UPDATE job_confirmed_payments SET gift_funded_cents=amount_cents+1"));
-  console.log("PASS: repeated schema, disabled gate, cumulative settlement, duplicate/conflict checks, gift exclusion, rollback and retry");
-  console.log("LIMIT: no concurrent-session test, provider verification, refunds, production schema/restore or reward delivery");
+  console.log("PASS: repeated schema, disabled gate, cumulative settlement, duplicate/conflict checks, gift exclusion, rollback/retry, refund allocation and net reconciliation");
+  console.log("LIMIT: no concurrent-session test, live provider/refund verification, production schema/restore or reward delivery/reversal");
 } finally {
   pool.connect = previousConnect;
   if (previousFlag === undefined) delete process.env.JOB_PAYMENT_LEDGER_ENABLED;

@@ -24,7 +24,30 @@ export const JOB_PAYMENT_LEDGER_SCHEMA = `
     ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(metadata) = 'object');
   CREATE INDEX IF NOT EXISTS idx_job_confirmed_payments_lead
     ON job_confirmed_payments (lead_id, paid_at);
+  CREATE TABLE IF NOT EXISTS job_confirmed_refunds (
+    id BIGSERIAL PRIMARY KEY,
+    provider TEXT NOT NULL,
+    provider_refund_id TEXT NOT NULL,
+    payment_id BIGINT NOT NULL REFERENCES job_confirmed_payments(id),
+    amount_cents BIGINT NOT NULL CHECK (amount_cents > 0 AND amount_cents <= 9007199254740991),
+    gift_funded_cents BIGINT NOT NULL CHECK (gift_funded_cents >= 0 AND gift_funded_cents <= amount_cents),
+    currency TEXT NOT NULL CHECK (currency='USD'),
+    refunded_at TIMESTAMPTZ NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(provider,provider_refund_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_job_confirmed_refunds_payment ON job_confirmed_refunds(payment_id);
 `;
+
+export const JOB_PAYMENT_TOTALS_SQL = `
+  SELECT COALESCE(SUM(p.amount_cents-COALESCE(r.refunded,0)),0)::text AS paid,
+    COALESCE(SUM(p.gift_funded_cents-COALESCE(r.gift,0)),0)::text AS gift,
+    COALESCE(SUM(r.refunded),0)::text AS refunded,COALESCE(SUM(r.count),0)::text AS refund_count,
+    COUNT(*)::text AS count,MAX(p.paid_at) AS settled_at
+  FROM job_confirmed_payments p LEFT JOIN LATERAL (
+    SELECT SUM(amount_cents) AS refunded,SUM(gift_funded_cents) AS gift,COUNT(*) AS count
+    FROM job_confirmed_refunds WHERE payment_id=p.id
+  ) r ON true WHERE p.lead_id=$1`;
 
 /** Record only a server-verified provider payment. Never call with browser claims.
  * This foundation does not issue rewards, dispatch work, or accept refunds.
@@ -81,11 +104,7 @@ export async function confirmJobPayment(payment: ConfirmedJobPayment) {
         || Number(event.gift_funded_cents) !== payment.giftFundedCents) {
       throw new Error("Provider payment ID conflicts with its recorded settlement");
     }
-    const { rows: totals } = await client.query<{ paid: string; gift: string; settled_at: string }>(
-      `SELECT COALESCE(SUM(amount_cents),0)::text AS paid,
-              COALESCE(SUM(gift_funded_cents),0)::text AS gift, MAX(paid_at) AS settled_at
-         FROM job_confirmed_payments WHERE lead_id=$1`, [payment.leadId],
-    );
+    const { rows: totals } = await client.query<{ paid: string; gift: string; settled_at: string; refund_count: string }>(JOB_PAYMENT_TOTALS_SQL, [payment.leadId]);
     const paidCents = Number(totals[0].paid);
     const giftFundedCents = Number(totals[0].gift);
     const reconciliation = reconcileJobPaymentTotals(totalCents, paidCents, giftFundedCents);
@@ -99,7 +118,8 @@ export async function confirmJobPayment(payment: ConfirmedJobPayment) {
     }
     await client.query("COMMIT");
     return { ...reconciliation, duplicate: inserted.rows.length === 0, paidCents, giftFundedCents,
-      quoteRevisionId: activeQuote.id, completed: leads[0].status === "completed", rewardsTriggered: false as const };
+      quoteRevisionId: activeQuote.id, completed: leads[0].status === "completed",
+      requiresOwnerReview: Number(totals[0].refund_count) > 0, rewardsTriggered: false as const };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw error;
