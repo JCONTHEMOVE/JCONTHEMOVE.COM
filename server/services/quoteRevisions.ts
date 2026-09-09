@@ -467,9 +467,8 @@ export async function saveQuoteDraft(input: {
       input.notes ?? lead.quote_notes,
       input.actorUserId,
     ]);
-    if (latest && ["approved", "sent"].includes(latest.status)) {
-      await client.query(`UPDATE quote_revisions SET status='superseded', superseded_by_quote_id=$2, updated_at=NOW() WHERE id=$1`, [latest.id, quoteId]);
-    }
+    // A draft does not replace an approved financial basis. Supersession
+    // happens atomically with approval of the replacement revision below.
     await client.query("COMMIT");
     return rowToQuote(inserted.rows[0]);
   } catch (error) {
@@ -498,6 +497,11 @@ export async function approveQuoteRevision(input: {
     if (!row) throw new Error("Quote revision not found");
     if (row.lead_id !== lockedLead.rows[0].id) throw new Error("Quote revision changed jobs; retry approval");
     if (row.status !== "draft") throw new Error("Only a draft quote can be approved");
+    const newer = await client.query(
+      "SELECT id FROM quote_revisions WHERE lead_id=$1 AND revision>$2 AND status IN ('draft','approved','sent') LIMIT 1",
+      [row.lead_id, row.revision],
+    );
+    if (newer.rows.length) throw new Error("A newer quote revision must be reviewed instead");
     const eligibility = plainRecord(row.travel_eligibility);
     const { requiresOwner, overrideReason } = assertQuoteApprovalAllowed({
       travelEligibility: eligibility,
@@ -505,6 +509,10 @@ export async function approveQuoteRevision(input: {
       overrideReason: input.overrideReason,
     });
 
+    await client.query(`
+      UPDATE quote_revisions SET status='superseded',superseded_by_quote_id=$2,updated_at=NOW()
+      WHERE lead_id=$1 AND id<>$2 AND status IN ('approved','sent')
+    `, [row.lead_id, row.id]);
     const updated = await client.query(`
       UPDATE quote_revisions SET
         status='approved', approved_by_user_id=$2::varchar, approved_at=NOW(),
