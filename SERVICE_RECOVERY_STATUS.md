@@ -2,6 +2,7 @@
 
 ## Current status — September 9, 2026
 
+- Authenticated production Launch Checklist inspection at approximately 21:34 UTC: the environment-presence, database, public-deployment and custom-domain probes passed. Square returned `environment=sandbox` with an authentication failure. This upgrades the earlier configuration-only concern to a verified failed provider probe. Verify the intended Square account and environment before repairing credentials; no credential change or live payment was performed. The Chrome developer login page is waiting for owner sign-in. These five probes are not all 29 launch checks and do not establish end-to-end payment readiness.
 The September 6–7 sections below are historical incident evidence. Their statements that the apex outage remains active, Cloudflare is signed out, and the release changes are unpushed are superseded by this update and `OPEN_TASKS.md`.
 
 - Cloudflare apex restoration is complete: active rule `f14b13f5da1e4b4582616580b2913a0e` returns a 308 to HTTPS www and preserves path/query. Both hosts and booking routes passed checks, including referral preservation.
