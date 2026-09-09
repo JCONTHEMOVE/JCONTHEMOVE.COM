@@ -8,7 +8,7 @@ Verification: the policy test covers invalid amounts/currency/timestamps, partia
 
 Remaining requirements from issue #7:
 
-- Implement verified provider adapters using provider payment IDs, not invoice IDs. Never accept client payment-success claims.
+- The disabled Square card adapter now retrieves GetPayment by ID, requires COMPLETED/USD/configured location, resolves the order to exactly one stored job/quote pair, and separates sandbox/production provider identities. It rejects unknown funding types and refunded payments; Square gift-card principal is excluded from earning. Wire it only after signature-path, live-provider, refund and migration acceptance. Other rails remain unimplemented.
 - Reconcile existing paid markers before migration, including jobs whose approved total increased after payment. Payments now record bounded metadata and an approved source quote revision belonging to the job in the same currency; settlement requires the current approved quote and lead total to agree. Existing ledger installations need quote-revision backfill before adding the non-null revision column.
 - Add auditable refunds/reversals and determine the owner-approved treatment of already-issued rewards. No refund policy has been approved in this task yet.
 - Add a durable reward-trigger queue behind a separate disabled-by-default flag, using the existing completed-and-paid gates. Preserve gift-funded exclusions and editable reward rates.
@@ -23,3 +23,5 @@ node --import tsx scripts/check-job-payment-ledger.ts <path-to-pglite-dist-index
 ```
 
 The harness replaces the connection method only within its own process and uses synthetic jobs. It does not read production data or apply migrations to the configured database.
+
+Square adapter checks follow the [Payment object](https://developer.squareup.com/reference/square/objects/payment) and [refund documentation](https://developer.squareup.com/docs/payments-api/refund-payments). Principal uses amountMoney, excluding tips; COMPLETED alone is insufficient because refunded payments retain that status. Cross-method gift-card refunds require separate refund-event handling before activation. No provider API was called during local mapping tests.
