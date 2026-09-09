@@ -24582,6 +24582,9 @@ Thank you for your business!
         depositRequired: lead.depositRequired,
         depositAlreadyPaid: lead.depositPaid,
       });
+      if (payment.kind === "partial") {
+        return res.json({ success: true, leadId, finalStatus: lead.status, paymentKind: payment.kind, dispatchState: "skipped", log });
+      }
       const simulatedStatus = payment.kind === "deposit" ? "confirmed" : "paid";
       await db.update(leads)
         .set({
@@ -24804,7 +24807,10 @@ Thank you for your business!
                   invoicePurpose: localInvoice.purpose,
                 });
 
-                if (payment.kind === "deposit") {
+                if (payment.kind === "partial") {
+                  // Keep the paid invoice for reconciliation without settling the job.
+                  console.log(`[Square webhook] Invoice ${squareInvoiceId} is a partial job payment; reconciliation required`);
+                } else if (payment.kind === "deposit") {
                   const updated = await pool.query<{ status: string }>(
                     `UPDATE leads
                         SET deposit_paid = true,
@@ -24914,31 +24920,33 @@ Thank you for your business!
                   });
                 }
 
-                // A paid deposit or a full payment confirms an exact-time
-                // hold. This does not imply that the full job balance is paid.
-                try {
-                  await pool.query(
-                    "UPDATE booking_slot_holds SET status='confirmed', updated_at=NOW() " +
-                    "WHERE lead_id=$1 AND status='awaiting_deposit'",
-                    [localInvoice.leadId],
-                  );
-                  await pool.query(
-                    "UPDATE bookings SET status='booked' WHERE id IN " +
-                    "(SELECT booking_id FROM booking_slot_holds WHERE lead_id=$1 AND status='confirmed')",
-                    [localInvoice.leadId],
-                  );
-                } catch (holdErr) {
-                  console.warn("[Square webhook] booking hold confirmation skipped:", holdErr instanceof Error ? holdErr.message : holdErr);
-                }
-
-                if (lead.status !== "completed") {
+                if (payment.kind !== "partial") {
+                  // A paid deposit or a full payment confirms an exact-time
+                  // hold. This does not imply that the full job balance is paid.
                   try {
-                    const { dispatchJob } = await import("./dispatch");
-                    const dispatchResult = await dispatchJob(lead.id, { reason: `square_${payment.kind}` });
-                    console.log(`[Square webhook] Dispatch request for ${lead.id}: ${dispatchResult.state}${dispatchResult.message ? ` (${dispatchResult.message})` : ""}`);
-                  } catch (dispatchErr: unknown) {
-                    const msg = dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr);
-                    console.error(`[Square webhook] Auto-dispatch failed for lead ${localInvoice.leadId}:`, msg);
+                    await pool.query(
+                      "UPDATE booking_slot_holds SET status='confirmed', updated_at=NOW() " +
+                      "WHERE lead_id=$1 AND status='awaiting_deposit'",
+                      [localInvoice.leadId],
+                    );
+                    await pool.query(
+                      "UPDATE bookings SET status='booked' WHERE id IN " +
+                      "(SELECT booking_id FROM booking_slot_holds WHERE lead_id=$1 AND status='confirmed')",
+                      [localInvoice.leadId],
+                    );
+                  } catch (holdErr) {
+                    console.warn("[Square webhook] booking hold confirmation skipped:", holdErr instanceof Error ? holdErr.message : holdErr);
+                  }
+
+                  if (lead.status !== "completed") {
+                    try {
+                      const { dispatchJob } = await import("./dispatch");
+                      const dispatchResult = await dispatchJob(lead.id, { reason: `square_${payment.kind}` });
+                      console.log(`[Square webhook] Dispatch request for ${lead.id}: ${dispatchResult.state}${dispatchResult.message ? ` (${dispatchResult.message})` : ""}`);
+                    } catch (dispatchErr: unknown) {
+                      const msg = dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr);
+                      console.error(`[Square webhook] Auto-dispatch failed for lead ${localInvoice.leadId}:`, msg);
+                    }
                   }
                 }
               }

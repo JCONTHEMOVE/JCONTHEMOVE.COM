@@ -1,4 +1,4 @@
-export type JobInvoicePaymentKind = "deposit" | "paid_in_full";
+export type JobInvoicePaymentKind = "deposit" | "partial" | "paid_in_full";
 
 export type JobInvoicePaymentClassification = {
   kind: JobInvoicePaymentKind;
@@ -28,7 +28,7 @@ export function classifyJobInvoicePayment(input: {
   invoicePurpose?: string | null;
 }): JobInvoicePaymentClassification {
   const invoiceAmount = dollars(input.invoiceAmount);
-  const jobTotal = dollars(input.jobTotal) || invoiceAmount;
+  const jobTotal = dollars(input.jobTotal);
   const depositAmount = dollars(input.depositAmount);
   const isFirstRequiredPayment = input.depositRequired === true && input.depositAlreadyPaid !== true;
   const isLessThanJobTotal = jobTotal > 0 && invoiceAmount < jobTotal - 0.01;
@@ -37,14 +37,15 @@ export function classifyJobInvoicePayment(input: {
   // delivery even after deposit_paid has already flipped to true. A later
   // balance invoice is classified as full payment only after that guard.
   const explicitPurpose = String(input.invoicePurpose || "").toLowerCase();
+  const confirmedDeposit = input.depositAlreadyPaid === true ? depositAmount : 0;
+  const coversJob = jobTotal > 0 && invoiceAmount > 0
+    && Math.round((invoiceAmount + confirmedDeposit) * 100) >= Math.round(jobTotal * 100);
   const kind: JobInvoicePaymentKind = explicitPurpose === "deposit"
     ? "deposit"
-    : ["final_balance", "supplement"].includes(explicitPurpose)
-      ? "paid_in_full"
-      : input.depositRequired === true
+    : !["final_balance", "supplement"].includes(explicitPurpose) && input.depositRequired === true
         && ((matchesConfiguredDeposit && isLessThanJobTotal) || (isFirstRequiredPayment && isLessThanJobTotal))
         ? "deposit"
-        : "paid_in_full";
+        : coversJob ? "paid_in_full" : "partial";
 
   return {
     kind,
