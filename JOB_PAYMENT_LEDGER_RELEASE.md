@@ -4,6 +4,7 @@ Updated September 9, 2026. Implementation is a draft candidate, not a deployed s
 
 ## Implemented
 
+- Invoice retry acceptance now invokes the real lead-invoice service with a simulated idempotent provider. Lost responses at customer, order, invoice and publish phases reuse one resource per phase; local insert failures retry without resetting paid records. Changed amount/description retries fail on a payload conflict. This is isolated orchestration evidence, not Square HTTP/API acceptance; mutable request recovery and signature-to-effects checks remain open.
 - Canonical payments: unique provider/payment identity, integer-cent USD amounts, approved source quote, current quote/lead-total agreement, cumulative coverage and gift-funded exclusions. Payments and paid markers commit together under a job row lock.
 - Refunds: unique refund identity, original-payment association, cumulative amount/funding limits, and net reconciliation. Refund-first delivery records the verified original payment and refund atomically without briefly marking the job paid. Tipped refunds require explicit allocation and currently fail closed.
 - Square adapters: retrieve payment/refund records from Square, validate completed status, location, currency, funding and stored order/job/quote association. Sandbox and production identities are separate. The signed webhook calls these adapters only when both ledger and Square flags are enabled.

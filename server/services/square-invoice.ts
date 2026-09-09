@@ -101,16 +101,22 @@ async function applyDualDelivery(
 export class SquareInvoiceService {
   private locationId: string | null = null;
 
+  constructor(private readonly dependencies: {
+    getClient?: () => Promise<SquareClient>;
+    getLocationId?: () => string | undefined | null;
+    invoiceStore?: Pick<typeof storage, 'getSquareInvoiceBySquareId' | 'createSquareInvoice'>;
+  } = {}) {}
+
   async getLocationId(): Promise<string> {
     if (this.locationId) return this.locationId;
-    const configuredLocation = getSquareLocationId();
+    const configuredLocation = (this.dependencies.getLocationId || getSquareLocationId)();
     if (configuredLocation) {
       this.locationId = configuredLocation;
       return configuredLocation;
     }
 
     try {
-      const client = await getSquareClient();
+      const client = await (this.dependencies.getClient || getSquareClient)();
       const response = await client.locations.list();
       const locations = response.locations;
       if (!locations || locations.length === 0) {
@@ -134,7 +140,7 @@ export class SquareInvoiceService {
 
   async createOrGetCustomer(email: string | null | undefined, name: string, phone?: string, idempotencyKey?: string): Promise<string> {
     try {
-      const client = await getSquareClient();
+      const client = await (this.dependencies.getClient || getSquareClient)();
       const customerEmail = isDeliverableEmail(email) ? email.trim() : undefined;
 
       if (customerEmail) {
@@ -188,7 +194,7 @@ export class SquareInvoiceService {
     deliveryMethod: InvoiceDeliveryMethod = "email",
     options: LeadInvoiceOptions = {},
   ): Promise<{ invoiceId: string; invoiceUrl: string; squareInvoiceId: string }> {
-    const client = await getSquareClient();
+    const client = await (this.dependencies.getClient || getSquareClient)();
     const locationId = await this.getLocationId();
     const customerName = `${lead.firstName} ${lead.lastName}`;
     const requestKeys = squareInvoiceRequestKeys(options.idempotencyKey);
@@ -275,7 +281,8 @@ export class SquareInvoiceService {
     };
 
     const savedInvoice = await persistSquareInvoiceOnce(invoiceData, {
-      find: id => storage.getSquareInvoiceBySquareId(id), create: data => storage.createSquareInvoice(data),
+      find: id => (this.dependencies.invoiceStore || storage).getSquareInvoiceBySquareId(id),
+      create: data => (this.dependencies.invoiceStore || storage).createSquareInvoice(data),
     });
 
     return {
@@ -295,7 +302,7 @@ export class SquareInvoiceService {
     deliveryMethod: InvoiceDeliveryMethod = "email",
     options: { idempotencyKey?: string; purpose?: InvoicePurpose } = {},
   ): Promise<{ invoiceId: string; invoiceUrl: string; squareInvoiceId: string }> {
-    const client = await getSquareClient();
+    const client = await (this.dependencies.getClient || getSquareClient)();
     const locationId = await this.getLocationId();
     const customerId = await this.createOrGetCustomer(email, name, phone);
 
@@ -408,7 +415,7 @@ export class SquareInvoiceService {
     deliveryMethod: InvoiceDeliveryMethod = "email",
     options: ItemizedInvoiceOptions = {},
   ): Promise<{ invoiceId: string; invoiceUrl: string; squareInvoiceId: string }> {
-    const client = await getSquareClient();
+    const client = await (this.dependencies.getClient || getSquareClient)();
     const locationId = await this.getLocationId();
     const customerName = `${lead.firstName} ${lead.lastName}`;
     const customerId = await this.createOrGetCustomer(lead.email, customerName, lead.phone || undefined);
@@ -542,7 +549,7 @@ export class SquareInvoiceService {
 
   async getInvoiceStatus(squareInvoiceId: string): Promise<string> {
     try {
-      const client = await getSquareClient();
+      const client = await (this.dependencies.getClient || getSquareClient)();
       const response = await client.invoices.get({ invoiceId: squareInvoiceId });
       return response.invoice?.status || "UNKNOWN";
     } catch (error: unknown) {
@@ -554,7 +561,7 @@ export class SquareInvoiceService {
 
   async cancelInvoice(squareInvoiceId: string): Promise<void> {
     try {
-      const client = await getSquareClient();
+      const client = await (this.dependencies.getClient || getSquareClient)();
       const getResponse = await client.invoices.get({ invoiceId: squareInvoiceId });
       const version = getResponse.invoice?.version;
 
@@ -577,7 +584,7 @@ export class SquareInvoiceService {
 
   async syncInvoiceStatus(squareInvoiceId: string): Promise<string> {
     try {
-      const client = await getSquareClient();
+      const client = await (this.dependencies.getClient || getSquareClient)();
       const response = await client.invoices.get({ invoiceId: squareInvoiceId });
       const invoice = response.invoice;
 
