@@ -25,6 +25,7 @@ All new flags are disabled by default:
 | `JOB_PAYMENT_LEDGER_ENABLED` | Enables canonical ledger services and invoice coverage requirements; Square routing also requires its adapter flag. |
 | `SQUARE_JOB_PAYMENT_LEDGER_ENABLED` | Routes supported signed Square payment/refund events into canonical adapters. |
 | `JOB_PAYMENT_REWARDS_ENABLED` | Allows canonical reward settlement and queue operations. |
+| `JOB_INVOICE_RECONCILIATION_ENABLED` | Allows claiming/completing invoice reconciliation work when the ledger is also enabled. Default off; provider worker and release acceptance remain unfinished. |
 | `JOB_PAYMENT_REWARD_WORKER_ENABLED` | Along with the ledger/reward flags, starts the bounded worker sweep. |
 
 Apply and verify the additive schema before enabling these flags. Existing ledger rows need approved-quote backfill before a non-null quote-revision column can be introduced. No production flag, payment migration, wallet issuance or live restore has been performed in this work.
@@ -66,6 +67,8 @@ Apply and verify the additive schema before enabling these flags. Existing ledge
 7. Complete authenticated owner/mobile UI acceptance and check the latest candidate CI before deployment. Optional PayPal/crypto adapters remain later work and must not be advertised as enabled.
 
 ## Test commands
+
+Invoice reconciliation handoff is durable: new payment/refund rows enqueue the affected job in their own transaction, and final-invoice publication acknowledgement commits its request with publication metadata. `job_invoice_reconciliation_queue` is additive to `JOB_PAYMENT_LEDGER_SCHEMA` and must exist before enabling the ledger. Requests accumulate even while claiming is disabled. One row per job has a generation; new work preserves an active lease but prevents its older generation from completing the new request. Expired claims use replacement tokens and failures retry after a delay. Existing canonical-invoice and publication SQL harnesses cover transaction rollback, duplicate suppression, changes during claims, lease replacement and retry delay. These are controlled interleavings, not proof of a running provider worker. Historical backlog recovery, pre-provider invoice intent, reconciliation decisions, cancellation dispatch and final closeout/messages still require implementation and acceptance. No production migration or worker was started.
 
 Cancellation recovery now verifies provider identity/state/version, re-reads ambiguous cancellation results and retries acknowledgement of an already-canceled invoice. Local acknowledgement only changes draft/sent/canceled records; paid, refunded and unexpected states require reconciliation. Tests invoke the actual service with simulated responses and execute the acknowledgement SQL against disposable databases. The cancellation helper does not refund payments, delete drafts or run automatically when another payment arrives. See [Square cancellation requirements](https://developer.squareup.com/docs/invoices-api/cancel-delete-invoices). Durable invoice intent, automatic postpublication reconciliation and controlled provider acceptance remain open.
 

@@ -1,6 +1,7 @@
 import { pool } from "../db";
 import type { PoolClient } from "@neondatabase/serverless";
 import { JOB_REWARD_QUEUE_SCHEMA, enqueueJobReward } from "./jobRewardQueue";
+import { JOB_INVOICE_RECONCILIATION_QUEUE_SCHEMA, enqueueJobInvoiceReconciliation } from './jobInvoiceReconciliationQueue';
 import { validateConfirmedJobPayment, reconcileJobPaymentTotals, type ConfirmedJobPayment } from "./jobPaymentLedgerPolicy";
 
 // Additive and deliberately not registered in boot or provider routes yet.
@@ -40,6 +41,7 @@ export const JOB_PAYMENT_LEDGER_SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS idx_job_confirmed_refunds_payment ON job_confirmed_refunds(payment_id);
   ${JOB_REWARD_QUEUE_SCHEMA}
+  ${JOB_INVOICE_RECONCILIATION_QUEUE_SCHEMA}
 `;
 
 export const JOB_PAYMENT_TOTALS_SQL = `
@@ -127,6 +129,7 @@ export async function confirmJobPayment(payment: ConfirmedJobPayment, options: {
         await enqueueJobReward(client, payment.leadId);
       }
     }
+    if (inserted.rows.length) await enqueueJobInvoiceReconciliation(client, payment.leadId);
     if (!options.transaction) await client.query("COMMIT");
     return { ...reconciliation, duplicate: inserted.rows.length === 0, paidCents, giftFundedCents,
       quoteRevisionId: activeQuote.id, completed: leads[0].status === "completed",

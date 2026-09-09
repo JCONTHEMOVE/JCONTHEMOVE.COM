@@ -1,6 +1,7 @@
 import { pool } from "../db";
 import type { PoolClient } from "@neondatabase/serverless";
 import { confirmJobPayment } from "./jobPaymentLedger";
+import { enqueueJobInvoiceReconciliation } from './jobInvoiceReconciliationQueue';
 import type { ConfirmedJobPayment } from "./jobPaymentLedgerPolicy";
 
 export interface ConfirmedJobRefund {
@@ -51,6 +52,7 @@ export async function recordConfirmedJobRefund(refund: ConfirmedJobRefund, trans
         || refunded - gift > Number(payment.amount_cents) - Number(payment.gift_funded_cents)) {
       throw new Error("Refund exceeds the original payment or its funding allocation");
     }
+    if (inserted.rows.length) await enqueueJobInvoiceReconciliation(client, payment.lead_id);
     if (!transaction) await client.query("COMMIT");
     return { leadId: payment.lead_id, duplicate: inserted.rows.length === 0, refundedCents: refunded,
       requiresOwnerReview: true as const, rewardsReversed: false as const };
