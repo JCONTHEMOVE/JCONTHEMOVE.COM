@@ -28,6 +28,7 @@ try {
   await testPool.query("CREATE SCHEMA jc_ledger_concurrency");
   createdSchema = true;
   await testPool.query(`CREATE TABLE leads(id varchar PRIMARY KEY,total_price numeric(10,2),status text,payment_paid_at timestamptz);
+    CREATE TABLE job_closeouts(lead_id varchar PRIMARY KEY,status text,customer_approved_at timestamptz,pricing_snapshot jsonb);
     CREATE TABLE quote_revisions(id varchar PRIMARY KEY,lead_id varchar REFERENCES leads(id),revision int,
       status text,approved_at timestamptz,customer_total numeric(10,2),currency text);
     INSERT INTO leads VALUES('job',100,'completed',NULL);

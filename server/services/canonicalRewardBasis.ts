@@ -12,6 +12,13 @@ export async function lockCanonicalRewardBasis(client: PoolClient, leadId: strin
     "SELECT status,payment_paid_at,total_price FROM leads WHERE id=$1 FOR UPDATE", [leadId]);
   const job = jobs[0];
   if (!job || job.status !== "completed" || !job.payment_paid_at) throw new Error("Job must be completed and paid before rewards");
+  const { rows: closeouts } = await client.query<{
+    status: string; customer_approved_at: Date | null; pricing_snapshot: Record<string, unknown> | null;
+  }>("SELECT status,customer_approved_at,pricing_snapshot FROM job_closeouts WHERE lead_id=$1 FOR SHARE", [leadId]);
+  const closeout = closeouts[0];
+  if (closeout && (closeout.status !== 'paid' || !closeout.customer_approved_at)) {
+    throw new Error('Job closeout must be approved and paid before rewards');
+  }
   const { rows: quotes } = await client.query<{ id: string; customer_total: string; currency: string }>(
     `SELECT id,customer_total,currency FROM quote_revisions WHERE lead_id=$1 AND approved_at IS NOT NULL
       AND status IN ('approved','sent') ORDER BY revision DESC LIMIT 1 FOR SHARE`, [leadId]);
@@ -19,6 +26,9 @@ export async function lockCanonicalRewardBasis(client: PoolClient, leadId: strin
   const totalCents = Math.round(Number(quote?.customer_total) * 100);
   if (!quote || quote.currency !== "USD" || !Number.isSafeInteger(totalCents) || totalCents <= 0
       || Math.round(Number(job.total_price) * 100) !== totalCents) throw new Error("Reward quote requires reconciliation");
+  if (closeout && closeout.pricing_snapshot?.finalQuoteRevisionId !== quote.id) {
+    throw new Error('Closeout reward quote requires reconciliation');
+  }
   const { rows } = await client.query<{ paid: string; gift: string; refund_count: string }>(JOB_PAYMENT_TOTALS_SQL, [leadId]);
   const giftCents = Number(rows[0].gift);
   const totals = reconcileJobPaymentTotals(totalCents, Number(rows[0].paid), giftCents);

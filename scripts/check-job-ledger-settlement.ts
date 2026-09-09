@@ -49,6 +49,7 @@ try {
   await assert.rejects(settleJobLedgerRecipient(retry), /requires reconciliation/);
   assert.equal(Number((await database.query("SELECT token_balance::text FROM wallet_accounts")).rows[0].token_balance), 1000);
   await database.exec(`CREATE TABLE leads(id varchar PRIMARY KEY,total_price numeric,status text,payment_paid_at timestamptz);
+    CREATE TABLE job_closeouts(lead_id varchar PRIMARY KEY,status text,customer_approved_at timestamptz,pricing_snapshot jsonb);
     CREATE TABLE quote_revisions(id varchar PRIMARY KEY,lead_id varchar,revision int,status text,
       approved_at timestamptz,customer_total numeric,currency text);
     INSERT INTO leads VALUES('canonical',100,'completed',NOW());
@@ -83,7 +84,16 @@ try {
   assert.equal(await finishJobReward(retryClaim, true), true);
   assert.equal(await claimJobReward(), null);
   console.log("PASS: durable reward queue deduplication, expiry, stale-worker fencing and retry scheduling");
+  await database.exec(`INSERT INTO job_closeouts VALUES('canonical','awaiting_customer',NULL,'{}');`);
+  await assert.rejects(settleJobLedgerRecipient({ ...retry, ledgerId: 2, leadId: 'canonical', userId: 'gift-customer' }), /closeout must be approved/);
+  assert.equal((await database.query("SELECT COUNT(*)::int AS n FROM wallet_accounts WHERE user_id='gift-customer'")).rows[0].n, 0);
+  await database.exec("UPDATE job_closeouts SET status='paid' WHERE lead_id='canonical'");
+  await assert.rejects(readCanonicalRewardBasis('canonical'), /closeout must be approved/);
+  await database.exec("UPDATE job_closeouts SET customer_approved_at=NOW(),pricing_snapshot='{\"finalQuoteRevisionId\":\"other-quote\"}' WHERE lead_id='canonical'");
+  await assert.rejects(readCanonicalRewardBasis('canonical'), /Closeout reward quote requires reconciliation/);
+  await database.exec("UPDATE job_closeouts SET pricing_snapshot='{\"finalQuoteRevisionId\":\"quote\"}' WHERE lead_id='canonical'");
   const basis = await readCanonicalRewardBasis("canonical");
+  console.log('PASS: unapproved closeout cannot credit a wallet; approved paid closeout must match the final quote');
   assert.equal(basis.customerEligibleUsd, 60);
   assert.equal(basis.giftFundedUsd, 40);
   const canonicalRecipient = { ...retry, ledgerId: 2, leadId: "canonical", userId: "gift-customer" };
