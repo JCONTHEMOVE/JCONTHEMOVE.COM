@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { InsertSquareInvoice, SquareInvoice } from '@shared/schema';
 
-export function squareInvoiceRequestKeys(key = randomUUID()) {
+export function squareInvoiceRequestKeys(key: string = randomUUID()) {
   const digest = createHash('sha256').update(key).digest('hex');
   return { customer: `customer-${digest}`, order: `order-${digest}`, invoice: `invoice-${digest}`, publish: `publish-${digest}` };
 }
