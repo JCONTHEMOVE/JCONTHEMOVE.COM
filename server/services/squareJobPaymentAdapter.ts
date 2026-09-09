@@ -3,6 +3,7 @@ import { confirmJobPayment } from "./jobPaymentLedger";
 import { verifyAndConfirmSquarePayment } from "./squareJobPaymentVerification";
 import { verifyAndRecordSquareRefund } from "./squareJobRefundVerification";
 import { recordConfirmedPaymentAndRefund } from "./jobPaymentRefunds";
+import { resolveSquareJobEvent, type SquareOrderBinding } from "./squareJobEventRouting";
 import { getSquareAccessToken, getSquareEnvironment, getSquareLocationId } from "./squareConfig";
 
 /** Disabled and not routed. Accept only an ID from a verified server event;
@@ -30,6 +31,18 @@ async function findJobQuotes(orderId: string) {
     `SELECT DISTINCT lead_id,quote_revision_id FROM square_invoices
       WHERE square_order_id=$1 AND lead_id IS NOT NULL AND quote_revision_id IS NOT NULL`, [orderId]);
   return rows;
+}
+
+/** Staged routing entrypoint, not yet registered in the shared webhook.
+ * Unmapped events require a durable review/retry decision by that handler. */
+export async function resolveCanonicalSquareEvent(eventType: string, objectId: string) {
+  const { client } = await getLedgerClient();
+  return resolveSquareJobEvent(eventType, objectId, {
+    getPayment: async id => (await client.payments.get({ paymentId: id })).payment,
+    getRefund: async id => (await client.refunds.get({ refundId: id })).refund,
+    findOrderBindings: async orderId => (await pool.query<SquareOrderBinding>(
+      'SELECT lead_id,quote_revision_id FROM square_invoices WHERE square_order_id=$1', [orderId])).rows,
+  });
 }
 
 export async function confirmSquareJobPayment(paymentId: string) {

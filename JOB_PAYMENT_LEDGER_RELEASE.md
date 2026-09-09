@@ -38,6 +38,7 @@ Apply and verify the additive schema before enabling these flags. Existing ledge
 ## Remaining release work
 
 1. Route signed Square events into the canonical adapters while distinguishing unrelated prepaid, shop-credit and gift-card events. Coordinate invoice-side effects so legacy handlers cannot bypass canonical settlement or double-account.
+   A staged resolver now retrieves payment/refund records and classifies stored order associations as job, unrelated, or unmapped. Missing/ambiguous quote associations reject for reconciliation. Focused routing tests passed. The resolver is not registered in the webhook; durable handling of unmapped events and invoice-side-effect coordination remain open.
 2. Complete tipped-refund allocation and approve treatment of already-issued rewards after refunds. No automatic reversal policy has been approved.
 3. Coordinate quote/completion writers with reward settlement, including newly approved quote revisions and assignments changing during retries.
 4. Verify migration against the actual production schema and reconcile historical paid/reward markers. Complete an isolated Replit production recovery drill. Scheduled backups are enabled; first-backup success and recovery have not been proved.
