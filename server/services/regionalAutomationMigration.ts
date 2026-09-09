@@ -1,6 +1,7 @@
 import { pool } from "../db";
 import { ensureQuoteRevisionInfrastructure } from "./quoteRevisions";
 import { SQUARE_INVOICE_CLAIM_UPGRADE } from "./squareInvoiceEffectClaims";
+import { SQUARE_EVENT_CLAIM_UPGRADE } from "./squareEventClaims";
 
 let migrationPromise: Promise<void> | null = null;
 
@@ -185,6 +186,7 @@ async function runMigration(): Promise<void> {
       completed_at TIMESTAMPTZ
     );
     ${SQUARE_INVOICE_CLAIM_UPGRADE}
+    ${SQUARE_EVENT_CLAIM_UPGRADE}
   `);
 
   await pool.query(`

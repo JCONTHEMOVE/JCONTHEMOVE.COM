@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createDisposableLedgerDatabase } from "./disposable-ledger-database";
 import { createInvoiceEffectClaims, SQUARE_INVOICE_CLAIM_UPGRADE } from "../server/services/squareInvoiceEffectClaims";
+import { createSquareEventClaims, SQUARE_EVENT_CLAIM_UPGRADE } from "../server/services/squareEventClaims";
 
 const database = await createDisposableLedgerDatabase(process.argv[2]);
 try {
@@ -34,6 +35,33 @@ try {
   const row = (await database.query("SELECT * FROM square_invoice_payment_effects WHERE square_invoice_id='invoice'")).rows[0];
   assert.equal(row.last_error, null);
   assert.ok(row.completed_at);
+  await database.exec(`CREATE TABLE square_webhook_events(event_id text PRIMARY KEY,event_type text NOT NULL,
+    square_object_id text,payload_hash text NOT NULL,status text NOT NULL,last_error text,
+    received_at timestamptz NOT NULL DEFAULT NOW(),processed_at timestamptz);`);
+  await database.exec(SQUARE_EVENT_CLAIM_UPGRADE);
+  await database.exec(SQUARE_EVENT_CLAIM_UPGRADE);
+  const events = createSquareEventClaims((sql, args) => database.query(sql, args));
+  const input = { eventId: 'event', eventType: 'invoice.paid', squareObjectId: 'invoice', rawBody: '{"id":"event"}' };
+  const eventFirst = await events.claim(input);
+  if (eventFirst.status !== 'claimed') throw new Error('Missing event claim');
+  assert.equal((await events.claim(input)).status, 'in_progress');
+  await assert.rejects(events.claim({ ...input, rawBody: '{"id":"changed"}' }), /requires reconciliation/);
+  await database.exec("UPDATE square_webhook_events SET received_at=NOW()-INTERVAL '6 minutes'");
+  const eventSecond = await events.claim(input);
+  if (eventSecond.status !== 'claimed') throw new Error('Missing replacement event claim');
+  assert.notEqual(eventFirst.claim.token, eventSecond.claim.token);
+  assert.equal(await events.complete(eventFirst.claim), false);
+  assert.equal(await events.fail(eventFirst.claim, 'stale'), false);
+  assert.equal(await events.fail(eventSecond.claim, 'retryable'), true);
+  const eventThird = await events.claim(input);
+  if (eventThird.status !== 'claimed') throw new Error('Failed event must retry');
+  assert.equal(await events.complete(eventSecond.claim), false);
+  assert.equal(await events.complete(eventThird.claim), true);
+  assert.equal(await events.fail(eventThird.claim, 'late'), false);
+  await database.exec('UPDATE square_webhook_events SET claim_token=NULL');
+  assert.equal((await events.claim(input)).status, 'processed');
+  await assert.rejects(events.claim({ ...input, rawBody: '{}' }), /requires reconciliation/);
+  console.log('PASS: event attempt fencing, payload identity checks, failed retry and legacy completed history');
   console.log('PASS: repeatable claim upgrade, legacy history, busy retry, expiry, same-event fencing and failed-claim recovery');
 } finally {
   await database.close();

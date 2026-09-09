@@ -11,8 +11,12 @@ const sessions = readFileSync('server/services/quickBookSessions.ts', 'utf8');
 const claimSource = readFileSync('server/services/squareInvoiceEffectClaims.ts', 'utf8');
 const claimUpgrade = claimSource.match(/SQUARE_INVOICE_CLAIM_UPGRADE = `([\s\S]*?)`;/)?.[1];
 assert.ok(claimUpgrade, 'Invoice claim migration SQL must be available');
+const eventSource = readFileSync('server/services/squareEventClaims.ts', 'utf8');
+const eventUpgrade = eventSource.match(/SQUARE_EVENT_CLAIM_UPGRADE = `([\s\S]*?)`;/)?.[1];
+assert.ok(eventUpgrade, 'Event claim migration SQL must be available');
 const blocks = source => [...source.matchAll(/pool\.query\(`([\s\S]*?)`\)/g)].map(m => {
-  const sql = m[1].replace('${SQUARE_INVOICE_CLAIM_UPGRADE}', claimUpgrade);
+  const sql = m[1].replace('${SQUARE_INVOICE_CLAIM_UPGRADE}', claimUpgrade)
+    .replace('${SQUARE_EVENT_CLAIM_UPGRADE}', eventUpgrade);
   assert.ok(!sql.includes('${'), 'Migration verifier must resolve every SQL interpolation');
   return sql;
 });

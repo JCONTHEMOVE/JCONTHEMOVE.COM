@@ -24646,7 +24646,7 @@ Thank you for your business!
   // SQUARE_WEBHOOK_SIGNATURE_KEY must be set; requests without a valid
   // HMAC-SHA256 signature are rejected with 401.
   app.post("/api/webhooks/square", async (req: Request, res: Response) => {
-    let claimedWebhookEventId: string | null = null;
+    let claimedWebhookEvent: import("./services/squareEventClaims").SquareEventClaim | null = null;
     let claimedPaymentInvoice: import("./services/squareInvoiceEffectClaims").InvoiceEffectClaim | null = null;
     try {
       const rawBody = req.body as Buffer;
@@ -24696,14 +24696,14 @@ Thank you for your business!
       const squareObjectId = typeof eventObject?.id === "string" ? eventObject.id : null;
       const { claimSquareWebhookEvent, completeSquareWebhookEvent } = await import("./services/squareWebhookIdempotency");
       const webhookClaim = await claimSquareWebhookEvent({ eventId: webhookEventId, eventType, squareObjectId, rawBody: bodyStr });
-      if (webhookClaim === "processed") {
+      if (webhookClaim.status === "processed") {
         return res.status(200).json({ received: true, duplicate: true });
       }
-      if (webhookClaim === "in_progress") {
+      if (webhookClaim.status === "in_progress") {
         res.setHeader("Retry-After", "10");
         return res.status(503).json({ received: false, retry: true });
       }
-      claimedWebhookEventId = webhookEventId;
+      claimedWebhookEvent = webhookClaim.claim;
 
       console.log(`[Square webhook] Received event: ${eventType}`);
 
@@ -24738,7 +24738,7 @@ Thank you for your business!
         const isFullyPaid = invoiceStatus === "PAID" || eventType === "invoice.paid";
         if (!isFullyPaid) {
           console.log(`[Square webhook] ${eventType} for ${squareInvoiceId} — invoice status=${invoiceStatus || "unknown"}, NOT fully paid, skipping wallet/lead/dispatch work (waiting for invoice.paid)`);
-          await completeSquareWebhookEvent(webhookEventId);
+          await completeSquareWebhookEvent(webhookClaim.claim);
           return res.json({ received: true, skipped: "partial_payment" });
         }
 
@@ -24746,7 +24746,7 @@ Thank you for your business!
           const { claimSquareInvoicePaymentEffect } = await import("./services/squareWebhookIdempotency");
           const invoiceClaim = await claimSquareInvoicePaymentEffect(squareInvoiceId, webhookEventId);
           if (invoiceClaim.status === "processed") {
-            await completeSquareWebhookEvent(webhookEventId);
+            await completeSquareWebhookEvent(webhookClaim.claim);
             return res.status(200).json({ received: true, duplicateInvoicePayment: true });
           }
           if (invoiceClaim.status === "in_progress") {
@@ -25034,14 +25034,14 @@ Thank you for your business!
         const { completeSquareInvoicePaymentEffect } = await import("./services/squareWebhookIdempotency");
         await completeSquareInvoicePaymentEffect(claimedPaymentInvoice);
       }
-      await completeSquareWebhookEvent(webhookEventId);
+      await completeSquareWebhookEvent(webhookClaim.claim);
       res.status(200).json({ received: true });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error("[Square webhook] Error processing event:", msg);
-      if (claimedWebhookEventId) {
+      if (claimedWebhookEvent) {
         const { failSquareWebhookEvent } = await import("./services/squareWebhookIdempotency");
-        await failSquareWebhookEvent(claimedWebhookEventId, error);
+        await failSquareWebhookEvent(claimedWebhookEvent, error);
       }
       if (claimedPaymentInvoice) {
         const { failSquareInvoicePaymentEffect } = await import("./services/squareWebhookIdempotency");
