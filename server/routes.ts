@@ -66,6 +66,7 @@ import { solanaTransferService } from "./services/solana-transfer";
 import { jupiterSwapService, SUPPORTED_TOKENS } from "./services/jupiter-swap";
 import { ensureMomsAccount } from "./services/generosityFund";
 import { classifyJobInvoicePayment } from "./services/jobPaymentClassification";
+import { createPaymentReconciliationHandler } from "./services/paymentReconciliationHandler";
 import { grantLotteryTicketsForActivity } from "./services/disburse-job-tokens";
 import { getDepositInfo, extractZip } from "@shared/depositRules";
 import { MIN_REDEMPTION_TOKENS, REDEMPTION_INCREMENT, roundToIncrement, validateRedemption, tokensToDollars } from "@shared/tokenRedemptionRules";
@@ -27574,17 +27575,7 @@ Thank you for your business!
     }
   });
 
-  app.get("/api/admin/payments/reconciliation/:leadId", isAuthenticated, requireAdmin, async (req, res) => {
-    try {
-      const { getJobPaymentReconciliation } = await import("./services/jobPaymentReconciliation");
-      const report = await getJobPaymentReconciliation(req.params.leadId);
-      if (!report) return res.status(404).json({ error: "Job not found" });
-      return res.json(report);
-    } catch (error) {
-      console.error("[Payment reconciliation] read failed:", error instanceof Error ? error.message : error);
-      return res.status(500).json({ error: "Payment reconciliation is unavailable" });
-    }
-  });
+  app.get("/api/admin/payments/reconciliation/:leadId", isAuthenticated, requireAdmin, createPaymentReconciliationHandler());
 
   app.get("/api/admin/btc-payments", isAuthenticated, requireBusinessOwner, async (_req, res) => {
     try {
