@@ -2201,10 +2201,10 @@ export function MovingJunkPackagePicker({
           {inventoryItems.length > 0 && (
             <div className="mt-3 rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-xs">
               <p className="font-black text-sky-200">
-                Quote range: ${inventorySummary.min}-${inventorySummary.max} · {inventorySummary.crew} movers · {inventorySummary.truck}
+                Recommended setup: {inventorySummary.crew} movers · {inventorySummary.truck}
               </p>
               <p className="mt-1 text-muted-foreground">
-                Specialist confirms final quote before scheduling.
+                Your estimate appears at review using your location, crew, and schedule. A specialist confirms the final quote before scheduling.
               </p>
             </div>
           )}
