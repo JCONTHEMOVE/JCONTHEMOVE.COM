@@ -68,6 +68,14 @@ try {
   assert.equal(adapted.rewardsTriggered, false);
   const report = await getJobPaymentReconciliation("other");
   assert.ok(report?.enabled);
+  assert.equal(report.rewardQueue, null);
+  await database.exec("INSERT INTO job_reward_queue(lead_id,status,attempts,last_failure_code) VALUES('other','retry',2,'settlement_incomplete')");
+  const retryReport = await getJobPaymentReconciliation("other");
+  assert.ok(retryReport?.enabled);
+  assert.equal(retryReport.rewardQueue?.status, 'retry');
+  assert.equal(retryReport.rewardQueue?.attempts, 2);
+  assert.ok(retryReport.reviewReasons.includes('reward_retry_pending'));
+  assert.ok(report?.enabled);
   assert.equal(report.paymentCount, 1);
   assert.equal(report.giftFundedCents, 200000);
   assert.deepEqual(report.reviewReasons, []);

@@ -15,6 +15,7 @@ const reviewLabels: Record<string, string> = {
   overpayment: "Recorded payments exceed the approved quote.",
   reward_marker_requires_review: "A reward is marked issued while completion or payment evidence is incomplete.",
   refund_requires_review: "A refund is recorded. Review the job's paid status and any previously issued rewards.",
+  reward_retry_pending: "Reward settlement is incomplete and queued for another attempt.",
 };
 
 export function PaymentReconciliationView({ report }: { report: Report }) {
@@ -29,6 +30,16 @@ export function PaymentReconciliationView({ report }: { report: Report }) {
         ["Remaining", dollars(report.totals?.outstandingCents ?? null)], ["Gift-funded", dollars(report.giftFundedCents)]].map(([label, value]) =>
         <div key={label}><dt className="text-muted-foreground">{label}</dt><dd className="font-semibold">{value}</dd></div>)}
     </dl>
+    <section className="rounded-lg border p-3 text-sm" aria-label="Reward processing">
+      <h3 className="font-semibold">Reward processing</h3>
+      <p>{report.automaticRewardsEnabled ? "Automatic processing enabled" : "Automatic processing disabled"}</p>
+      {report.rewardQueue ? <dl className="mt-2 space-y-1 text-xs">
+        <div><dt className="inline font-medium">Queue status: </dt><dd className="inline">{report.rewardQueue.status}</dd></div>
+        <div><dt className="inline font-medium">Attempts: </dt><dd className="inline">{report.rewardQueue.attempts}</dd></div>
+        {report.rewardQueue.status === 'retry' ? <div><dt className="inline font-medium">Next attempt: </dt><dd className="inline">{new Date(report.rewardQueue.next_attempt_at).toLocaleString()}</dd></div> : null}
+        {report.rewardQueue.completed_at ? <div><dt className="inline font-medium">Queue completed: </dt><dd className="inline">{new Date(report.rewardQueue.completed_at).toLocaleString()}</dd></div> : null}
+      </dl> : <p className="mt-1 text-xs text-muted-foreground">No reward handoff recorded.</p>}
+    </section>
     <p className="text-xs text-muted-foreground">Verified refunds are deducted from net payments. Reward markers show recorded issuance, not verified wallet balances. Reward reversal requires review.</p>
     <dl className="space-y-1 text-xs">
       <div><dt className="inline font-medium">Paid marker: </dt><dd className="inline">{report.paidMarkerAt ? new Date(report.paidMarkerAt).toLocaleString() : "Not recorded"}</dd></div>

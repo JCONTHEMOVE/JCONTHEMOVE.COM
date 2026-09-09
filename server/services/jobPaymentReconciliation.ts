@@ -46,6 +46,12 @@ export async function getJobPaymentReconciliation(leadId: string) {
       `SELECT r.id::text,r.provider,r.provider_refund_id,p.provider_payment_id,r.amount_cents::text,
         r.gift_funded_cents::text,r.refunded_at FROM job_confirmed_refunds r
        JOIN job_confirmed_payments p ON p.id=r.payment_id WHERE p.lead_id=$1 ORDER BY r.id DESC LIMIT 100`, [leadId]);
+    const { rows: rewardQueue } = await client.query<{
+      status: string; attempts: number; next_attempt_at: string; lease_expires_at: string | null;
+      last_failure_code: string | null; completed_at: string | null;
+    }>(`SELECT status,attempts,next_attempt_at,lease_expires_at,last_failure_code,completed_at
+      FROM job_reward_queue WHERE lead_id=$1`, [leadId]);
+    if (rewardQueue[0]?.status === 'retry') reasons.push('reward_retry_pending');
     await client.query("COMMIT");
     return { enabled: true as const, leadId, status: job.status, quoteRevisionId: job.quote_id,
       paidMarkerAt: job.payment_paid_at, rewardRecordedAt, paidCents, giftFundedCents,
@@ -53,7 +59,9 @@ export async function getJobPaymentReconciliation(leadId: string) {
       payments, paymentCount: Number(sums[0].count), paymentsTruncated: Number(sums[0].count) > payments.length,
       refunds, refundedCents: Number(sums[0].refunded), refundCount: Number(sums[0].refund_count),
       refundsTruncated: Number(sums[0].refund_count) > refunds.length,
-      refundReconciliationAvailable: true as const, automaticRewardsEnabled: false as const };
+      refundReconciliationAvailable: true as const, rewardQueue: rewardQueue[0] || null,
+      automaticRewardsEnabled: process.env.JOB_PAYMENT_REWARDS_ENABLED === 'true'
+        && process.env.JOB_PAYMENT_REWARD_WORKER_ENABLED === 'true' };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw error;
