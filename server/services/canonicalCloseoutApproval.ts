@@ -52,17 +52,20 @@ export async function approveCanonicalCloseout(closeoutId: string) {
       await client.query(`UPDATE quote_revisions SET status='superseded',superseded_by_quote_id=$2,updated_at=NOW()
         WHERE lead_id=$1 AND id<>$2 AND status IN ('approved','sent')`, [job.id, quoteRevisionId]);
     }
+    const invoiceDueDate = typeof snapshot.invoiceDueDate === 'string' ? snapshot.invoiceDueDate
+      : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     await client.query('UPDATE leads SET total_price=$2,last_quote_updated_at=NOW() WHERE id=$1', [job.id, (finalCents / 100).toFixed(2)]);
     await client.query(`UPDATE job_closeouts SET status=$2,customer_approved_at=COALESCE(customer_approved_at,NOW()),
-      pricing_snapshot=pricing_snapshot || jsonb_build_object('finalQuoteRevisionId',$3::text),updated_at=NOW() WHERE id=$1`,
-    [closeoutId, expectedBalance === 0 ? 'paid' : 'approved', quoteRevisionId]);
+      pricing_snapshot=pricing_snapshot || jsonb_build_object('finalQuoteRevisionId',$3::text,'invoiceDueDate',$4::text),updated_at=NOW() WHERE id=$1`,
+    [closeoutId, expectedBalance === 0 ? 'paid' : 'approved', quoteRevisionId, invoiceDueDate]);
     if (expectedBalance === 0) {
       await client.query(`UPDATE leads SET closeout_status='paid',financial_status='paid',
         payment_paid_at=COALESCE(payment_paid_at,$2::timestamptz) WHERE id=$1`, [job.id, sums.settled_at]);
       if (job.status === 'completed') await enqueueJobReward(client, job.id);
     }
     await client.query('COMMIT');
-    return { quoteRevisionId, balanceDue: expectedBalance / 100 };
+    return { quoteRevisionId, balanceDue: expectedBalance / 100, invoiceDueDate,
+      invoiceRequestKey: `closeout:${closeoutId}:${quoteRevisionId}` };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
     throw error;

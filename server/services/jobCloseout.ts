@@ -311,9 +311,10 @@ export async function approveCustomerCloseout(token: string) {
       lead,
       balanceDue,
       `Final balance after completion — actual hours and approved changes`,
-      undefined,
+      canonicalApproval?.invoiceDueDate,
       /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lead.email) ? "email" : "none",
-      { purpose: "final_balance", closeoutId: closeout.id, quoteRevisionId: canonicalApproval?.quoteRevisionId },
+      { purpose: "final_balance", closeoutId: closeout.id, quoteRevisionId: canonicalApproval?.quoteRevisionId,
+        idempotencyKey: canonicalApproval?.invoiceRequestKey },
     );
   } catch (error) {
     await pool.query(

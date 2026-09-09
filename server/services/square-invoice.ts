@@ -3,6 +3,7 @@ import { storage } from "../storage";
 import type { InsertSquareInvoice, Lead } from "@shared/schema";
 import type { InvoicePurpose } from "@shared/regionalAutomation";
 import { getSquareAccessToken, getSquareEnvironment, getSquareLocationId } from "./squareConfig";
+import { squareInvoiceRequestKeys, persistSquareInvoiceOnce } from './squareInvoiceRetry';
 
 export type InvoiceDeliveryMethod = "email" | "sms" | "both" | "none";
 
@@ -23,6 +24,7 @@ export interface InvoiceRecipient {
 }
 
 export interface LeadInvoiceOptions {
+  idempotencyKey?: string;
   purpose?: InvoicePurpose;
   quoteRevisionId?: string | null;
   closeoutId?: string | null;
@@ -130,7 +132,7 @@ export class SquareInvoiceService {
     }
   }
 
-  async createOrGetCustomer(email: string | null | undefined, name: string, phone?: string): Promise<string> {
+  async createOrGetCustomer(email: string | null | undefined, name: string, phone?: string, idempotencyKey?: string): Promise<string> {
     try {
       const client = await getSquareClient();
       const customerEmail = isDeliverableEmail(email) ? email.trim() : undefined;
@@ -167,7 +169,7 @@ export class SquareInvoiceService {
         givenName: firstName,
         familyName: lastName,
         phoneNumber: phone,
-        idempotencyKey: `customer-${customerEmail || phone || name}-${Date.now()}`,
+        idempotencyKey: idempotencyKey || `customer-${customerEmail || phone || name}-${Date.now()}`,
       });
 
       return createResponse.customer!.id!;
@@ -189,12 +191,14 @@ export class SquareInvoiceService {
     const client = await getSquareClient();
     const locationId = await this.getLocationId();
     const customerName = `${lead.firstName} ${lead.lastName}`;
-    const customerId = await this.createOrGetCustomer(lead.email, customerName, lead.phone || undefined);
+    const requestKeys = squareInvoiceRequestKeys(options.idempotencyKey);
+    const customerId = await this.createOrGetCustomer(lead.email, customerName, lead.phone || undefined, requestKeys.customer);
 
     const amountInCents = BigInt(Math.round(amount * 100));
+    const invoiceDueDate = dueDate || this.getDefaultDueDate();
 
     const orderResponse = await client.orders.create({
-      idempotencyKey: `order-${lead.id}-${Date.now()}`,
+      idempotencyKey: requestKeys.order,
       order: {
         locationId,
         customerId,
@@ -215,7 +219,7 @@ export class SquareInvoiceService {
     const squareDelivery = primarySquareDeliveryMethod(deliveryMethod);
 
     const invoiceResponse = await client.invoices.create({
-      idempotencyKey: `invoice-${lead.id}-${Date.now()}`,
+      idempotencyKey: requestKeys.invoice,
       invoice: {
         orderId,
         locationId,
@@ -225,7 +229,7 @@ export class SquareInvoiceService {
         paymentRequests: [
           {
             requestType: "BALANCE",
-            dueDate: dueDate || this.getDefaultDueDate(),
+            dueDate: invoiceDueDate,
           },
         ],
         deliveryMethod: squareDelivery,
@@ -246,7 +250,7 @@ export class SquareInvoiceService {
     const publishResponse = await client.invoices.publish({
       invoiceId: squareInvoice.id!,
       version: squareInvoice.version!,
-      idempotencyKey: `publish-${squareInvoice.id}-${Date.now()}`,
+      idempotencyKey: requestKeys.publish,
     });
 
     const publishedInvoice = publishResponse.invoice!;
@@ -264,13 +268,15 @@ export class SquareInvoiceService {
       description: description || `Moving service - ${lead.serviceType}`,
       status: "sent",
       invoiceUrl: publishedInvoice.publicUrl,
-      dueDate: dueDate || this.getDefaultDueDate(),
+      dueDate: invoiceDueDate,
       purpose: options.purpose || "legacy_unknown",
       quoteRevisionId: options.quoteRevisionId || undefined,
       closeoutId: options.closeoutId || undefined,
     };
 
-    const savedInvoice = await storage.createSquareInvoice(invoiceData);
+    const savedInvoice = await persistSquareInvoiceOnce(invoiceData, {
+      find: id => storage.getSquareInvoiceBySquareId(id), create: data => storage.createSquareInvoice(data),
+    });
 
     return {
       invoiceId: savedInvoice.id,

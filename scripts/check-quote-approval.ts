@@ -73,8 +73,11 @@ try {
   assert.equal((await getLatestApprovedQuote('closeout-job'))?.id, approvedCloseout.quoteRevisionId);
   assert.equal((await getLatestApprovedQuote('closeout-job'))?.customerTotal, 120);
   // A failed invoice request resets approval; retry must reuse the final quote.
-  await database.exec("UPDATE job_closeouts SET status='awaiting_customer' WHERE id='closeout'");
-  assert.equal((await approveCanonicalCloseout('closeout')).quoteRevisionId, approvedCloseout.quoteRevisionId);
+  await database.exec("UPDATE job_closeouts SET status='awaiting_customer',pricing_snapshot=pricing_snapshot || '{\"invoiceDueDate\":\"2030-01-01\"}'::jsonb WHERE id='closeout'");
+  const retriedCloseout = await approveCanonicalCloseout('closeout');
+  assert.equal(retriedCloseout.quoteRevisionId, approvedCloseout.quoteRevisionId);
+  assert.equal(retriedCloseout.invoiceDueDate, '2030-01-01', 'retry retains the persisted due date instead of recalculating it');
+  assert.equal(retriedCloseout.invoiceRequestKey, approvedCloseout.invoiceRequestKey);
   await confirmJobPayment({ ...deposit, providerPaymentId: 'closeout-balance', quoteRevisionId: approvedCloseout.quoteRevisionId, amountCents: 9000 });
   await database.exec("UPDATE job_closeouts SET status='awaiting_customer',balance_due=0 WHERE id='closeout'");
   assert.equal((await approveCanonicalCloseout('closeout')).balanceDue, 0);
