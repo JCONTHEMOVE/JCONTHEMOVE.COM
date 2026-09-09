@@ -1524,7 +1524,7 @@ export default function AdminTreasuryPage() {
                   </div>
                   <div>
                     <Label className="text-slate-400">Phone (optional)</Label>
-                    <Input
+                    <Input type="tel"
                       value={invoiceForm.phone}
                       onChange={(e) => setInvoiceForm({ ...invoiceForm, phone: e.target.value })}
                       placeholder="Customer phone number"

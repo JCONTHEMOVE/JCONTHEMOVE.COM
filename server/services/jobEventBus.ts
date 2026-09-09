@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { getPushReadiness } from './pushConfig';
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import { notificationService } from "./notification";
@@ -105,7 +106,8 @@ export function getJobEventWebhookReadiness() {
     configuredCount: urls.length,
     providers: Array.from(new Set(urls.map(webhookProvider))),
     signingSecretConfigured: Boolean(currentWebhookSecret()),
-    pushConfigured: Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY),
+    pushConfigured: getPushReadiness().ready,
+    push: getPushReadiness(),
   };
 }
 

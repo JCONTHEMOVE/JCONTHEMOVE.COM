@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Plus, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, RefreshCw, Sparkles } from "lucide-react";
 import { useLocation } from "wouter";
 import { JobOrderTicket, type JobOrderTicketData } from "@/components/job-order-ticket";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ type PlannerResponse = {
 };
 
 type SafetyResponse = { leads: Array<{ lead_id: string; age_hours: string | number; red_flag: number; reminder: number }> };
+type QuickBookHealth = { enabled: boolean; canComplete: boolean };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const shortDay = new Intl.DateTimeFormat(undefined, { weekday: "short" });
@@ -81,6 +82,12 @@ export default function JobPlannerPage({ audience }: { audience: "admin" | "crew
     enabled: audience === "admin",
     refetchInterval: 30_000,
   });
+  const { data: quickBookHealth } = useQuery<QuickBookHealth>({
+    queryKey: ["/api/quick-book/health"],
+    enabled: Boolean(data?.viewer.canAddJob),
+    retry: false,
+    staleTime: 60_000,
+  });
   const jobs = useMemo(() => {
     const safety = new Map((safetyData?.leads || []).map((item) => [String(item.lead_id), item]));
     return (data?.items || []).map((job) => {
@@ -121,6 +128,11 @@ export default function JobPlannerPage({ audience }: { audience: "admin" | "crew
           <p className="mt-1 text-sm text-slate-400">One calendar for what needs attention, what is upcoming, and what is confirmed.</p>
         </div>
         <div className="flex items-center gap-2">
+          {data?.viewer.canAddJob && quickBookHealth?.enabled ? (
+            <Button onClick={() => navigate("/quick-book")} className="gap-1.5 bg-emerald-400 font-black text-slate-950 hover:bg-emerald-300" data-testid="button-quick-book">
+              <Sparkles className="h-4 w-4" /> Quick Book
+            </Button>
+          ) : null}
           {data?.viewer.canAddJob ? (
             <Button onClick={() => navigate("/crew/add-job")} className="gap-1.5 bg-cyan-500 text-slate-950 hover:bg-cyan-400" data-testid="button-add-planner-job">
               <Plus className="h-4 w-4" /> Add job

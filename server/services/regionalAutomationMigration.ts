@@ -63,6 +63,9 @@ async function runMigration(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE(lead_id, quote_revision_id, terms_hash)
     );
+    ALTER TABLE job_agreements
+      ADD COLUMN IF NOT EXISTS accepted_by_name TEXT,
+      ADD COLUMN IF NOT EXISTS acceptance_evidence JSONB NOT NULL DEFAULT '{}'::jsonb;
 
     CREATE TABLE IF NOT EXISTS dispatch_offers (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),

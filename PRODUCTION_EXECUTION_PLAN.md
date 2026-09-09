@@ -1,6 +1,8 @@
 # JC ON THE MOVE Production Execution Plan
 
-_Authoritative snapshot: September 2, 2026 (America/Chicago)._ This is the single release and operations plan for the current release train. It replaces the old Render/Replit-oriented deployment notes for the active production path. Product strategy, payment-rail sequencing, and the GSG operating model live in [`MASTER_GAME_PLAN.md`](./MASTER_GAME_PLAN.md); this document remains the release checklist.
+> September 6 incident: see [SERVICE_RECOVERY_STATUS.md](./SERVICE_RECOVERY_STATUS.md) for the reproduced bare-domain outage, working `www` customer path, current live payment diagnostics, and reconciled completion queue. The September 3 evidence below is historical, not proof that every service is ready today.
+
+_Authoritative snapshot: September 3, 2026 (America/Chicago)._ This is the single release and operations plan for the current release train. It replaces the old Render/Replit-oriented deployment notes for the active production path. Product strategy, payment-rail sequencing, and the GSG operating model live in [`MASTER_GAME_PLAN.md`](./MASTER_GAME_PLAN.md); this document remains the release checklist.
 
 ## Decisions already made
 
@@ -27,6 +29,9 @@ _Authoritative snapshot: September 2, 2026 (America/Chicago)._ This is the singl
 - JC-87 completed the controlled notification test on September 3, 2026, at 8:25 AM Central. The saved plan is September 4, 2026, 10:00–11:00 AM, three movers, two hours, loading-only labor, customer truck, `LOCAL3X2`, and a $450 customer total with the original $525 rate-card amount retained as the JCMOVES basis. The job timeline records the exact tentative plan.
 - Delivery produced exactly one successful in-app alert for each assigned mover—Darrell Jackson, Evan, and Troy Tom—with no duplicate in-app records. The corresponding three web-push attempts were skipped because production VAPID keys are not configured. The customer quote was not sent and no Square invoice was created.
 - **Mass-update decision: controlled in-app crew rollout may begin.** Do not treat push as a working mass channel until VAPID keys are configured and a live push test passes; customer broadcasts still require separate owner authorization. Square/JCMOVES closeout and backup/alerting drills remain separate launch-readiness gates.
+- The 60-Second Quick Book implementation is complete in the current working tree but is not deployed. It adds an authenticated, mobile-first conversational draft, explicit tap-only SMS consent, deterministic extraction fallback, server-authoritative quote parity, availability-based crew suggestions, a transaction-protected final booking, and fingerprinted post-commit crew-plan alerts. Raw audio is never persisted; abandoned transcript content is redacted after 30 days while non-PII timing and correction metrics remain.
+- Quick Book is fail-closed behind `QUICK_BOOK_ENABLED`, `QUICK_BOOK_STAFF_DRAFT_ENABLED`, and `QUICK_BOOK_LIVE_BOOKING_ENABLED`. Production should begin with owner fixtures and live booking disabled. `AI_GATEWAY_API_KEY` enables Gateway extraction and transcription; deterministic typed intake remains available when AI is unavailable.
+- Local verification for Quick Book passed the TypeScript check, all 44 server test files, and the production build. A no-write browser fixture verified September 4 date editing, the full shared hourly-window list, 44-pixel-or-larger controls, no horizontal overflow at 390px, the desktop two-column layout, and no browser errors. The workstation currently runs Node 24, so the clean Node 20 CI/release gate must still rerun before deployment.
 
 ## Reconciled work inventory
 
@@ -38,6 +43,7 @@ Chat titles and historical task briefs are not completion proof. An item is only
 | Job handoff, crew, and payout | `admin/jobs`, `admin/ops-board`, `admin/job-payouts`, dispatch services, and `server/routes.ts` are in the active release train. | Server tests plus completed-job → payout approval → worker payout → JCMOVES production smoke test. |
 | Quote, invoice, and customer contact | `server/services/square-invoice.ts`, `server/routes.ts`, `JobOrderBuilder.tsx`, and Job Detail are in the active release train. | Square sandbox/production-safe test of quote, email/SMS consent, payment link, deposit, and dispatch authorization. |
 | Phone booking engine | `/book` and `/book/chat` share the three-part multi-service flow; quote authority remains on `/api/bookings/quote`, creation on `/api/bookings`, and self-service requests receive a transactional receipt. | Live non-customer smoke test of service → address → date/hour → contact → review without creating a real job; confirm authenticated worker mode separately. |
+| 60-Second Quick Book | `/quick-book` provides owner/staff conversational intake, structured resumable drafts, exact canonical quote previews, crew suggestions, and an idempotent Book & Alert Crew transaction. All external side effects are disabled for incomplete/review-only drafts and feature flags default off. | Clean Node 20 CI, migration verification, owner-only no-customer fixture, then one authorized internal booking with quote parity and exact notification delivery evidence before enabling approved-staff drafts. |
 | Targeted-area marketing | Zone-pricing, launch-checklist, campaign analytics, and tracked-link code are in the active release train. | Launch Checklist probe and one public tracked-link/quote smoke test; verify attribution without creating a real customer charge. |
 | Notifications | Job-event routing, Discord/web-push delivery, readiness reporting, route-wiring tests, and automatic complete crew/schedule plan alerts are in the active release train. JC-87 recorded one in-app delivery per assigned mover with no duplicates; web push was skipped because VAPID keys are missing. | Use in-app alerts for the controlled crew rollout. Configure VAPID keys and pass a live push test before relying on push for mass delivery. |
 | Facebook and gift-card pilots | Company Page import controls and private, staged Square gift-card bonus settings are included from production. | Keep both pilots explicitly scoped; prove consent, attribution, and payment/reward audit records before widening access. |
@@ -70,6 +76,8 @@ Do not merge data cleanup, external messaging, or calendar mutations into the cu
 5. Let `Production Build and Deploy Verification` wait for Railway to report that exact commit on the public readiness endpoint.
 6. Run the in-app Launch Checklist from an owner account after deployment. Do not mark a release live if payment, readiness, route, or payout probes fail.
 
+For the Quick Book release, keep live booking disabled during the first production deploy. Verify authenticated draft start/resume, the exact canonical quote, access-detail encryption, crew availability, and transcript cleanup. Then enable owner/admin booking for one labeled internal job, confirm one booking/lead/quote/job-plan set and no more than one alert event per assigned mover, and only afterward consider approved-staff draft access.
+
 ### 2. Verify the lead-to-booking funnel
 
 1. Establish the expected relationship between legacy leads and parent bookings. A lead-only request may be valid, so define the expected conversion event before changing code.
@@ -83,7 +91,7 @@ Do not merge data cleanup, external messaging, or calendar mutations into the cu
 | --- | --- | --- |
 | Process recovery | Railway manages the web process; `/health` is its liveness probe. | Confirm Railway service is set to deploy from `main` and has its native health check enabled. |
 | Readiness and deploy freshness | `scripts/check-production-deploy.mjs` verifies readiness, provider, DB state, and public commit. | Set GitHub variable `EXPECTED_HOSTING_PROVIDER=railway` (the workflow defaults to it) and keep the canonical health URL if it changes. |
-| Continuous availability | `Production Availability` GitHub workflow runs every 10 minutes. | Ensure repository owners receive failed-workflow notifications or connect that failure to the chosen alert channel. |
+| Continuous availability | `Production Availability` requests a run every 10 minutes; readiness failures trigger a separate owner Discord alert job. GitHub schedules may be delayed. | Add Actions secret `PRODUCTION_ALERT_DISCORD_WEBHOOK_URL` for an owner-only Discord channel and enable All Messages for the owner; see `DEPLOYMENT.md` for a controlled delivery check. |
 | Release verification | `Production Build and Deploy Verification` validates Node 20 install, types, server tests, build, and exact public commit. | Keep Railway Git integration enabled; a delayed/missing deployment must fail this workflow. |
 | Business-health monitoring | Daily lead/booking funnel review. | Choose the responsible owner and threshold for investigation. |
 | Backup and recovery | No verified backup/restore evidence is in this repository. | Confirm the database provider's backup retention and perform one documented restore drill before claiming disaster-recovery readiness. |
@@ -91,7 +99,7 @@ Do not merge data cleanup, external messaging, or calendar mutations into the cu
 
 ## Outstanding decisions that require an owner
 
-1. **Alert destination and escalation:** choose who receives a failed 10-minute availability check and how they escalate after 15, 30, and 60 minutes. GitHub checks alone do not guarantee a human wake-up path.
+1. **Alert escalation:** owner-only Discord failure delivery is implemented pending the Actions secret and channel notification setting in `DEPLOYMENT.md`. Decide how the owner escalates after 15, 30, and 60 minutes; timed escalation is not automated.
 2. **Database recovery objective:** set backup retention and the maximum acceptable data loss/recovery time, then document the restore drill.
 3. **Release authority:** name the person who approves payment, payout, and production releases after the Launch Checklist is green.
 4. **Funnel expectation:** decide whether every qualified lead should become a parent booking or whether lead-only intake is an intentional business path.

@@ -7,9 +7,7 @@ export interface NotificationOptions {
   onClick?: () => void;
 }
 
-const VAPID_PUBLIC_KEY = 'BFveYlkHTlnZsPBa4mWnX1pN-iOQskYGQh_SPrRJPZTpEFMFI9jTlf5iokygJORfaMtIE62eLAAnKP8pExq4QVc';
-
-function urlBase64ToUint8Array(base64String: string): Uint8Array {
+function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = atob(base64);
@@ -22,6 +20,8 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 
 class PushNotificationService {
   private swRegistration: ServiceWorkerRegistration | null = null;
+  private subscriptionPending: Promise<boolean> | null = null;
+  lastPushError: string | null = null;
 
   isSupported(): boolean {
     return 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
@@ -50,23 +50,49 @@ class PushNotificationService {
     if (this.swRegistration) return this.swRegistration;
     if (!('serviceWorker' in navigator)) return null;
     try {
-      this.swRegistration = await navigator.serviceWorker.ready;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        this.swRegistration = await Promise.race([
+          navigator.serviceWorker.ready,
+          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Service worker timed out.')), 10000); }),
+        ]);
+      } finally { clearTimeout(timer); }
       return this.swRegistration;
     } catch {
       return null;
     }
   }
 
-  async subscribeToServerPush(): Promise<boolean> {
+  subscribeToServerPush(): Promise<boolean> {
+    if (!this.subscriptionPending) {
+      this.subscriptionPending = this.registerServerPush().finally(() => { this.subscriptionPending = null; });
+    }
+    return this.subscriptionPending;
+  }
+
+  private async registerServerPush(): Promise<boolean> {
     try {
+      this.lastPushError = null;
+      if (!this.isSupported() || Notification.permission !== 'granted') throw new Error('Browser push is unsupported or permission has not been granted.');
+      const configResponse = await fetch('/api/notifications/vapid-public-key', { cache: 'no-store' });
+      if (!configResponse.ok) throw new Error('Server push configuration is not ready. Ask the owner to check push readiness.');
+      const { publicKey } = await configResponse.json();
+      const applicationServerKey = urlBase64ToUint8Array(publicKey);
+      if (applicationServerKey.length !== 65 || applicationServerKey[0] !== 4) throw new Error('Server returned an invalid push public key.');
       const registration = await this.getSwRegistration();
-      if (!registration) return false;
+      if (!registration) throw new Error('Service worker is unavailable.');
 
       let subscription = await registration.pushManager.getSubscription();
+      const existingKey = subscription?.options.applicationServerKey;
+      if (subscription && (!existingKey || new Uint8Array(existingKey).length !== applicationServerKey.length ||
+        !new Uint8Array(existingKey).every((value, index) => value === applicationServerKey[index]))) {
+        if (!await subscription.unsubscribe()) throw new Error('Could not replace the old push subscription. Retry enabling notifications.');
+        subscription = null;
+      }
       if (!subscription) {
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+          applicationServerKey,
         });
       }
 
@@ -74,12 +100,14 @@ class PushNotificationService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(subscription.toJSON()),
+        body: JSON.stringify({ ...subscription.toJSON(), applicationServerKey: publicKey }),
       });
 
-      return res.ok;
+      if (!res.ok) throw new Error(`Could not save push subscription (${res.status}). Sign in and retry enabling notifications.`);
+      return true;
     } catch (error) {
-      console.error('Error subscribing to push notifications:', error);
+      this.lastPushError = error instanceof Error ? error.message : 'Push subscription failed.';
+      console.warn(this.lastPushError);
       return false;
     }
   }

@@ -1,0 +1,38 @@
+name: Release Candidate Validation
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Type check
+        run: npm run check
+      - name: Server behavior and authorization tests
+        run: npm run test:server
+      - name: Monitoring tests without live delivery
+        run: node --test scripts/__tests__/*.test.mjs
+      - name: Build release candidate
+        run: npm run build
+      - name: Verify built PWA assets
+        run: node scripts/check-built-public-assets.mjs
+      # This workflow uses no production secrets and never starts the server,
+      # runs migrations, sends alerts, or deploys the candidate.

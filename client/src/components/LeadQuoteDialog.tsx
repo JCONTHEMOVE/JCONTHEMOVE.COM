@@ -283,7 +283,7 @@ export function LeadQuoteDialog({ open, onOpenChange, lead, employees, onSave }:
                   {editingField === "phone" ? (
                     <div className="flex items-center gap-2 mt-1">
                       <Input
-                        value={editPhone}
+                        type="tel" legacyPhoneValue={lead.phone} value={editPhone}
                         onChange={e => setEditPhone(e.target.value)}
                         placeholder="Phone number"
                         className="h-8 text-sm flex-1"

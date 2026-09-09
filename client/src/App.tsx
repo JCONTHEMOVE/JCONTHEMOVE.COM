@@ -139,6 +139,7 @@ const AdminCashoutsPage = lazy(() => import("@/pages/admin/AdminCashoutsPage"));
 const AdminLaunchChecklistPage = lazy(() => import("@/pages/admin/AdminLaunchChecklistPage"));
 const AdminGiftCardBonusesPage = lazy(() => import("@/pages/admin/gift-card-bonuses"));
 const JobPlannerPage = lazy(() => import("@/pages/job-planner"));
+const QuickBookPage = lazy(() => import("@/pages/quick-book"));
 const BookLawnCarePage = lazy(() => import("@/pages/book-lawn-care"));
 const AdminLawnCarePage = lazy(() => import("@/pages/admin-lawn-care"));
 const LawnCarePage = lazy(() => import("@/pages/lawn-care"));
@@ -544,6 +545,16 @@ function AuthenticatedApp() {
       </ComplianceCheck>
     );
   }
+  if (location === "/quick-book") {
+    return (
+      <ComplianceCheck>
+        <RouteGuard allowedRoles={['admin', 'employee', 'business_owner']}>
+          <NotificationPrompt />
+          <QuickBookPage />
+        </RouteGuard>
+      </ComplianceCheck>
+    );
+  }
   if (location === "/post-job") {
     return <Redirect to="/book" />;
   }
@@ -871,6 +882,9 @@ function Router() {
 
   return (
     <Switch>
+      {import.meta.env.DEV && (
+        <Route path="/quick-book-fixture">{() => <QuickBookPage visualFixture />}</Route>
+      )}
       {/* Onboarding / Get Started */}
       <Route path="/get-started" component={OnboardingPage} />
 

@@ -7,10 +7,14 @@ on:
     paths:
       - .github/workflows/production-availability.yml
       - scripts/check-production-deploy.mjs
+      - scripts/check-public-entrypoints.mjs
+      - scripts/__tests__/public-entrypoints.test.mjs
+      - scripts/notify-production-failure.mjs
+      - scripts/__tests__/production-alert.test.mjs
   schedule:
     # GitHub scheduled workflows can be delayed during high load, especially
     # near the top of the hour. Offset the check to avoid peak scheduling.
-    - cron: "7,27,47 * * * *"
+    - cron: "7,17,27,37,47,57 * * * *"
   workflow_dispatch:
     inputs:
       health_url:
@@ -48,3 +52,34 @@ jobs:
 
       - name: Verify public readiness
         run: node scripts/check-production-deploy.mjs "$PUBLIC_HEALTH_URL"
+
+      - name: Verify apex and www customer entry points
+        if: ${{ always() }}
+        run: node scripts/check-public-entrypoints.mjs
+
+  alert-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --test scripts/__tests__/production-alert.test.mjs
+      - run: node --test scripts/__tests__/public-entrypoints.test.mjs
+
+  notify-owner:
+    needs: readiness
+    if: ${{ always() && needs.readiness.result == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Alert owner through Discord
+        env:
+          PRODUCTION_ALERT_DISCORD_WEBHOOK_URL: ${{ secrets.PRODUCTION_ALERT_DISCORD_WEBHOOK_URL }}
+          READINESS_RESULT: ${{ needs.readiness.result }}
+        run: node scripts/notify-production-failure.mjs

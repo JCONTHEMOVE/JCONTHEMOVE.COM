@@ -1,3 +1,6 @@
+import { validateCustomerPhoneSubmission } from "./services/customerPhoneValidation";
+import { normalizeCustomerPhone, phoneError, unchangedLegacyPhone } from "@shared/phone";
+import { optionalPhoneNumberSchema } from "@shared/schema";
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { createRequire } from "module";
@@ -69,10 +72,24 @@ import { MIN_REDEMPTION_TOKENS, REDEMPTION_INCREMENT, roundToIncrement, validate
 import { calculateBtcLightningOffer } from "@shared/btcLightningOffer";
 import { emitJobEvent, eventTypeForStatus, deliverCrewAnnouncementToWebhooks, getJobEventWebhookReadiness } from "./services/jobEventBus";
 import { notificationService } from "./services/notification";
+import { getPushReadiness, pushConfig } from './services/pushConfig';
+import { createOwnerPushTestHandlers, OWNER_PUSH_TEST_ID } from './services/ownerPushTest';
 import { buildJobFlowRecords, jobBelongsToCrew, toCrewBoardFlow } from "./services/jobFlow";
 import { projectWorkerOrder, type WorkerOrderContext } from "./services/workerOrderVisibility";
 import { calculateLaborBooking, normalizeLaborWorkScope } from "@shared/laborBooking";
-import { isHourlyJobArrivalWindow } from "@shared/jcOperations";
+import { isHourlyJobArrivalWindow, JOB_SCHEDULE_OPTIONS } from "@shared/jcOperations";
+import {
+  EMPTY_QUICK_BOOK_DRAFT,
+  evaluateQuickBookReadiness,
+  quickBookDraftSchema,
+  quickBookInventorySchema,
+  quickBookSpecialItemsSchema,
+  quickBookTruckSizeSchema,
+  type QuickBookCrewSuggestion,
+  type QuickBookDraft,
+  type QuickBookFieldMeta,
+  type QuickBookSessionResponse,
+} from "@shared/quickBook";
 import {
   allAddressesRecognizedIronwoodLocal,
   IRONWOOD_LOCAL_ZONE_CODE,
@@ -124,6 +141,23 @@ import giftCardBonusesRouter from "./routes/giftCardBonuses";
 import commerceCatalogRouter from "./routes/commerceCatalog";
 import { ensureGiftCardBonusTables } from "./services/giftCardBonuses";
 import { ensureBookingCatalogSeeded } from "./services/bookingCatalogSeed";
+import {
+  QUICK_BOOK_DEFAULT_MODEL,
+  QUICK_BOOK_DEFAULT_TRANSCRIPTION_MODEL,
+  extractQuickBookMessage,
+  isQuickBookAiConfigured,
+  transcribeQuickBookAudio,
+} from "./services/quickBookAi";
+import {
+  appendQuickBookTranscript,
+  createQuickBookSession,
+  ensureQuickBookingSchema,
+  getQuickBookSession,
+  mergeQuickBookDraft,
+  sealQuickBookDraft,
+  sessionDraft,
+  updateQuickBookSession,
+} from "./services/quickBookSessions";
 import { getActivePricingSnapshot } from "./services/pricingVersions";
 import {
   approveQuoteRevision,
@@ -260,7 +294,7 @@ async function recordVerbalSmsConsent(leadId: string, actorId: string | null): P
 
 const staffJobIntakeSchema = z.object({
   customerName: z.string().trim().min(1, "Customer name is required").max(120),
-  phone: z.string().trim().min(7, "A customer phone number is required").max(32),
+  phone: leadPhoneNumberSchema,
   email: z.union([z.string().trim().email("Enter a valid email address"), z.literal("")]).optional()
     .transform((value) => value?.trim() || ""),
   serviceCode: z.enum(["load_unload", "pack_unpack", "delivery", "ubox", "junk", "commercial"]),
@@ -679,6 +713,190 @@ async function calculateJobQuoteWithPromo(input: JobPromoQuoteInput): Promise<Jo
       && evaluation.quote.promotion.includesCompanyTruck
       ? { truckConfig: "company_truck", trailerRequested: Boolean(evaluation.quote.promotion.includesTrailer) }
       : undefined,
+  };
+}
+
+type QuickBookState = {
+  draft: QuickBookDraft;
+  quote: JobPromoQuoteResult | null;
+  crewSuggestions: QuickBookCrewSuggestion[];
+  missingFields: string[];
+  reviewReasons: string[];
+  ready: boolean;
+};
+
+function arrivalWindowHour(value: string | null | undefined) {
+  const match = String(value || "").match(/^(\d{1,2}):00\s+(AM|PM)/i);
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const period = match[2].toUpperCase();
+  if (period === "PM" && hour < 12) hour += 12;
+  if (period === "AM" && hour === 12) hour = 0;
+  return hour;
+}
+
+async function quickBookCrewConflicts(draft: QuickBookDraft, workerIds: string[], queryable: any = pool) {
+  if (!draft.confirmedDate || workerIds.length === 0) return new Set<string>();
+  const { rows } = await queryable.query(`
+    SELECT crew_members, arrival_window
+      FROM leads
+     WHERE COALESCE(confirmed_date, move_date) = $1
+       AND status NOT IN ('cancelled','completed','closed')
+       AND COALESCE(crew_members, ARRAY[]::text[]) && $2::text[]
+  `, [draft.confirmedDate, workerIds]);
+  const requestedHour = arrivalWindowHour(draft.arrivalWindow);
+  const conflicts = new Set<string>();
+  for (const row of rows) {
+    const existingHour = arrivalWindowHour(row.arrival_window);
+    if (requestedHour !== null && existingHour !== null && requestedHour !== existingHour) continue;
+    for (const id of row.crew_members || []) if (workerIds.includes(id)) conflicts.add(id);
+  }
+  return conflicts;
+}
+
+async function quickBookTransactionCrewUnavailable(queryable: any, draft: QuickBookDraft) {
+  if (!draft.confirmedDate || !draft.crewMemberIds.length) return new Set<string>();
+  const dayOfWeek = new Date(`${draft.confirmedDate}T12:00:00`).getDay();
+  const { rows } = await queryable.query(`
+    SELECT u.id,
+           EXISTS (SELECT 1 FROM worker_day_blocks b WHERE b.user_id=u.id AND b.date=$2) AS blocked,
+           EXISTS (SELECT 1 FROM worker_schedule s
+                    WHERE s.user_id=u.id AND s.day_of_week=$3 AND s.is_available=false) AS weekly_unavailable,
+           EXISTS (SELECT 1 FROM worker_hour_overrides o WHERE o.user_id=u.id AND o.date=$2) AS has_override
+      FROM users u
+     WHERE u.id=ANY($1::text[])
+       AND u.is_approved=true
+       AND (u.role='employee' OR (u.role IN ('admin','business_owner') AND COALESCE(u.capabilities,ARRAY[]::text[]) @> ARRAY['mover']::text[]))
+     ORDER BY u.id
+     FOR UPDATE
+  `, [draft.crewMemberIds, draft.confirmedDate, dayOfWeek]);
+  const validIds = new Set(rows.map((worker: any) => String(worker.id)));
+  const unavailable = new Set(draft.crewMemberIds.filter((id) => !validIds.has(id)));
+  for (const worker of rows) {
+    if (worker.blocked || (worker.weekly_unavailable && !worker.has_override)) unavailable.add(String(worker.id));
+  }
+  return unavailable;
+}
+
+async function buildQuickBookCrewSuggestions(draft: QuickBookDraft): Promise<QuickBookCrewSuggestion[]> {
+  const employees = await crewSuggestionService.getEmployeesWithStats();
+  const availability = draft.confirmedDate
+    ? await crewSuggestionService.batchCheckAvailability(employees.map((employee) => employee.id), draft.confirmedDate)
+    : new Map<string, { available: boolean; reason?: string }>();
+  const conflicts = await quickBookCrewConflicts(draft, employees.map((employee) => employee.id));
+  const hasSpecialItems = Object.entries(draft.specialItems).some(([key, value]) => key !== "notes" && value === true);
+  const ranked = employees.map((employee) => {
+    const score = crewSuggestionService.calculateEmployeeScore(employee, draft.serviceType, hasSpecialItems);
+    const calendar = availability.get(employee.id) || { available: true };
+    const conflict = conflicts.has(employee.id);
+    return {
+      id: employee.id,
+      name: `${employee.firstName} ${employee.lastName}`.trim() || employee.email,
+      score: score.score,
+      available: calendar.available && !conflict,
+      reason: conflict ? "Already assigned in this arrival window" : (calendar.reason ? `${score.reason} • ${calendar.reason}` : score.reason),
+      recommended: false,
+    } satisfies QuickBookCrewSuggestion;
+  }).sort((a, b) => Number(b.available) - Number(a.available) || b.score - a.score);
+  const recommendedIds = new Set(ranked.filter((worker) => worker.available).slice(0, draft.crewSize || 0).map((worker) => worker.id));
+  return ranked.slice(0, 12).map((worker) => ({ ...worker, recommended: recommendedIds.has(worker.id) }));
+}
+
+async function calculateQuickBookState(draftInput: unknown): Promise<QuickBookState> {
+  const draft = quickBookDraftSchema.parse(draftInput || EMPTY_QUICK_BOOK_DRAFT);
+  let quote: JobPromoQuoteResult | null = null;
+  const reviewReasons: string[] = [];
+  const quoteInputsComplete = Boolean(
+    draft.crewSize
+    && draft.estimatedHours
+    && draft.workScope
+    && draft.truckConfig
+    && draft.stairsFlights !== null
+    && draft.hasElevator !== null
+    && draft.pickupAddress.trim().length >= 4,
+  );
+  if (quoteInputsComplete) {
+    quote = await calculateJobQuoteWithPromo({
+      promoCode: draft.promoCode || null,
+      serviceType: draft.serviceType,
+      crewSize: draft.crewSize!,
+      confirmedHours: draft.estimatedHours!,
+      workScope: draft.workScope,
+      truckConfig: draft.truckConfig,
+      trailerRequested: false,
+      stairsFlights: draft.stairsFlights,
+      hasElevator: draft.hasElevator,
+      fromAddress: draft.pickupAddress,
+      toAddress: draft.destinationAddress,
+    });
+    if (!Number.isFinite(quote.total) || quote.total <= 0) reviewReasons.push("The pricing service did not return a positive exact total.");
+    if (draft.promoCode && !quote.promo?.applied) reviewReasons.push(quote.promo?.reason || "The requested promo could not be applied.");
+  }
+  const crewSuggestions = draft.confirmedDate ? await buildQuickBookCrewSuggestions(draft) : [];
+  if (draft.crewConfirmed) {
+    const availability = new Map(crewSuggestions.map((worker) => [worker.id, worker.available]));
+    if (draft.crewMemberIds.some((id) => availability.get(id) !== true)) {
+      reviewReasons.push("A selected mover is unavailable or ineligible; choose and reconfirm the named crew.");
+    }
+  }
+  const readiness = evaluateQuickBookReadiness(draft, {
+    quoteReady: Boolean(quote && Number.isFinite(quote.total) && quote.total > 0),
+    quoteReviewReasons: reviewReasons,
+  });
+  return { draft, quote, crewSuggestions, ...readiness };
+}
+
+function quickBookNextPrompt(state: QuickBookState) {
+  const first = state.missingFields[0];
+  const prompts: Record<string, { question: string; suggestions: string[] }> = {
+    "customer name": { question: "What is the customer's full name?", suggestions: [] },
+    "10-digit phone": { question: "What is the customer's 10-digit phone number?", suggestions: [] },
+    "text-message consent": { question: "Did the customer explicitly agree to text messages?", suggestions: ["Yes, customer agreed", "No text messages"] },
+    "complete pickup address": { question: "What is the complete pickup or service address, including city/state or ZIP?", suggestions: [] },
+    "complete destination address": { question: "What is the complete destination address?", suggestions: [] },
+    "confirmed date": { question: "What date is the job confirmed for?", suggestions: ["Tomorrow", "This Friday"] },
+    "one-hour arrival window": { question: "Choose the one-hour Central arrival window.", suggestions: JOB_SCHEDULE_OPTIONS.slice(0, 5).map((option) => option.value) },
+    "work scope": { question: "Is the crew loading, unloading, or doing both?", suggestions: ["Load only", "Unload only", "Load and unload"] },
+    "truck or equipment choice": { question: "Whose truck or equipment will be used?", suggestions: ["Customer truck", "Rental U-Haul", "JC company truck", "No truck"] },
+    stairs: { question: "How many flights of stairs are involved?", suggestions: ["No stairs", "1 flight", "2 flights"] },
+    elevator: { question: "Is an elevator involved?", suggestions: ["No elevator", "Yes, elevator"] },
+    "special-item check": { question: "Any piano, safe, hot tub, pool table, or other large specialty item?", suggestions: ["No special items", "Yes, special item"] },
+    "crew size": { question: "How many movers are needed?", suggestions: ["2 movers", "3 movers", "4 movers"] },
+    "estimated hours": { question: "How many hours should be quoted?", suggestions: ["2 hours", "3 hours", "4 hours"] },
+    "confirmed named crew": { question: "Select the named crew, then confirm the assignment.", suggestions: [] },
+    "confirmed crew lead": { question: "Choose one selected mover as crew lead.", suggestions: [] },
+  };
+  if (first && prompts[first]) return prompts[first];
+  if (state.reviewReasons.length) return { question: state.reviewReasons[0], suggestions: [] };
+  return state.ready
+    ? { question: "Everything is ready. Review the exact quote, then book and alert the crew.", suggestions: [] }
+    : { question: "Add the remaining job details.", suggestions: [] };
+}
+
+function quickBookSessionResponse(row: any, state: QuickBookState): QuickBookSessionResponse {
+  const prompt = quickBookNextPrompt(state);
+  const agent = row.agentMetadata && typeof row.agentMetadata === "object"
+    ? row.agentMetadata
+    : { provider: "deterministic", model: "not-run", fallbackUsed: false };
+  return {
+    id: row.id,
+    status: row.status,
+    revision: row.revision,
+    draft: state.draft,
+    fieldMeta: (row.fieldMeta || {}) as QuickBookFieldMeta,
+    missingFields: state.missingFields,
+    reviewReasons: state.reviewReasons,
+    readiness: { ready: state.ready, missingFields: state.missingFields, reviewReasons: state.reviewReasons },
+    quote: state.quote as unknown as Record<string, unknown> | null,
+    crewSuggestions: state.crewSuggestions,
+    assistantMessage: row.assistantMessage || "Quick Book is ready for your job details.",
+    nextQuestion: prompt.question,
+    suggestions: prompt.suggestions,
+    agent,
+    bookingId: row.bookingId || null,
+    leadId: row.leadId || null,
+    startedAt: new Date(row.createdAt).toISOString(),
+    updatedAt: new Date(row.updatedAt).toISOString(),
   };
 }
 
@@ -1593,6 +1811,7 @@ async function findOrCreateGoogleUser(profile: {
 }
 
 export async function registerRoutes(app: Express, httpServer: Server = createServer(app)): Promise<Server> {
+  app.use(validateCustomerPhoneSubmission);
   try {
     const { registerAshleyShopRoutes } = await import("./routes/ashleyShop");
     await registerAshleyShopRoutes(app);
@@ -1604,7 +1823,9 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
   try {
     const { ensureRegionalAutomationSchema } = await import("./services/regionalAutomationMigration");
     await ensureRegionalAutomationSchema();
+    if (process.env.QUICK_BOOK_ENABLED === "true") await ensureQuickBookingSchema();
   } catch (error) {
+    if (process.env.QUICK_BOOK_ENABLED === "true") throw error;
     console.error("regional automation migration error (non-fatal):", error);
   }
   // Additive migration for existing deployments. The offer stays in the promo
@@ -3291,7 +3512,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     password: z.string().min(8, "Password must be at least 8 characters").regex(/^(?=.*[A-Za-z])(?=.*\d)/, "Password must contain letters and numbers"),
     firstName: z.string().min(1, "First name is required"),
     lastName: z.string().min(1, "Last name is required"),
-    phoneNumber: z.string().min(10, "Phone number is required"),
+    phoneNumber: leadPhoneNumberSchema,
     rewardsEnrolled: z.boolean().optional().default(false),
     dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be in YYYY-MM-DD format"),
     tosAccepted: z.boolean().refine(v => v === true, { message: "You must accept the Terms of Service to register" }),
@@ -3676,7 +3897,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     password: z.string().min(8, "Password must be at least 8 characters"),
     firstName: z.string().min(1, "First name is required"),
     lastName: z.string().min(1, "Last name is required"),
-    phoneNumber: z.string().optional(),
+    phoneNumber: optionalPhoneNumberSchema,
     rewardsEnrolled: z.boolean().optional().default(false),
     dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be in YYYY-MM-DD format"),
     tosAccepted: z.boolean().refine(v => v === true, { message: "You must accept the Terms of Service to register" }),
@@ -5263,7 +5484,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     firstName:       z.string().trim().min(1, "First name is required"),
     lastName:        z.string().trim().default("Customer"),
     email:           z.string().trim().email().optional().or(z.literal("")).default(""),
-    phone:           z.string().trim().min(7, "A valid phone number is required"),
+    phone:           leadPhoneNumberSchema,
     address:         z.string().trim().min(8, "A full street address is required (e.g. 123 Main St, City, MI)"),
     standardWindows: z.coerce.number().int().min(0).default(0),
     largeWindows:    z.coerce.number().int().min(0).default(0),
@@ -11999,6 +12220,11 @@ Thank you for your business!
         return res.status(404).json({ error: "Lead not found" });
       }
 
+      if (updateData.phone !== undefined && updateData.phone !== currentLead.phone && !unchangedLegacyPhone(String(updateData.phone ?? ""), currentLead.phone)) {
+        const message = typeof updateData.phone === "string" ? phoneError(updateData.phone) : "Enter a complete 10-digit phone number.";
+        if (message) return res.status(400).json({ error: message, fieldErrors: { phone: message } });
+        updateData.phone = normalizeCustomerPhone(updateData.phone);
+      }
       // Privileged-action guard: modifying payout-driving fields requires admin or business_owner.
       const PAYOUT_FIELDS = [
         "totalPrice", "basePrice", "tokenAllocation", "crewMembers", "crewBonusFlags", "confirmedHours",
@@ -12068,9 +12294,480 @@ Thank you for your business!
     pricingSource: z.enum(["rate_card_auto", "manual_override"]).optional(),
   });
 
+  // ── 60-second staff Quick Book ──────────────────────────────────────────
+  // AI only extracts facts. Pricing, crew availability, persistence and crew
+  // alerts remain server-owned and meet at the final transactional boundary.
+  async function quickBookActor(req: any) {
+    let actor = req.currentUser || req.user || null;
+    if (!actor && (req.session as any)?.userId) actor = await storage.getUser((req.session as any).userId);
+    if (process.env.QUICK_BOOK_OWNER_ONLY !== "false" && actor?.role !== "business_owner") return null;
+    const approvedEmployee = process.env.QUICK_BOOK_STAFF_DRAFT_ENABLED === "true"
+      && actor?.role === "employee"
+      && (actor.isApproved || actor.status === "approved" || actor.status === "active");
+    return actor && (["admin", "business_owner"].includes(actor.role) || approvedEmployee) ? actor : null;
+  }
+
+  function canCompleteQuickBooking(actor: any) {
+    return process.env.QUICK_BOOK_ENABLED === "true"
+      && process.env.QUICK_BOOK_LIVE_BOOKING_ENABLED === "true"
+      && (actor?.role === "admin" || actor?.role === "business_owner");
+  }
+
+  function canReadQuickBookSession(actor: any, row: any) {
+    return canCompleteQuickBooking(actor) || row.createdByUserId === actor?.id;
+  }
+
+  app.get("/api/quick-book/health", isAuthenticated, async (req: any, res) => {
+    const actor = await quickBookActor(req);
+    if (!actor) return res.status(403).json({ error: "Approved staff access required" });
+    return res.json({
+      ok: true,
+      enabled: process.env.QUICK_BOOK_ENABLED === "true",
+      canComplete: canCompleteQuickBooking(actor),
+      rollout: {
+        ownerOnly: process.env.QUICK_BOOK_OWNER_ONLY !== "false",
+        staffDrafts: process.env.QUICK_BOOK_STAFF_DRAFT_ENABLED === "true",
+        liveBooking: process.env.QUICK_BOOK_LIVE_BOOKING_ENABLED === "true",
+      },
+      ai: {
+        configured: isQuickBookAiConfigured(),
+        model: process.env.QUICK_BOOK_MODEL || QUICK_BOOK_DEFAULT_MODEL,
+        transcriptionModel: process.env.QUICK_BOOK_TRANSCRIPTION_MODEL || QUICK_BOOK_DEFAULT_TRANSCRIPTION_MODEL,
+        fallback: "shared/quick-book-parser",
+      },
+      guardrails: {
+        quoteAuthority: "server_job_rate_card",
+        aiCanPersist: false,
+        aiCanAssignCrew: false,
+        aiCanNotify: false,
+        customerMessageOnBook: false,
+        squareInvoiceOnBook: false,
+      },
+    });
+  });
+
+  app.post("/api/quick-book/sessions", isAuthenticated, async (req: any, res) => {
+    try {
+      const actor = await quickBookActor(req);
+      if (!actor) return res.status(403).json({ error: "Approved staff access required" });
+      if (process.env.QUICK_BOOK_ENABLED !== "true") return res.status(503).json({ error: "Quick Book is temporarily disabled" });
+      const startInput = z.object({ abandonSessionId: z.string().uuid().optional() }).parse(req.body || {});
+      if (startInput.abandonSessionId) {
+        await pool.query(`
+          UPDATE quick_booking_sessions
+             SET status='abandoned', transcript_text=NULL, updated_at=NOW(),
+                 metrics=COALESCE(metrics,'{}'::jsonb) || jsonb_build_object('abandonedAt',NOW())
+           WHERE id=$1 AND created_by_user_id=$2 AND status IN ('draft','ready')
+        `, [startInput.abandonSessionId, actor.id]);
+      }
+      const row = await createQuickBookSession(actor.id);
+      const state = await calculateQuickBookState(sessionDraft(row));
+      return res.status(201).json({ ...quickBookSessionResponse(row, state), canComplete: canCompleteQuickBooking(actor) });
+    } catch (error) {
+      console.error("[quick-book] create session failed:", error);
+      return res.status(500).json({ error: "Could not start Quick Book" });
+    }
+  });
+
+  app.get("/api/quick-book/sessions/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const actor = await quickBookActor(req);
+      if (!actor) return res.status(403).json({ error: "Approved staff access required" });
+      if (process.env.QUICK_BOOK_ENABLED !== "true") return res.status(503).json({ error: "Quick Book is temporarily disabled" });
+      const row = await getQuickBookSession(req.params.id);
+      if (!row) return res.status(404).json({ error: "Quick Book draft not found" });
+      if (!canReadQuickBookSession(actor, row)) return res.status(403).json({ error: "This draft belongs to another staff member" });
+      const state = await calculateQuickBookState(sessionDraft(row));
+      return res.json({ ...quickBookSessionResponse(row, state), canComplete: canCompleteQuickBooking(actor) });
+    } catch (error) {
+      console.error("[quick-book] load session failed:", error);
+      return res.status(500).json({ error: "Could not load Quick Book draft" });
+    }
+  });
+
+  const quickBookMessageSchema = z.object({
+    expectedRevision: z.number().int().min(1),
+    message: z.string().trim().min(1).max(6000).optional(),
+    source: z.enum(["voice", "typed", "tap"]).default("typed"),
+    patch: z.record(z.unknown()).optional(),
+  }).refine((value) => Boolean(value.message || value.patch), "Enter a message or a field update");
+
+  app.post("/api/quick-book/sessions/:id/message", isAuthenticated, async (req: any, res) => {
+    try {
+      const actor = await quickBookActor(req);
+      if (!actor) return res.status(403).json({ error: "Approved staff access required" });
+      if (process.env.QUICK_BOOK_ENABLED !== "true") return res.status(503).json({ error: "Quick Book is temporarily disabled" });
+      const input = quickBookMessageSchema.parse(req.body);
+      const row = await getQuickBookSession(req.params.id);
+      if (!row) return res.status(404).json({ error: "Quick Book draft not found" });
+      if (!canReadQuickBookSession(actor, row)) return res.status(403).json({ error: "This draft belongs to another staff member" });
+      if (row.status === "booked") return res.status(409).json({ error: "This Quick Book session is already booked", leadId: row.leadId });
+      if (row.revision !== input.expectedRevision) return res.status(409).json({ error: "This draft changed on another screen. Reload it before continuing." });
+
+      let draft = sessionDraft(row);
+      let fieldMeta = (row.fieldMeta || {}) as QuickBookFieldMeta;
+      let assistantMessage = input.source === "tap" ? "Updated. I checked the job card again." : "I captured that update.";
+      let agentMetadata: Record<string, unknown> = row.agentMetadata && typeof row.agentMetadata === "object" ? row.agentMetadata as Record<string, unknown> : {};
+      let transcriptText = row.transcriptText;
+      const metrics: Record<string, number | boolean | string> = row.metrics && typeof row.metrics === "object"
+        ? { ...(row.metrics as Record<string, number | boolean | string>) }
+        : {};
+
+      if (input.message && input.source !== "tap") {
+        const extractionStartedAt = Date.now();
+        const extraction = await extractQuickBookMessage({ message: input.message, currentDraft: draft });
+        const merged = mergeQuickBookDraft({
+          current: draft,
+          patch: { ...extraction.patch, __confidence: extraction.fieldConfidence },
+          source: input.source,
+          currentMeta: fieldMeta,
+        });
+        draft = merged.draft;
+        fieldMeta = merged.fieldMeta;
+        assistantMessage = extraction.assistantMessage;
+        agentMetadata = extraction.agent;
+        transcriptText = appendQuickBookTranscript(row.transcriptText, input.message, input.source);
+        metrics.messageCount = Number(metrics.messageCount || 0) + 1;
+        metrics.clarificationCount = Number(metrics.clarificationCount || 0) + 1;
+        metrics.totalAiLatencyMs = Number(metrics.totalAiLatencyMs || 0) + (Date.now() - extractionStartedAt);
+        if (extraction.agent.fallbackUsed) metrics.fallbackUseCount = Number(metrics.fallbackUseCount || 0) + 1;
+      }
+      if (input.patch) {
+        metrics.staffCorrectionCount = Number(metrics.staffCorrectionCount || 0)
+          + Object.keys(input.patch).filter((key) => Boolean(fieldMeta[key])).length;
+        metrics.fieldTapCount = Number(metrics.fieldTapCount || 0) + 1;
+        const merged = mergeQuickBookDraft({ current: draft, patch: input.patch, source: "tap", currentMeta: fieldMeta });
+        draft = merged.draft;
+        fieldMeta = merged.fieldMeta;
+      }
+
+      const state = await calculateQuickBookState(draft);
+      const prompt = quickBookNextPrompt(state);
+      const updated = await updateQuickBookSession({
+        id: row.id,
+        expectedRevision: input.expectedRevision,
+        values: {
+          status: state.ready ? "ready" : "draft",
+          transcriptText,
+          structuredDraft: state.draft,
+          fieldMeta,
+          missingFields: state.missingFields,
+          reviewReasons: state.reviewReasons,
+          pricingPreview: state.quote,
+          suggestedCrew: state.crewSuggestions,
+          assistantMessage,
+          nextQuestion: prompt.question,
+          suggestions: prompt.suggestions,
+          agentMetadata,
+          metrics,
+        },
+      });
+      if (!updated) return res.status(409).json({ error: "This draft changed on another screen. Reload it before continuing." });
+      return res.json({ ...quickBookSessionResponse(updated, state), canComplete: canCompleteQuickBooking(actor) });
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.issues[0]?.message || "Invalid Quick Book update" });
+      console.error("[quick-book] message failed:", error);
+      return res.status(500).json({ error: "Could not update Quick Book" });
+    }
+  });
+
+  app.post("/api/quick-book/transcribe", isAuthenticated, async (req: any, res) => {
+    try {
+      const actor = await quickBookActor(req);
+      if (!actor) return res.status(403).json({ error: "Approved staff access required" });
+      if (process.env.QUICK_BOOK_ENABLED !== "true") return res.status(503).json({ error: "Quick Book is temporarily disabled" });
+      if (!isQuickBookAiConfigured()) return res.status(503).json({ error: "Voice transcription is not configured; type the job instead." });
+      const multer = (await import("multer")).default;
+      const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } }).single("audio");
+      await new Promise<void>((resolve, reject) => upload(req, res as any, (error: any) => error ? reject(error) : resolve()));
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file || !file.mimetype.startsWith("audio/")) return res.status(400).json({ error: "Provide one audio recording" });
+      const result = await transcribeQuickBookAudio(file.buffer);
+      if (Number(result.durationInSeconds || 0) > 61) return res.status(400).json({ error: "Quick Book recordings are limited to 60 seconds" });
+      return res.json({ text: result.text, model: result.model, durationInSeconds: result.durationInSeconds, rawAudioStored: false });
+    } catch (error: any) {
+      if (error?.code === "LIMIT_FILE_SIZE") return res.status(413).json({ error: "Recording is too long. Keep Quick Book recordings under 60 seconds." });
+      console.error("[quick-book] transcription failed:", error);
+      return res.status(500).json({ error: "Could not transcribe the recording. Type the job details instead." });
+    }
+  });
+
+  const quickBookFinalizeSchema = z.object({
+    expectedRevision: z.number().int().min(1),
+    idempotencyKey: z.string().trim().min(8).max(120),
+  });
+
+  app.post("/api/quick-book/sessions/:id/book", isAuthenticated, async (req: any, res) => {
+    let client: any = null;
+    try {
+      const actor = await quickBookActor(req);
+      if (!actor) return res.status(403).json({ error: "Approved staff access required" });
+      if (process.env.QUICK_BOOK_ENABLED !== "true") return res.status(503).json({ error: "Quick Book is temporarily disabled" });
+      if (!canCompleteQuickBooking(actor)) return res.status(403).json({ error: "An owner or administrator must complete live Quick Book jobs. This draft is safely saved." });
+      const input = quickBookFinalizeSchema.parse(req.body);
+      const row = await getQuickBookSession(req.params.id);
+      if (!row) return res.status(404).json({ error: "Quick Book draft not found" });
+      if (!canReadQuickBookSession(actor, row)) return res.status(403).json({ error: "This draft belongs to another staff member" });
+      const storedBookKey = row.agentMetadata && typeof row.agentMetadata === "object"
+        ? String((row.agentMetadata as any).bookIdempotencyKey || "")
+        : "";
+      const eventId = `quick-book:${row.id}:${storedBookKey || input.idempotencyKey}`;
+      if (row.status === "booked" && row.leadId) {
+        const bookedDraft = sessionDraft(row);
+        const bookedLead = await storage.getLead(row.leadId);
+        if (bookedLead) {
+          await emitJobEvent("crew_plan_saved", bookedLead, {
+            actorId: actor.id,
+            source: "staff_quick_book_retry",
+            eventId,
+            status: "assigned",
+            recipientUserIds: bookedDraft.crewMemberIds,
+            note: "Tentative Quick Book crew plan saved",
+          });
+        }
+        const deliveries = await pool.query(`
+          SELECT d.recipient_user_id AS "recipientUserId", COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''),u.email,'Crew member') AS "recipientName",
+                 d.channel,d.status,d.error_message AS "error",d.attempts
+            FROM job_alert_deliveries d LEFT JOIN users u ON u.id=d.recipient_user_id
+           WHERE d.event_id=$1 ORDER BY d.recipient_user_id,d.channel
+        `, [eventId]);
+        const savedQuote = row.pricingPreview as any;
+        return res.json({
+          success: true,
+          alreadyBooked: true,
+          bookingId: row.bookingId,
+          leadId: row.leadId,
+          orderNumber: bookedLead?.orderNumber ?? null,
+          total: Number(savedQuote?.total || bookedLead?.totalPrice || 0),
+          rewardBasis: Number(savedQuote?.rewardEligibleTotal || bookedLead?.jcmovesRewardBase || 0),
+          customerMessageSent: false,
+          squareInvoiceCreated: false,
+          deliveries: deliveries.rows,
+        });
+      }
+      if (row.revision !== input.expectedRevision) return res.status(409).json({ error: "This draft changed on another screen. Reload it before booking." });
+
+      client = await pool.connect();
+      await client.query("BEGIN");
+      const abortBooking = async (status: number, payload: Record<string, unknown>) => {
+        await client.query("ROLLBACK");
+        client.release();
+        client = null;
+        return res.status(status).json(payload);
+      };
+      const locked = await client.query(`SELECT status, revision, booking_id, lead_id FROM quick_booking_sessions WHERE id=$1 FOR UPDATE`, [row.id]);
+      const lockedRow = locked.rows[0];
+      if (!lockedRow || lockedRow.revision !== input.expectedRevision || lockedRow.status === "booked") {
+        return await abortBooking(409, { error: "This Quick Book session was already changed or booked", bookingId: lockedRow?.booking_id, leadId: lockedRow?.lead_id });
+      }
+
+      // Recompute every final gate while the session and selected workers are
+      // locked. No quote, booking row, assignment, or alert is accepted from
+      // the conversational extraction itself.
+      const state = await calculateQuickBookState(sessionDraft(row));
+      if (!state.ready || !state.quote) {
+        return await abortBooking(409, { error: "Quick Book is not ready", missingFields: state.missingFields, reviewReasons: state.reviewReasons });
+      }
+      const previousTotal = Number((row.pricingPreview as any)?.total);
+      if (!Number.isFinite(previousTotal) || Math.abs(previousTotal - state.quote.total) > 0.001) {
+        return await abortBooking(409, { error: "The exact server quote changed. Review the refreshed draft before booking.", previousTotal: Number.isFinite(previousTotal) ? previousTotal : null, currentTotal: state.quote.total });
+      }
+      const draft = state.draft;
+      const selectedSuggestions = new Map(state.crewSuggestions.map((worker) => [worker.id, worker]));
+      const invalidCrew = draft.crewMemberIds.filter((id) => !selectedSuggestions.get(id)?.available);
+      if (invalidCrew.length) return await abortBooking(409, { error: "One or more selected movers are unavailable in this arrival window", workerIds: invalidCrew });
+      const unavailableCrew = await quickBookTransactionCrewUnavailable(client, draft);
+      if (unavailableCrew.size) return await abortBooking(409, { error: "A selected mover is unavailable or no longer eligible for this date", workerIds: Array.from(unavailableCrew) });
+      const conflicts = await quickBookCrewConflicts(draft, draft.crewMemberIds, client);
+      if (conflicts.size) return await abortBooking(409, { error: "A selected mover was just assigned to another job in this arrival window", workerIds: Array.from(conflicts) });
+
+      const payoutSettings = rowToProfitShareSettings(await getDefaultPayoutSettings());
+      const profiles = draft.crewMemberIds.length
+        ? await db.select().from(workerProfiles).where(inArray(workerProfiles.userId, draft.crewMemberIds))
+        : [];
+      const profileByWorker = new Map(profiles.map((profile) => [profile.userId, profile]));
+      const quote = state.quote;
+      const nameParts = draft.customerName.trim().split(/\s+/);
+      const firstName = nameParts.shift() || "Customer";
+      const lastName = nameParts.join(" ") || "Customer";
+      const syntheticEmail = `quick-book+${draft.customerPhone.replace(/\D/g, "")}-${crypto.randomUUID()}@jconthemove.local`;
+      const customerEmail = draft.customerEmail || syntheticEmail;
+      const effectiveTruckConfig = quote.reservedEquipment?.truckConfig || draft.truckConfig;
+      const effectiveTrailerRequested = Boolean(quote.reservedEquipment?.trailerRequested);
+      const truckProvider = effectiveTruckConfig === "company_truck" ? "jc_on_the_move"
+        : effectiveTruckConfig === "customer_truck" ? "customer"
+          : effectiveTruckConfig === "rental_truck" ? "rental_uhaul" : "none";
+      const lineItems = [
+        { code: "moving_labor", label: `${draft.crewSize} movers × ${draft.estimatedHours} hours`, amount: quote.labor },
+        ...(quote.packagePrice ? [{ code: "fixed_package", label: quote.promotion?.description || "Fixed moving package", amount: quote.packagePrice }] : []),
+        ...(quote.truck ? [{ code: "company_truck", label: "JC company truck", amount: quote.truck }] : []),
+        ...(quote.trailer ? [{ code: "trailer", label: "Trailer", amount: quote.trailer }] : []),
+        ...(quote.stairs ? [{ code: "stairs", label: `${draft.stairsFlights} flights of stairs`, amount: quote.stairs }] : []),
+        ...(quote.elevator ? [{ code: "elevator", label: "Elevator access", amount: quote.elevator }] : []),
+        ...(quote.discountAmount ? [{ code: "promotion", label: quote.promotion?.code || "Promotion", amount: -quote.discountAmount }] : []),
+      ];
+      const jobPlanDetails = {
+        stairsFlights: draft.stairsFlights,
+        hasElevator: draft.hasElevator,
+        workScope: draft.workScope,
+        specialItemsNotes: draft.specialItems.notes,
+        additionalStops: draft.additionalStops,
+        propertySize: draft.propertySize,
+        bedrooms: draft.bedrooms,
+        inventory: draft.inventory,
+        specialItems: draft.specialItems,
+        truckSize: draft.truckSize,
+        truckConfig: effectiveTruckConfig,
+        trailerRequested: effectiveTrailerRequested,
+        quickBookSessionId: row.id,
+      };
+      const encryptedAccess = encryptJobAccessDetails({
+        accessCode: [draft.pickupAccessCode && `Pickup: ${draft.pickupAccessCode}`, draft.destinationAccessCode && `Destination: ${draft.destinationAccessCode}`].filter(Boolean).join("\n"),
+        entryInstructions: [draft.pickupInstructions && `Pickup: ${draft.pickupInstructions}`, draft.destinationInstructions && `Destination: ${draft.destinationInstructions}`].filter(Boolean).join("\n"),
+      });
+
+      const bookingResult = await client.query(`
+        INSERT INTO bookings
+          (customer_name, customer_email, customer_phone, service_address, notes, subtotal, discount_total, final_total,
+           token_estimate, reward_earn_rate_snapshot, reward_bonus_multiplier_snapshot, pricing_snapshot, status, source)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,$11::jsonb,'booked','staff_quick_book')
+        RETURNING id
+      `, [
+        draft.customerName, customerEmail, draft.customerPhone, draft.pickupAddress, draft.notes || null,
+        Number(quote.preDiscountTotal ?? quote.rewardEligibleTotal).toFixed(2), Number(quote.discountAmount || 0).toFixed(2), quote.total.toFixed(2),
+        quote.projectedCustomerJcMoves, quote.rateCard.jcmovesPerDollar.toFixed(4), JSON.stringify(quote),
+      ]);
+      const bookingId = String(bookingResult.rows[0].id);
+      const accessJson = JSON.stringify(jobPlanDetails);
+      const quoteSnapshot = JSON.stringify({
+        source: "staff_quick_book",
+        sessionId: row.id,
+        capturedAt: new Date().toISOString(),
+        quote,
+        request: {
+          ...draft,
+          pickupAccessCode: draft.pickupAccessCode ? "[ENCRYPTED]" : "",
+          destinationAccessCode: draft.destinationAccessCode ? "[ENCRYPTED]" : "",
+          pickupInstructions: draft.pickupInstructions ? "[ENCRYPTED]" : "",
+          destinationInstructions: draft.destinationInstructions ? "[ENCRYPTED]" : "",
+        },
+        lineItems,
+        customerMessageSent: false,
+        squareInvoiceCreated: false,
+      });
+      const leadResult = await client.query(`
+        INSERT INTO leads
+          (first_name,last_name,email,phone,service_type,from_address,to_address,move_date,property_size,details,source,status,
+           assigned_to_user_id,created_by_user_id,truck_config,trailer_requested,job_plan_details,access_instructions_ciphertext,
+           truck_provider,truck_size,crew_size,confirmed_date,base_price,jcmoves_reward_base,financial_status,crew_members,
+           crew_lead_user_id,total_special_items_fee,total_price,confirmed_hours,order_line_items,quote_notes,last_quote_updated_at,
+           arrival_window,sms_consent,sms_consent_recorded_at,sms_consent_source,sms_consent_recorded_by,promo_code,booking_id,
+           quote_snapshot,zone_snapshot,is_quote_only)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'staff_quick_book','assigned',
+                $11,$12,$13,$36,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,'quote',$22::text[],
+                $23,'0.00',$24,$25,$26::jsonb,$27,NOW(),$28,$29,$30,'staff_quick_book_explicit',$31,$32,$33,
+                $34::jsonb,$35::jsonb,false)
+        RETURNING *
+      `, [
+        firstName, lastName, customerEmail, draft.customerPhone, draft.serviceType === "moving" ? "residential" : "labor",
+        draft.pickupAddress, draft.destinationAddress || null, draft.confirmedDate, draft.propertySize || null,
+        ["[STAFF QUICK BOOK]", draft.notes].filter(Boolean).join("\n"), draft.crewLeadUserId, actor.id,
+        effectiveTruckConfig, accessJson, encryptedAccess, truckProvider, draft.truckSize, draft.crewSize,
+        draft.confirmedDate, quote.total.toFixed(2), quote.rewardEligibleTotal.toFixed(2), draft.crewMemberIds,
+        draft.crewLeadUserId, quote.total.toFixed(2), draft.estimatedHours, JSON.stringify(lineItems), draft.notes || null,
+        draft.arrivalWindow, draft.smsConsent, new Date(), actor.id,
+        quote.promo?.applied ? quote.promo.requestedCode : null, bookingId, quoteSnapshot,
+        JSON.stringify(quote.location), effectiveTrailerRequested,
+      ]);
+      const lead = leadResult.rows[0];
+      const leadId = String(lead.id);
+      await client.query(`
+        INSERT INTO booking_service_items
+          (booking_id,service_code,service_label,quantity,unit_price,line_subtotal,price_mode,details,status,assigned_to_user_id,crew_members,scheduled_at)
+        VALUES ($1,$7,$8,1,$2,$2,'fixed',$3::jsonb,'scheduled',$4,$5::text[],$6::date)
+      `, [bookingId, quote.total.toFixed(2), JSON.stringify({ ...jobPlanDetails, destinationAddress: draft.destinationAddress }), draft.crewLeadUserId, draft.crewMemberIds, draft.confirmedDate, draft.serviceType, draft.serviceType === "moving" ? "Moving labor" : "Labor-only moving help"]);
+      for (const workerId of draft.crewMemberIds) {
+        const profile = profileByWorker.get(workerId);
+        const roleOnJob = workerId === draft.crewLeadUserId ? "lead_mover" : normalizePayoutRole(profile?.payoutClassification);
+        const hourlyRate = defaultHourlyRateForRole(roleOnJob, payoutSettings);
+        const bonusWeight = profile && normalizePayoutRole(profile.payoutClassification) === roleOnJob
+          ? numberFrom(profile.defaultBonusWeight, defaultBonusWeightForRole(roleOnJob, payoutSettings))
+          : defaultBonusWeightForRole(roleOnJob, payoutSettings);
+        await client.query(`
+          INSERT INTO job_assignments
+            (lead_id,worker_id,role_on_job,hourly_rate,scheduled_hours,hours_worked,bonus_weight,is_driver_for_job,driver_hourly_premium)
+          VALUES ($1,$2,$3,$4,$5,$5,$6,false,$7)
+          ON CONFLICT (lead_id,worker_id) DO NOTHING
+        `, [leadId, workerId, roleOnJob, dbMoney(hourlyRate), dbMoney(draft.estimatedHours!), dbRatio(bonusWeight), dbMoney(payoutSettings.driverHourlyPremium)]);
+      }
+      const sessionUpdate = await client.query(`
+        UPDATE quick_booking_sessions
+           SET status='booked', revision=revision+1, structured_draft=$3::jsonb, pricing_preview=$4::jsonb,
+               suggested_crew=$5::jsonb, missing_fields='[]'::jsonb, review_reasons='[]'::jsonb,
+               booking_id=$6, lead_id=$7, completed_at=NOW(), updated_at=NOW(),
+               agent_metadata=COALESCE(agent_metadata,'{}'::jsonb) || $8::jsonb,
+               metrics=COALESCE(metrics,'{}'::jsonb) || $9::jsonb
+         WHERE id=$1 AND revision=$2 AND status IN ('draft','ready')
+         RETURNING revision
+      `, [row.id, input.expectedRevision, JSON.stringify(sealQuickBookDraft(draft)), JSON.stringify(quote), JSON.stringify(state.crewSuggestions), bookingId, leadId, JSON.stringify({ bookIdempotencyKey: input.idempotencyKey }), JSON.stringify({ completionSeconds: Math.max(0, Math.round((Date.now() - new Date(row.createdAt).getTime()) / 1000)), quoteParity: true, bookedAt: new Date().toISOString() })]);
+      if (!sessionUpdate.rowCount) throw new Error("Quick Book revision changed while booking");
+      await client.query("COMMIT");
+      client.release();
+      client = null;
+
+      await writeLeadHistory(leadId, null, "assigned", actor.id, `Quick Book saved; assigned crew notified of tentative plan for ${draft.confirmedDate}, ${draft.arrivalWindow}.`).catch(() => undefined);
+      await emitJobEvent("crew_plan_saved", lead, {
+        actorId: actor.id,
+        source: "staff_quick_book",
+        eventId,
+        status: "assigned",
+        recipientUserIds: draft.crewMemberIds,
+        note: "Tentative Quick Book crew plan saved",
+        extra: { confirmedHours: draft.estimatedHours, quotedTotal: quote.total },
+      });
+      const deliveryResult = await pool.query(`
+        SELECT d.recipient_user_id AS "recipientUserId", COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''),u.email,'Crew member') AS "recipientName",
+               d.channel, d.status, d.error_message AS "error", d.attempts
+          FROM job_alert_deliveries d
+          LEFT JOIN users u ON u.id=d.recipient_user_id
+         WHERE d.event_id=$1
+         ORDER BY d.recipient_user_id,d.channel
+      `, [eventId]);
+      const deliveryCounts = deliveryResult.rows.reduce((counts: Record<string, number>, delivery: any) => {
+        const key = `notification_${String(delivery.status || "unknown")}`;
+        counts[key] = (counts[key] || 0) + 1;
+        return counts;
+      }, {});
+      await pool.query(`UPDATE quick_booking_sessions SET metrics=COALESCE(metrics,'{}'::jsonb) || $2::jsonb WHERE id=$1`, [row.id, JSON.stringify(deliveryCounts)]).catch(() => undefined);
+      return res.status(201).json({
+        success: true,
+        bookingId,
+        leadId,
+        orderNumber: lead.order_number ?? null,
+        total: quote.total,
+        rewardBasis: quote.rewardEligibleTotal,
+        customerMessageSent: false,
+        squareInvoiceCreated: false,
+        deliveries: deliveryResult.rows,
+      });
+    } catch (error) {
+      if (client) {
+        try { await client.query("ROLLBACK"); } catch { /* already rolled back */ }
+        client.release();
+      }
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.issues[0]?.message || "Invalid Quick Book request" });
+      console.error("[quick-book] final booking failed:", error);
+      return res.status(500).json({ error: "Quick Book could not save this job. The draft remains available and no crew alert was sent." });
+    }
+  });
+
   const jobPlanDetailsSchema = z.object({
     accessCode: z.string().trim().max(1000).optional().default(""),
     entryInstructions: z.string().trim().max(4000).optional().default(""),
+    pickupAccessCode: z.string().trim().max(1000).optional().default(""),
+    pickupInstructions: z.string().trim().max(4000).optional().default(""),
+    destinationAccessCode: z.string().trim().max(1000).optional().default(""),
+    destinationInstructions: z.string().trim().max(4000).optional().default(""),
     stairsFlights: z.number().int().min(0).max(50).optional().default(0),
     hasElevator: z.boolean().optional().default(false),
     workScope: z.enum(["load_only", "unload_only", "load_unload"]).optional().default("load_only"),
@@ -12079,6 +12776,11 @@ Thank you for your business!
       address: z.string().trim().min(1).max(500),
       note: z.string().trim().max(1000).optional().default(""),
     })).max(8).optional().default([]),
+    propertySize: z.string().trim().max(120).optional().default(""),
+    bedrooms: z.number().int().min(0).max(20).nullable().optional().default(null),
+    truckSize: quickBookTruckSizeSchema.optional().default("none"),
+    inventory: quickBookInventorySchema.optional(),
+    specialItems: quickBookSpecialItemsSchema.optional(),
   });
 
   const jobSetupSchema = z.object({
@@ -12121,6 +12823,11 @@ Thank you for your business!
 
       const currentLead = await storage.getLead(req.params.id);
       if (!currentLead) return res.status(404).json({ error: "Lead not found" });
+      if (!unchangedLegacyPhone(input.phone, currentLead.phone) && input.phone.trim() !== (currentLead.phone || "").trim()) {
+        const message = phoneError(input.phone);
+        if (message) return res.status(400).json({ error: message, fieldErrors: { phone: message } });
+        input.phone = normalizeCustomerPhone(input.phone)!;
+      }
       if (input.arrivalWindow !== undefined
         && input.arrivalWindow !== (currentLead.arrivalWindow || "")
         && input.arrivalWindow !== ""
@@ -12200,9 +12907,20 @@ Thank you for your business!
         // designation when that worker is removed from the assigned crew.
         if (input.crewMembers !== undefined && currentLead.driverUserId && !effectiveDriver) patch.driverUserId = null;
         if (input.jobPlanDetails !== undefined) {
-          const { accessCode, entryInstructions, ...operationalDetails } = input.jobPlanDetails;
+          const {
+            accessCode,
+            entryInstructions,
+            pickupAccessCode,
+            pickupInstructions,
+            destinationAccessCode,
+            destinationInstructions,
+            ...operationalDetails
+          } = input.jobPlanDetails;
           patch.jobPlanDetails = operationalDetails;
-          patch.accessInstructionsCiphertext = encryptJobAccessDetails({ accessCode, entryInstructions });
+          patch.accessInstructionsCiphertext = encryptJobAccessDetails({
+            accessCode: [accessCode, pickupAccessCode && `Pickup: ${pickupAccessCode}`, destinationAccessCode && `Destination: ${destinationAccessCode}`].filter(Boolean).join("\n"),
+            entryInstructions: [entryInstructions, pickupInstructions && `Pickup: ${pickupInstructions}`, destinationInstructions && `Destination: ${destinationInstructions}`].filter(Boolean).join("\n"),
+          });
         }
 
         if (input.quote) {
@@ -12597,7 +13315,16 @@ Thank you for your business!
       const updates: Record<string, string> = {};
       if (firstName !== undefined) updates.firstName = firstName;
       if (lastName !== undefined) updates.lastName = lastName;
-      if (phone !== undefined) updates.phone = phone;
+      if (phone !== undefined) {
+        const existing = await storage.getLead(id);
+        if (!existing) return res.status(404).json({ error: "Lead not found" });
+        if (phone === existing.phone || unchangedLegacyPhone(String(phone ?? ""), existing.phone)) updates.phone = existing.phone;
+        else {
+          const message = typeof phone === "string" ? phoneError(phone) : "Enter a complete 10-digit phone number.";
+          if (message) return res.status(400).json({ error: message, fieldErrors: { phone: message } });
+          updates.phone = normalizeCustomerPhone(phone)!;
+        }
+      }
       if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No fields to update" });
       const updatedLead = await storage.updateLeadQuote(id, updates);
       if (!updatedLead) return res.status(404).json({ error: "Lead not found" });
@@ -15598,14 +16325,39 @@ Thank you for your business!
 
   // Return VAPID public key for client-side push subscription setup
   app.get("/api/notifications/vapid-public-key", (req, res) => {
-    const key = process.env.VAPID_PUBLIC_KEY;
-    if (!key) return res.status(503).json({ error: "Push notifications not configured" });
-    res.json({ publicKey: key });
+    res.setHeader('Cache-Control', 'no-store');
+    if (!pushConfig.ready) return res.status(503).json({ error: "Push notifications not configured" });
+    res.json({ publicKey: pushConfig.publicKey });
   });
+
+  const ownerPushTest = createOwnerPushTestHandlers({
+    getUser: id => storage.getUser(id),
+    readiness: getPushReadiness,
+    claim: async userId => {
+      const result = await pool.query(`INSERT INTO job_alert_deliveries
+        (event_id, recipient_user_id, channel, status, error_message, metadata)
+        VALUES ($1, $2, 'push', 'skipped', 'Owner test reserved; delivery not yet confirmed.', $3::jsonb)
+        ON CONFLICT (event_id, recipient_user_id, channel) DO NOTHING RETURNING event_id`,
+        [OWNER_PUSH_TEST_ID, userId, JSON.stringify({ ownerOnly: true, test: true, source: 'JC-87' })]);
+      return (result.rowCount || 0) === 1;
+    },
+    send: (id, payload) => notificationService.sendPushNotification(id, payload),
+    record: async (userId, result) => {
+      await pool.query(`UPDATE job_alert_deliveries SET status = $3, error_message = $4, updated_at = NOW()
+        WHERE event_id = $1 AND recipient_user_id = $2 AND channel = 'push'`,
+        [OWNER_PUSH_TEST_ID, userId, result.status, result.error || null]);
+    },
+  });
+  app.get('/api/admin/notifications/push-readiness', isAuthenticated, ownerPushTest.readiness);
+  app.post('/api/admin/notifications/owner-push-test', isAuthenticated, ownerPushTest.send);
 
   app.post("/api/notifications/subscribe", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = (req.session as any).userId;
+      const userId = req.user?.id || req.currentUser?.id || req.session?.userId;
+      if (!pushConfig.ready) return res.status(503).json({ error: 'Push configuration is not ready.' });
+      if (req.body?.applicationServerKey !== pushConfig.publicKey) {
+        return res.status(409).json({ error: 'Push key changed. Reload and enable notifications again.' });
+      }
       const { pushSubscriptionSchema } = await import("@shared/schema");
       const subscription = pushSubscriptionSchema.parse(req.body);
       

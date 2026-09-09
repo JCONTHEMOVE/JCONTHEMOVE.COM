@@ -1,3 +1,4 @@
+import { leadPhoneNumberSchema } from "@shared/schema";
 // Multi-Service Booking endpoints (Task #128).
 //
 //   POST /api/bookings/quote      → live quote, no persistence
@@ -112,7 +113,7 @@ const instantBookingRequestSchema = z.object({
   service: z.enum(["moving", "labor", "junk"]),
   customerName: z.string().trim().min(2, "Enter your name").max(120),
   customerEmail: z.union([z.string().trim().email(), z.literal("")]).optional().transform((value) => value || ""),
-  customerPhone: z.string().trim().min(7, "Enter a phone number"),
+  customerPhone: leadPhoneNumberSchema,
   serviceAddress: z.string().trim().min(5, "Enter the service address").max(350),
   destinationAddress: z.string().trim().max(350).optional().transform((value) => value || ""),
   zip: z.string().trim().regex(/^\d{5}(?:-\d{4})?$/, "Enter a 5-digit ZIP code"),

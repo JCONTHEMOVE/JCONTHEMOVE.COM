@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { customerNotesFromDetails } from "@shared/leadDetails";
 import { useRoute, Link, useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -146,6 +147,11 @@ interface Lead {
     hasElevator?: boolean;
     specialItemsNotes?: string;
     additionalStops?: Array<{ address?: string; note?: string }>;
+    propertySize?: string;
+    bedrooms?: number | null;
+    truckSize?: string;
+    inventory?: Record<string, unknown>;
+    specialItems?: Record<string, unknown>;
   } | null;
   jobAccess?: {
     accessCode?: string;
@@ -1286,7 +1292,7 @@ export default function LeadDetailPage() {
       schedule: [date, arrivalWindow].filter(Boolean).join(" · ") || "TBD",
       crewSize,
       expectedHours,
-      notesPreview: String(lead.details || "").trim() || null,
+      notesPreview: customerNotesFromDetails(lead.details) || null,
       photos: lead.photos || [],
     };
   })();
@@ -2006,9 +2012,9 @@ export default function LeadDetailPage() {
 
         {/* === 4-Tab Interface === */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-2 mb-6">
-            <TabsTrigger value="notes">Notes & Media</TabsTrigger>
-            <TabsTrigger value="history">Timeline & Rewards</TabsTrigger>
+          <TabsList className="grid h-auto w-full grid-cols-2 mb-6">
+            <TabsTrigger className="min-h-11 whitespace-normal text-sm" value="notes">Notes & Media</TabsTrigger>
+            <TabsTrigger className="min-h-11 whitespace-normal text-sm" value="history">Timeline & Rewards</TabsTrigger>
           </TabsList>
 
           {/* ─────────── TAB: QUOTE & SEND ─────────── */}
@@ -2323,15 +2329,21 @@ export default function LeadDetailPage() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Notes</CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-3">
+                {customerNotesFromDetails(lead.details) && (
+                  <div className="p-3 bg-muted rounded-lg">
+                    <p className="text-xs text-muted-foreground mb-1">Customer Notes</p>
+                    <p className="text-sm whitespace-pre-wrap break-words">{customerNotesFromDetails(lead.details)}</p>
+                  </div>
+                )}
                 {lead.quoteNotes ? (
                   <div className="p-3 bg-muted rounded-lg">
                     <p className="text-xs text-muted-foreground mb-1">Quote Notes</p>
                     <p className="text-sm whitespace-pre-wrap">{lead.quoteNotes}</p>
                   </div>
-                ) : (
+                ) : !customerNotesFromDetails(lead.details) ? (
                   <p className="text-sm text-muted-foreground italic text-center py-4">No notes added yet. Notes from the quote builder will appear here.</p>
-                )}
+                ) : null}
               </CardContent>
             </Card>
 

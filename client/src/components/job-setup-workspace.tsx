@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { customerNotesFromDetails, updateCustomerNotes } from "@shared/leadDetails";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CalendarDays, CheckCircle2, CircleHelp, ClipboardPenLine, DollarSign, Loader2, PencilLine, Users } from "lucide-react";
 import type { LaborWorkScope } from "@shared/laborBooking";
@@ -147,7 +148,7 @@ function setupDraftFromLead(lead: JobSetupLead): SetupDraft {
     phone: lead.phone || "",
     fromAddress: lead.fromAddress || "",
     toAddress: lead.toAddress || "",
-    details: lead.details || "",
+    details: customerNotesFromDetails(lead.details),
     confirmedDate: confirmedJobDate(lead),
     arrivalWindow: lead.arrivalWindow || "",
     truckConfig: lead.truckConfig || "no_truck",
@@ -243,7 +244,7 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved }: 
         phone: draft.phone.trim(),
         fromAddress: draft.fromAddress.trim(),
         toAddress: draft.toAddress.trim(),
-        details: draft.details.trim(),
+        details: updateCustomerNotes(lead.details, draft.details),
         ...(canManageSetup ? {
           confirmedDate: draft.confirmedDate,
           arrivalWindow: draft.arrivalWindow,
@@ -419,7 +420,7 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved }: 
           <div className="grid gap-3 sm:grid-cols-2">
             <div><Label htmlFor="setup-first-name">First Name</Label><Input id="setup-first-name" value={draft.firstName} onChange={(event) => updateDraft("firstName", event.target.value)} data-testid="input-setup-first-name" /></div>
             <div><Label htmlFor="setup-last-name">Last Name</Label><Input id="setup-last-name" value={draft.lastName} onChange={(event) => updateDraft("lastName", event.target.value)} data-testid="input-setup-last-name" /></div>
-            <div><Label htmlFor="setup-phone">Phone</Label><Input id="setup-phone" type="tel" value={draft.phone} onChange={(event) => updateDraft("phone", event.target.value)} /></div>
+            <div><Label htmlFor="setup-phone">Phone</Label><Input id="setup-phone" type="tel" legacyPhoneValue={lead.phone} value={draft.phone} onChange={(event) => updateDraft("phone", event.target.value)} /></div>
             <div><Label htmlFor="setup-email">Email</Label><Input id="setup-email" type="email" value={draft.email} onChange={(event) => updateDraft("email", event.target.value)} /></div>
           </div>
         </section>
