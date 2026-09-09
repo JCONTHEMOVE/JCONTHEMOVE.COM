@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createDisposableLedgerDatabase } from "./disposable-ledger-database";
 import { pool } from "../server/db";
 import { creditJobCash } from "../server/services/jobCashCredit";
+import { recordJobRevenue } from "../server/services/jobRevenueAllocation";
 
 const database = await createDisposableLedgerDatabase(process.argv[2]);
 const previous = pool.connect;
@@ -45,6 +46,23 @@ try {
     await assert.rejects(creditJobCash("job", amount, "webhook"), /Invalid/);
   }
   assert.equal((await database.query("SELECT COUNT(*)::int AS n FROM rewards")).rows[0].n, 1);
+  await database.exec(`CREATE TABLE revenue_allocations(id serial PRIMARY KEY,lead_id text,
+    payment_amount_usd numeric,buyback_usd numeric,staking_usd numeric,jackpot_usd numeric,liquidity_usd numeric,source text);
+    CREATE UNIQUE INDEX revenue_lead ON revenue_allocations(lead_id) WHERE lead_id IS NOT NULL;
+    CREATE TABLE buyback_fund(id text PRIMARY KEY,fee_contribution_count int,last_updated timestamptz);
+    INSERT INTO buyback_fund VALUES('fund',4,NOW());`);
+  failure = "UPDATE buyback_fund";
+  await assert.rejects(recordJobRevenue(100, "job", "webhook"), /injected/);
+  assert.equal((await database.query("SELECT COUNT(*)::int AS n FROM revenue_allocations")).rows[0].n, 0);
+  failure = "";
+  assert.equal(await recordJobRevenue(100, "job", "webhook"), true);
+  assert.equal(await recordJobRevenue(200, "job", "invoice_sync"), false);
+  assert.equal((await database.query("SELECT fee_contribution_count FROM buyback_fund")).rows[0].fee_contribution_count, 5);
+  const allocation = (await database.query("SELECT * FROM revenue_allocations")).rows[0];
+  assert.equal(Number(allocation.payment_amount_usd), 100);
+  assert.deepEqual([allocation.buyback_usd, allocation.staking_usd, allocation.jackpot_usd, allocation.liquidity_usd].map(Number), [40, 30, 20, 10]);
+  await assert.rejects(recordJobRevenue(100, "missing", "webhook"), /not found/);
+  console.log("PASS: revenue allocation and contribution count roll back together and replay once");
   console.log("PASS: cash credit rollback, cross-source replay, exact balance and unclaimed/invalid inputs");
 } finally {
   pool.connect = previous;

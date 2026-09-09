@@ -8,6 +8,7 @@ import { recordConfirmedJobRefund } from "../server/services/jobPaymentRefunds";
 import { settleJobLedgerRecipient } from "../server/services/jobLedgerSettlement";
 import { acquireJobDisbursementLock } from "../server/services/jobDisbursementLock";
 import { creditJobCash } from "../server/services/jobCashCredit";
+import { recordJobRevenue } from "../server/services/jobRevenueAllocation";
 
 const url = new URL(process.env.TEST_DATABASE_URL || "http://missing");
 if (url.protocol !== "postgresql:" || !["127.0.0.1", "localhost"].includes(url.hostname)
@@ -133,6 +134,19 @@ try {
   assert.equal((await testPool.query("SELECT COUNT(*)::int AS n FROM rewards WHERE reference_id='cash-job'")).rows[0].n, 1);
   assert.equal((await testPool.query("SELECT COUNT(*)::int AS n FROM wallet_transactions")).rows[0].n, 1);
   console.log("PASS: concurrent cross-source job cash credits issue one grant");
+  await testPool.query(`CREATE TABLE revenue_allocations(id serial PRIMARY KEY,lead_id text,
+    payment_amount_usd numeric,buyback_usd numeric,staking_usd numeric,jackpot_usd numeric,liquidity_usd numeric,source text);
+    CREATE UNIQUE INDEX revenue_lead ON revenue_allocations(lead_id) WHERE lead_id IS NOT NULL;
+    CREATE TABLE buyback_fund(id text PRIMARY KEY,fee_contribution_count int,last_updated timestamptz);
+    INSERT INTO buyback_fund VALUES('fund',4,NOW());`);
+  const allocations = await Promise.all([
+    recordJobRevenue(100, 'cash-job', 'webhook'), recordJobRevenue(100, 'cash-job', 'invoice_sync'),
+    recordJobRevenue(100, 'job', 'webhook'),
+  ]);
+  assert.equal(allocations.filter(Boolean).length, 2);
+  assert.equal((await testPool.query('SELECT COUNT(*)::int AS n FROM revenue_allocations')).rows[0].n, 2);
+  assert.equal((await testPool.query('SELECT fee_contribution_count FROM buyback_fund')).rows[0].fee_contribution_count, 6);
+  console.log("PASS: same-job allocation replay and different-job contribution increments");
   console.log("PASS: canonical gift-funded reward replay and observed refund/settlement lock contention");
   console.log("PASS: separate PostgreSQL sessions, duplicate/concurrent payments, competing refunds, advisory lock and exactly-once wallet settlement");
 } finally {

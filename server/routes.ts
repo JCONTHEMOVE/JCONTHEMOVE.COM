@@ -1,3 +1,4 @@
+import { recordJobRevenue } from "./services/jobRevenueAllocation";
 import { creditJobCash } from "./services/jobCashCredit";
 import { validateCustomerPhoneSubmission } from "./services/customerPhoneValidation";
 import { normalizeCustomerPhone, phoneError, unchangedLegacyPhone } from "@shared/phone";
@@ -33763,55 +33764,15 @@ async function ensureRevenueAllocationsTable() {
  * Record a 40/30/20/10 planning allocation when payment is confirmed.
  * This is accounting-only: it never transfers, converts, or distributes the
  * underlying cash, check proceeds, processor balance, or crypto asset.
- * Non-fatal — all errors are caught and logged only.
+ * Allocation failures propagate so callers can retry the transaction.
  */
 async function recordRevenueSplit(
   paymentAmountUsd: number,
-  leadId: string | null,
+  leadId: string,
   source: string = 'square_payment'
 ): Promise<void> {
-  try {
-    // Idempotency guard: one revenue split per lead regardless of source.
-    // A lead can only be paid once — guard on lead_id alone to prevent
-    // cross-source duplicates (e.g. Square webhook + admin mark-paid).
-    if (leadId) {
-      const existing = await pool.query(
-        `SELECT id FROM revenue_allocations WHERE lead_id = $1 LIMIT 1`,
-        [leadId]
-      );
-      if (existing.rows.length > 0) {
-        console.log(`💰 Revenue split already recorded for lead ${leadId} — skipping duplicate (source: ${source})`);
-        return;
-      }
-    }
-
-    const buyback   = Math.round(paymentAmountUsd * 0.40 * 100) / 100;
-    const staking   = Math.round(paymentAmountUsd * 0.30 * 100) / 100;
-    const jackpot   = Math.round(paymentAmountUsd * 0.20 * 100) / 100;
-    const liquidity = Math.round(paymentAmountUsd * 0.10 * 100) / 100;
-
-    await pool.query(
-      `INSERT INTO revenue_allocations
-         (lead_id, payment_amount_usd, buyback_usd, staking_usd, jackpot_usd, liquidity_usd, source)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [leadId, paymentAmountUsd, buyback, staking, jackpot, liquidity, source]
-    );
-
-    // Credit the buyback fund (token buy-pressure reserve)
-    const [fundRow] = await db.select().from(buybackFund).limit(1);
-    if (fundRow) {
-      await db.update(buybackFund).set({
-        lastUpdated: new Date(),
-        feeContributionCount: (fundRow.feeContributionCount ?? 0) + 1,
-      }).where(eq(buybackFund.id, fundRow.id));
-    }
-
-    console.log(`💰 Accounting allocation recorded (no funds moved): $${paymentAmountUsd} → buyback $${buyback} / staking $${staking} / jackpot $${jackpot} / liquidity $${liquidity} (lead: ${leadId || 'N/A'})`);
-  } catch (err) {
-    console.error(`⚠️ recordRevenueSplit failed (non-fatal):`, err);
-  }
+  await recordJobRevenue(paymentAmountUsd, leadId, source);
 }
-
 // ── JCMOVES USD: Mint service credit on confirmed payment ────────────────────
 // Credits `cash_balance` in wallet_accounts for the customer who owns the lead.
 // Uses the `rewards` table (rewardType='jcmoves_usd_mint') for idempotency.
