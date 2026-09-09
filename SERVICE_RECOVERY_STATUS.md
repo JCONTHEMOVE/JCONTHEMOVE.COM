@@ -57,7 +57,7 @@ The existing Production Availability workflow checked only the `www` readiness e
 
 `scripts/check-public-entrypoints.mjs` now checks both domains at `/` and `/book`, with bounded requests, HTTPS and path validation, and basic JC application-HTML validation. A redirect to the working `www` host is accepted. One failed entry fails the check even when the others succeed. The workflow runs this check even after readiness fails, using the existing owner-alert job.
 
-Verification: all 18 focused monitoring/alert tests passed on the installed Node runtime and on Node 20.20.2. The Node 20 sandbox attempt encountered a Windows path-permission error; the approved rerun outside the sandbox passed. The live probe returned failure as expected: two apex timeouts and two `www` passes. This is detection evidence, not restoration evidence. These changes are local and unpushed; they are not active in GitHub Actions. Existing owner-alert activation still requires `PRODUCTION_ALERT_DISCORD_WEBHOOK_URL` in GitHub Actions and the owner's Discord channel notification setting. No alert was sent.
+Verification: all 18 focused monitoring/alert tests passed on the installed Node runtime and on Node 20.20.2. The Node 20 sandbox attempt encountered a Windows path-permission error; the approved rerun outside the sandbox passed. The live probe returned failure as expected: two apex timeouts and two `www` passes. This is detection evidence, not restoration evidence. These changes are local and unpushed; they are not active in GitHub Actions. Those direct Discord activation instructions are historical; AVAILABILITY_RELEASE.md now describes the consolidated incident-service path and remaining private configuration. No alert was sent.
 
 ## Consolidated service completion queue
 

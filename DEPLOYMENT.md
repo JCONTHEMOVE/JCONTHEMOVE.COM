@@ -203,55 +203,22 @@ After deploy, verify:
 
 ## Production availability owner alerts
 
-`Production Availability` requests a check every 10 minutes (minutes 7, 17,
-27, 37, 47, 57). GitHub can delay scheduled runs. A separate `notify-owner`
-job runs when `readiness` fails, including a readiness job timeout, so it has
-its own runner and time budget. Successful, skipped, and cancelled checks do
-not send alerts. Cancelling the entire workflow can prevent delivery.
+The draft uses one incident-service reporting job for automatic readiness and
+apex/www entrypoint outcomes. It incorporates PR #8's email-first escalation
+plan and replaces the earlier direct Discord failure reporter.
 
-Remaining configuration:
+Follow [AVAILABILITY_RELEASE.md](AVAILABILITY_RELEASE.md) for the concrete
+activation sequence, private heartbeat secrets, isolated fail/resolve drills,
+recipient verification and independent missed-check coverage. A missing
+heartbeat secret fails visibly; no incident service was configured by this
+code change. Ordinary manual health checks do not notify or refresh the
+production incident monitor.
 
-- GitHub repository **Settings → Secrets and variables → Actions → New
-  repository secret**: `PRODUCTION_ALERT_DISCORD_WEBHOOK_URL` = the incoming
-  webhook URL for a dedicated owner-only Discord text channel. Use the normal
-  Discord webhook URL, not its Slack/GitHub-compatible suffix. This is an
-  Actions secret, not a repository variable or a Railway environment value.
-- In Discord, the owner must have access to that channel and set its
-  **Notification Settings → All Messages** (and leave the channel unmuted).
-  Alerts deliberately suppress all mentions.
-
-The existing approved Discord transport is used independently of
-`JC_JOB_EVENT_WEBHOOK_URLS` and all customer/crew notification services. Do
-not reuse a crew channel webhook. No new email, SMS, app credentials, or
-GitHub write permissions are needed.
-
-Each failed run sends one message with the repository and exact workflow
-attempt link. No health response bodies, job/customer data, or webhook
-credentials enter the message. Delivery uses a 10-second request deadline,
-rejects redirects, and requests Discord confirmation with `wait=true`.
-Missing/invalid secrets and delivery failures make the alert job fail visibly;
-the original readiness failure remains failed. There are no automatic POST
-retries (a lost response could otherwise duplicate a delivered alert), outage
-deduplication, recovery messages, or timed escalation. Every failing scheduled
-run can send another alert. Check the failed job before manually rerunning it.
-
-Local verification (no secrets, dependencies, or external messages):
-
-```bash
-node --test scripts/__tests__/production-alert.test.mjs
-```
-
-The workflow runs this suite under Node 20 as well. After this change reaches
-`main` and the secret is set, validate delivery with **Run workflow** using
-`https://www.jconthemove.com/api/health` and an intentionally mismatched
-`expected_commit` such as `alerttest`. This deliberately fails verification
-without changing production data. Confirm the owner sees one Discord message
-linking to that failed attempt and the `notify-owner` job succeeds. Then run
-again with the commit input empty to confirm ordinary successful checks are
-quiet. A local mock test does not establish live delivery.
-
-Protocol references: [GitHub job dependencies](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idneeds),
-[Discord webhook confirmation and mentions](https://docs.discord.com/developers/resources/webhook#execute-webhook).
+Do not follow the former instructions to create a
+`PRODUCTION_ALERT_DISCORD_WEBHOOK_URL` secret or trigger an alert by supplying
+an intentionally wrong production commit. Use the separate drill heartbeat.
+Local reporter and entrypoint tests use fake HTTP responses and do not prove
+real email/Discord receipt or escalation timing.
 
 ## 7) Troubleshooting
 

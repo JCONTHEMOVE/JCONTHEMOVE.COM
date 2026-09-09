@@ -1,90 +1,90 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import { readFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { notifyProductionFailure } from "../notify-production-failure.mjs";
+import { buildReportPlan, reportAvailability } from "../report-availability.mjs";
 
-const env = {
-  READINESS_RESULT: "failure",
-  PRODUCTION_ALERT_DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/123/fake-token",
+const production = "https://uptime.betterstack.com/api/v1/heartbeat/production_test_token";
+const drill = "https://uptime.betterstack.com/api/v1/heartbeat/drill_test_token";
+const automatic = {
   GITHUB_REPOSITORY: "JCONTHEMOVE/JCONTHEMOVE.COM",
-  GITHUB_RUN_ID: "1234",
-  GITHUB_RUN_ATTEMPT: "2",
+  GITHUB_EVENT_NAME: "schedule",
+  GITHUB_REF: "refs/heads/main",
+  GITHUB_RUN_ID: "123456",
+  READINESS_RESULT: "success",
+  ALERT_DRILL: "false",
+  OPS_HEARTBEAT_URL: production,
+  OPS_DRILL_HEARTBEAT_URL: drill,
 };
+const rehearsal = { ...automatic, GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REF: "refs/heads/ops-test", ALERT_DRILL: "true", ALERT_DRILL_PHASE: "fail", READINESS_RESULT: "failure" };
 
-test("failure sends one confirmed Discord message with an actionable run link", async () => {
+test("automatic success refreshes production; all other job conclusions signal failure", () => {
+  assert.equal(buildReportPlan(automatic).url, production);
+  for (const result of ["failure", "cancelled", "skipped"]) {
+    assert.equal(buildReportPlan({ ...automatic, READINESS_RESULT: result }).url, `${production}/fail`);
+  }
+  assert.throws(() => buildReportPlan({ ...automatic, READINESS_RESULT: "" }));
+});
+
+test("manual health checks cannot resolve production incidents or hide missed schedules", async () => {
   let calls = 0;
-  const result = await notifyProductionFailure(env, async (url, options) => {
-    calls++;
-    assert.equal(new URL(url).searchParams.get("wait"), "true");
-    assert.equal(options.method, "POST");
-    assert.equal(options.redirect, "error");
-    assert.equal(options.headers["Content-Type"], "application/json");
-    assert.ok(options.signal instanceof AbortSignal);
-    const body = JSON.parse(options.body);
-    assert.deepEqual(body.allowed_mentions, { parse: [] });
-    assert.match(body.content, /Production Availability FAILED/);
-    assert.match(body.content, /https:\/\/github.com\/JCONTHEMOVE\/JCONTHEMOVE.COM\/actions\/runs\/1234\/attempts\/2/);
-    assert.ok(!body.content.includes("fake-token"));
-    return { ok: true, status: 200 };
+  await reportAvailability({ ...automatic, GITHUB_EVENT_NAME: "workflow_dispatch" }, { fetchImpl: async () => { calls++; } });
+  assert.equal(calls, 0);
+  assert.throws(() => buildReportPlan({ ...automatic, GITHUB_EVENT_NAME: "pull_request" }));
+  assert.throws(() => buildReportPlan({ ...automatic, GITHUB_REF: "refs/heads/feature" }));
+});
+
+test("drill failure and resolution use only the isolated drill heartbeat", () => {
+  const failure = buildReportPlan(rehearsal);
+  assert.equal(failure.url, `${drill}/fail`);
+  assert.equal(JSON.parse(failure.body).scope, "drill");
+  assert.equal(buildReportPlan({ ...rehearsal, ALERT_DRILL_PHASE: "resolve", READINESS_RESULT: "success" }).url, drill);
+  assert.equal(buildReportPlan({ ...rehearsal, ALERT_DRILL_PHASE: "resolve" }).url, `${drill}/fail`);
+  assert.throws(() => buildReportPlan({ ...rehearsal, OPS_DRILL_HEARTBEAT_URL: production }));
+  assert.throws(() => buildReportPlan({ ...rehearsal, OPS_HEARTBEAT_URL: "" }));
+  assert.throws(() => buildReportPlan({ ...rehearsal, ALERT_DRILL_PHASE: "" }));
+});
+
+test("missing or unsafe destinations fail before any network call", async () => {
+  const urls = ["", `${production}\n`, "http://uptime.betterstack.com/api/v1/heartbeat/test_token", `${production}?secret=other`, `${production}/fail`, "https://uptime.betterstack.com.attacker.invalid/api/v1/heartbeat/test_token", "https://localhost/api/v1/heartbeat/test_token"];
+  for (const url of urls) {
+    await assert.rejects(reportAvailability({ ...automatic, OPS_HEARTBEAT_URL: url }, { fetchImpl: async () => assert.fail("must not send") }));
+  }
+});
+
+test("reporter sends sanitized metadata, refuses redirects and does not query production", async () => {
+  const calls = [];
+  const message = await reportAvailability(automatic, { fetchImpl: async (url, options) => { calls.push({ url, options }); return new Response(null, { status: 200 }); } });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, production);
+  assert.equal(calls[0].options.method, "POST");
+  assert.equal(calls[0].options.redirect, "error");
+  const payload = JSON.parse(calls[0].options.body);
+  assert.equal(payload.run_url, "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/123456");
+  assert.ok(!calls[0].options.body.includes("test_token"));
+  assert.match(message, /Human receipt and escalation are not proven/);
+});
+
+test("transient failures retry; permanent failures are reported without response bodies", async () => {
+  const statuses = [429, 503, 200];
+  const waits = [];
+  const message = await reportAvailability(automatic, { fetchImpl: async () => new Response(null, { status: statuses.shift() }), delay: async ms => waits.push(ms) });
+  assert.equal(statuses.length, 0);
+  assert.deepEqual(waits, [1000, 2000]);
+  assert.match(message, /accepted/);
+  let calls = 0;
+  await assert.rejects(reportAvailability(automatic, { fetchImpl: async () => { calls++; return new Response("private response", { status: 403 }); } }), error => {
+    assert.match(error.message, /HTTP 403/);
+    assert.ok(!error.message.includes("private response"));
+    return true;
   });
-  assert.deepEqual(result, { sent: true });
   assert.equal(calls, 1);
 });
 
-test("successful, cancelled, skipped and absent results never send", async () => {
-  for (const result of ["success", "cancelled", "skipped", undefined]) {
-    assert.deepEqual(await notifyProductionFailure({ READINESS_RESULT: result }, () => assert.fail("unexpected delivery")), { sent: false });
-  }
-});
-
-test("missing dedicated secret fails without falling back to crew destinations", async () => {
-  await assert.rejects(notifyProductionFailure({ ...env, PRODUCTION_ALERT_DISCORD_WEBHOOK_URL: "", JC_JOB_EVENT_WEBHOOK_URLS: env.PRODUCTION_ALERT_DISCORD_WEBHOOK_URL, DISCORD_WEBHOOK_URL: env.PRODUCTION_ALERT_DISCORD_WEBHOOK_URL }, () => assert.fail("crew delivery")), /Set GitHub Actions secret/);
-});
-
-test("invalid or redirected destinations cannot expose credentials", async () => {
-  for (const url of ["bad-secret", "http://discord.com/api/webhooks/123/token", "https://discord.com.evil.test/api/webhooks/123/token", "https://user:password@discord.com/api/webhooks/123/token", "https://discord.com/api/webhooks/123/token?thread_id=12", "https://example.com/hook", "https://discord.com/api/webhooks/123/token#secret"]) {
-    await assert.rejects(notifyProductionFailure({ ...env, PRODUCTION_ALERT_DISCORD_WEBHOOK_URL: url }, () => assert.fail("unexpected delivery")), (error) => !error.message.includes(url));
-  }
-});
-
-test("invalid run context fails before delivery", async () => {
-  await assert.rejects(notifyProductionFailure({ ...env, GITHUB_RUN_ID: "" }, () => assert.fail("unexpected delivery")), /GitHub run context/);
-});
-
-for (const status of [302, 400, 401, 404, 429, 500]) {
-  test(`HTTP ${status} fails visibly without response body or retries`, async () => {
-    let calls = 0;
-    await assert.rejects(notifyProductionFailure(env, async () => {
-      calls++;
-      return { ok: false, status, text: () => assert.fail("must not read error body") };
-    }), new RegExp(`HTTP ${status}`));
-    assert.equal(calls, 1);
+test("exhausted network retries never reveal the secret URL", async () => {
+  let calls = 0;
+  await assert.rejects(reportAvailability(automatic, { fetchImpl: async () => { calls++; throw new Error(`connect failed: ${production}`); }, delay: async () => {} }), error => {
+    assert.match(error.message, /not accepted/);
+    assert.ok(!error.message.includes("test_token"));
+    return true;
   });
-}
-
-test("network and timeout errors are redacted", async () => {
-  for (const name of ["TypeError", "TimeoutError"]) {
-    await assert.rejects(notifyProductionFailure(env, async () => {
-      const error = new Error(env.PRODUCTION_ALERT_DISCORD_WEBHOOK_URL);
-      error.name = name;
-      throw error;
-    }), (error) => error.message.includes("network, timeout, or redirect") && !error.message.includes("fake-token"));
-  }
-});
-
-test("CLI returns nonzero for missing configuration", () => {
-  const result = spawnSync(process.execPath, [fileURLToPath(new URL("../notify-production-failure.mjs", import.meta.url))], { env: { ...process.env, READINESS_RESULT: "failure", PRODUCTION_ALERT_DISCORD_WEBHOOK_URL: "" }, encoding: "utf8" });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /::error::Set GitHub Actions secret/);
-});
-
-test("workflow keeps failure alert independent of readiness timeout and crew configuration", () => {
-  const workflow = readFileSync(new URL("../../.github/workflows/production-availability.yml", import.meta.url), "utf8");
-  assert.match(workflow, /cron: "7,17,27,37,47,57 \* \* \* \*"/);
-  assert.match(workflow, /notify-owner:\s+needs: readiness\s+if: \$\{\{ always\(\) && needs.readiness.result == 'failure' \}\}/);
-  assert.match(workflow, /PRODUCTION_ALERT_DISCORD_WEBHOOK_URL: \$\{\{ secrets.PRODUCTION_ALERT_DISCORD_WEBHOOK_URL \}\}/);
-  assert.match(workflow, /node --test scripts\/__tests__\/production-alert.test.mjs/);
-  assert.doesNotMatch(workflow, /continue-on-error|JC_JOB_EVENT_WEBHOOK|DISCORD_WEBHOOK_URL: \$\{\{ secrets\.DISCORD_WEBHOOK_URL/);
+  assert.equal(calls, 3);
 });
