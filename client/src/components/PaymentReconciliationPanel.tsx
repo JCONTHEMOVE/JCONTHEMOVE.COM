@@ -36,7 +36,7 @@ export function PaymentReconciliationView({ report }: { report: Report }) {
       {report.rewardQueue ? <dl className="mt-2 space-y-1 text-xs">
         <div><dt className="inline font-medium">Queue status: </dt><dd className="inline">{report.rewardQueue.status}</dd></div>
         <div><dt className="inline font-medium">Attempts: </dt><dd className="inline">{report.rewardQueue.attempts}</dd></div>
-        {report.rewardQueue.status === 'retry' ? <div><dt className="inline font-medium">Next attempt: </dt><dd className="inline">{new Date(report.rewardQueue.next_attempt_at).toLocaleString()}</dd></div> : null}
+        {report.rewardQueue.status === 'retry' ? <div><dt className="inline font-medium">{report.automaticRewardsEnabled ? "Next attempt: " : "Retry paused: "}</dt><dd className="inline">{report.automaticRewardsEnabled ? new Date(report.rewardQueue.next_attempt_at).toLocaleString() : "Processing must be enabled to retry."}</dd></div> : null}
         {report.rewardQueue.completed_at ? <div><dt className="inline font-medium">Queue completed: </dt><dd className="inline">{new Date(report.rewardQueue.completed_at).toLocaleString()}</dd></div> : null}
       </dl> : <p className="mt-1 text-xs text-muted-foreground">No reward handoff recorded.</p>}
     </section>
