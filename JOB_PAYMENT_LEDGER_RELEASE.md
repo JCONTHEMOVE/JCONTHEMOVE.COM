@@ -24,4 +24,6 @@ node --import tsx scripts/check-job-payment-ledger.ts <path-to-pglite-dist-index
 
 The harness replaces the connection method only within its own process and uses synthetic jobs. It does not read production data or apply migrations to the configured database.
 
+The adapter orchestration test verifies retrieval → stored association → settlement ordering and confirms that provider failures, missing/ambiguous associations, invalid payment snapshots, and ledger failures are not acknowledged as successful. The disposable PostgreSQL harness also runs this orchestration into the actual ledger transaction with a simulated Square gift-card payment; the job settles with zero customer-eligible gift-funded cents and no rewards. These use a simulated provider, not a live Square credential or webhook.
+
 Square adapter checks follow the [Payment object](https://developer.squareup.com/reference/square/objects/payment) and [refund documentation](https://developer.squareup.com/docs/payments-api/refund-payments). Principal uses amountMoney, excluding tips; COMPLETED alone is insufficient because refunded payments retain that status. Cross-method gift-card refunds require separate refund-event handling before activation. No provider API was called during local mapping tests.

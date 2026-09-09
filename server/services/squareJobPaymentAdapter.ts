@@ -1,6 +1,6 @@
 import { pool } from "../db";
 import { confirmJobPayment } from "./jobPaymentLedger";
-import { mapVerifiedSquareJobPayment } from "./squareJobPaymentPolicy";
+import { verifyAndConfirmSquarePayment } from "./squareJobPaymentVerification";
 import { getSquareAccessToken, getSquareEnvironment, getSquareLocationId } from "./squareConfig";
 
 /** Disabled and not routed. Accept only an ID from a verified server event;
@@ -21,16 +21,14 @@ export async function confirmSquareJobPayment(paymentId: string) {
   const { SquareClient, SquareEnvironment } = await import("square");
   const client = new SquareClient({ token, environment: environment === "production"
     ? SquareEnvironment.Production : SquareEnvironment.Sandbox });
-  const { payment } = await client.payments.get({ paymentId });
-  if (!payment?.orderId) throw new Error("Square payment has no verified order");
-  const { rows: invoices } = await pool.query<{ lead_id: string; quote_revision_id: string }>(
-    `SELECT DISTINCT lead_id,quote_revision_id FROM square_invoices
-      WHERE square_order_id=$1 AND lead_id IS NOT NULL AND quote_revision_id IS NOT NULL`,
-    [payment.orderId],
-  );
-  if (invoices.length !== 1) throw new Error("Square order must map to exactly one job and approved quote");
-  return confirmJobPayment(mapVerifiedSquareJobPayment(payment, {
-    paymentId, orderId: payment.orderId, locationId, environment,
-    leadId: invoices[0].lead_id, quoteRevisionId: invoices[0].quote_revision_id,
-  }));
+  return verifyAndConfirmSquarePayment(paymentId, { locationId, environment }, {
+    getPayment: async (id) => (await client.payments.get({ paymentId: id })).payment,
+    findJobQuotes: async (orderId) => {
+      const { rows } = await pool.query<{ lead_id: string; quote_revision_id: string }>(
+        `SELECT DISTINCT lead_id,quote_revision_id FROM square_invoices
+          WHERE square_order_id=$1 AND lead_id IS NOT NULL AND quote_revision_id IS NOT NULL`, [orderId]);
+      return rows;
+    },
+    confirm: confirmJobPayment,
+  });
 }

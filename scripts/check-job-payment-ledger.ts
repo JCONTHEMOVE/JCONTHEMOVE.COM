@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { pool } from "../server/db";
 import { confirmJobPayment, JOB_PAYMENT_LEDGER_SCHEMA } from "../server/services/jobPaymentLedger";
 import type { ConfirmedJobPayment } from "../server/services/jobPaymentLedgerPolicy";
+import { verifyAndConfirmSquarePayment } from "../server/services/squareJobPaymentVerification";
 
 if (!process.argv[2]) throw new Error("Provide an installed PGlite dist/index.js path");
 const { PGlite } = await import(pathToFileURL(resolve(process.argv[2])).href);
@@ -48,6 +49,20 @@ try {
   await assert.rejects(confirmJobPayment({ ...base, amountCents: 60001 }), /conflicts/);
   await assert.rejects(confirmJobPayment({ ...base, leadId: "other", quoteRevisionId: "other-quote" }), /conflicts/);
   await assert.rejects(confirmJobPayment({ ...base, quoteRevisionId: "other-quote" }), /approved quote/);
+  const adapted = await verifyAndConfirmSquarePayment("adapter-payment", { locationId: "test-location", environment: "sandbox" }, {
+    getPayment: async () => ({ id: "adapter-payment", orderId: "test-order", locationId: "test-location",
+      status: "COMPLETED", sourceType: "CARD", amountMoney: { amount: 200000n, currency: "USD" },
+      updatedAt: "2026-09-09T12:00:00Z", cardDetails: { card: { cardBrand: "SQUARE_GIFT_CARD" } } }),
+    findJobQuotes: async (orderId) => {
+      assert.equal(orderId, "test-order");
+      return [{ lead_id: "other", quote_revision_id: "other-quote" }];
+    },
+    confirm: confirmJobPayment,
+  });
+  assert.equal(adapted.paidInFull, true);
+  assert.equal(adapted.customerEligibleCents, 0);
+  assert.equal(adapted.completed, false);
+  assert.equal(adapted.rewardsTriggered, false);
   const settled = await confirmJobPayment({ ...base, providerPaymentId: "balance",
     amountCents: 140000, giftFundedCents: 50000, tenderType: "mixed" });
   assert.equal(settled.paidInFull, true);
