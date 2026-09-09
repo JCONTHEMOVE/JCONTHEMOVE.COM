@@ -407,6 +407,10 @@ export async function saveQuoteDraft(input: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // Payment/refund/reward writers lock the job before its quote. Use the
+    // same order, including when this is the first draft for a job.
+    const lockedLead = await client.query("SELECT id FROM leads WHERE id=$1 FOR UPDATE", [lead.id]);
+    if (!lockedLead.rows.length) throw new Error("Lead not found");
     const latestResult = await client.query(`SELECT * FROM quote_revisions WHERE lead_id = $1 ORDER BY revision DESC LIMIT 1 FOR UPDATE`, [lead.id]);
     const latest = latestResult.rows[0];
     if (latest?.status === "draft") {
@@ -485,9 +489,14 @@ export async function approveQuoteRevision(input: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const lockedLead = await client.query(
+      "SELECT id FROM leads WHERE id=(SELECT lead_id FROM quote_revisions WHERE id=$1) FOR UPDATE", [input.quoteId],
+    );
+    if (!lockedLead.rows.length) throw new Error("Quote revision lead not found");
     const result = await client.query(`SELECT * FROM quote_revisions WHERE id=$1 FOR UPDATE`, [input.quoteId]);
     const row = result.rows[0];
     if (!row) throw new Error("Quote revision not found");
+    if (row.lead_id !== lockedLead.rows[0].id) throw new Error("Quote revision changed jobs; retry approval");
     if (row.status !== "draft") throw new Error("Only a draft quote can be approved");
     const eligibility = plainRecord(row.travel_eligibility);
     const { requiresOwner, overrideReason } = assertQuoteApprovalAllowed({
@@ -498,9 +507,9 @@ export async function approveQuoteRevision(input: {
 
     const updated = await client.query(`
       UPDATE quote_revisions SET
-        status='approved', approved_by_user_id=$2, approved_at=NOW(),
+        status='approved', approved_by_user_id=$2::varchar, approved_at=NOW(),
         owner_override_reason=$3,
-        owner_override_by_user_id=CASE WHEN $4 THEN $2 ELSE NULL END,
+        owner_override_by_user_id=CASE WHEN $4 THEN $2::varchar ELSE NULL END,
         owner_override_at=CASE WHEN $4 THEN NOW() ELSE NULL END,
         updated_at=NOW()
       WHERE id=$1 RETURNING *
