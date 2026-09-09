@@ -8,7 +8,14 @@ const { PGlite } = await import(pathToFileURL(resolve(process.argv[2])).href);
 const db = new PGlite();
 const regional = readFileSync('server/services/regionalAutomationMigration.ts', 'utf8');
 const sessions = readFileSync('server/services/quickBookSessions.ts', 'utf8');
-const blocks = source => [...source.matchAll(/pool\.query\(`([\s\S]*?)`\)/g)].map(m => m[1]);
+const claimSource = readFileSync('server/services/squareInvoiceEffectClaims.ts', 'utf8');
+const claimUpgrade = claimSource.match(/SQUARE_INVOICE_CLAIM_UPGRADE = `([\s\S]*?)`;/)?.[1];
+assert.ok(claimUpgrade, 'Invoice claim migration SQL must be available');
+const blocks = source => [...source.matchAll(/pool\.query\(`([\s\S]*?)`\)/g)].map(m => {
+  const sql = m[1].replace('${SQUARE_INVOICE_CLAIM_UPGRADE}', claimUpgrade);
+  assert.ok(!sql.includes('${'), 'Migration verifier must resolve every SQL interpolation');
+  return sql;
+});
 assert.equal(blocks(regional).length, 2);
 assert.equal(blocks(sessions).length, 1);
 try {

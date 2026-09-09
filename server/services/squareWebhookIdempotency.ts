@@ -1,3 +1,4 @@
+import { createInvoiceEffectClaims, type InvoiceEffectClaim } from "./squareInvoiceEffectClaims";
 import crypto from "crypto";
 import { pool } from "../db";
 import { ensureRegionalAutomationSchema } from "./regionalAutomationMigration";
@@ -51,31 +52,17 @@ export async function failSquareWebhookEvent(eventId: string, error: unknown): P
   ).catch(() => undefined);
 }
 
-export async function claimSquareInvoicePaymentEffect(squareInvoiceId: string, eventId: string): Promise<boolean> {
+const invoiceClaims = createInvoiceEffectClaims((sql, args) => pool.query(sql, args));
+
+export async function claimSquareInvoicePaymentEffect(squareInvoiceId: string, eventId: string) {
   await ensureRegionalAutomationSchema();
-  const claimed = await pool.query(
-    `INSERT INTO square_invoice_payment_effects (square_invoice_id,event_id,status)
-     VALUES ($1,$2,'processing')
-     ON CONFLICT (square_invoice_id) DO UPDATE SET
-       event_id=EXCLUDED.event_id, status='processing', last_error=NULL, started_at=NOW()
-     WHERE square_invoice_payment_effects.status='failed'
-        OR (square_invoice_payment_effects.status='processing' AND square_invoice_payment_effects.started_at<NOW()-INTERVAL '5 minutes')
-     RETURNING square_invoice_id`,
-    [squareInvoiceId, eventId],
-  );
-  return claimed.rows.length > 0;
+  return invoiceClaims.claim(squareInvoiceId, eventId);
 }
 
-export async function completeSquareInvoicePaymentEffect(squareInvoiceId: string): Promise<void> {
-  await pool.query(
-    `UPDATE square_invoice_payment_effects SET status='processed', completed_at=NOW(), last_error=NULL WHERE square_invoice_id=$1`,
-    [squareInvoiceId],
-  );
+export async function completeSquareInvoicePaymentEffect(claim: InvoiceEffectClaim): Promise<void> {
+  if (!(await invoiceClaims.complete(claim))) throw new Error("Square invoice claim was superseded");
 }
 
-export async function failSquareInvoicePaymentEffect(squareInvoiceId: string, error: unknown): Promise<void> {
-  await pool.query(
-    `UPDATE square_invoice_payment_effects SET status='failed', last_error=$2 WHERE square_invoice_id=$1`,
-    [squareInvoiceId, error instanceof Error ? error.message : String(error)],
-  ).catch(() => undefined);
+export async function failSquareInvoicePaymentEffect(claim: InvoiceEffectClaim, error: unknown): Promise<void> {
+  await invoiceClaims.fail(claim, error).catch(() => undefined);
 }

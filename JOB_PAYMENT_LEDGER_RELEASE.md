@@ -13,6 +13,7 @@ Updated September 9, 2026. Implementation is a draft candidate, not a deployed s
 - Admin reconciliation: an authenticated admin/owner endpoint and expandable job panel show payments, refunds, mismatches, paid/reward markers and queue attempts/status. Disabled retries display as paused. The report does not claim to audit every wallet transaction.
 - Existing-path guards: wallet intent does not imply payment; underpaid/deposit invoices do not establish full-job settlement; invoice sync uses the same classification and bypasses legacy accounting in canonical mode. Shop-card grant failures propagate for webhook retry.
 - Overpaid invoices retain their collected amount for reconciliation, but job accounting and cash-credit grants cap at the job total. Fourteen classification tests passed, including overpayments with and without a prior deposit. Excess collection does not authorize an automatic refund.
+- Invoice effect claims distinguish completed duplicates from work in progress. Each attempt has a fresh ownership token, so an expired handler cannot complete or fail its replacement. Busy deliveries remain retryable. Disposable tests cover additive schema repeatability, legacy completed invoices, expiry, same-event retries and stale writes; the harness is also registered in PostgreSQL CI. Event-level claim fencing and complete provider-flow acceptance remain open.
 
 ## Flags and deployment prerequisites
 

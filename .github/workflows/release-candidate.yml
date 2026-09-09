@@ -52,6 +52,7 @@ jobs:
         run: |
           node --import tsx scripts/check-job-ledger-settlement.ts --postgres
           node --import tsx scripts/check-job-cash-credit.ts --postgres
+          node --import tsx scripts/check-square-invoice-claims.ts --postgres
       - name: Monitoring tests without live delivery
         run: node --test scripts/__tests__/*.test.mjs
       - name: Build release candidate
