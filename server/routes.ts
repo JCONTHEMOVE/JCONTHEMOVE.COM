@@ -24815,7 +24815,12 @@ Thank you for your business!
                 const invoiceAmount = typeof squareCents === "number" && squareCents > 0
                   ? squareCents / 100
                   : Number(localInvoice.amount || 0);
-                const payment = classifyJobInvoicePayment({
+                const payment = process.env.JOB_PAYMENT_LEDGER_ENABLED === "true"
+                  ? await (await import("./services/canonicalInvoicePayment")).classifyCanonicalInvoicePayment({
+                    leadId: localInvoice.leadId, orderId: localInvoice.squareOrderId,
+                    invoiceAmount, depositRequired: lead.depositRequired, depositAmount: lead.depositAmount,
+                  })
+                  : classifyJobInvoicePayment({
                   invoiceAmount,
                   jobTotal: lead.totalPrice,
                   depositAmount: lead.depositAmount,
@@ -25030,6 +25035,8 @@ Thank you for your business!
         }
       }
 
+      const { processCanonicalSquareWebhook } = await import("./services/canonicalSquareWebhook");
+      await processCanonicalSquareWebhook(eventType, squareObjectId);
       if (claimedPaymentInvoice) {
         const { completeSquareInvoicePaymentEffect } = await import("./services/squareWebhookIdempotency");
         await completeSquareInvoicePaymentEffect(claimedPaymentInvoice);

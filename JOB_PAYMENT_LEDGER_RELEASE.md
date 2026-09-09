@@ -1,12 +1,12 @@
 # Canonical payments and rewards: release status
 
-Updated September 9, 2026. Implementation is a draft candidate, not a deployed service. Square canonical adapters are not connected to webhook routing, and the additive schema is not registered as a startup migration. Do not enable the production flags yet.
+Updated September 9, 2026. Implementation is a draft candidate, not a deployed service. Square canonical adapters are connected behind disabled flags; the additive payment schema is not registered as a startup migration. Do not enable the production flags yet.
 
 ## Implemented
 
 - Canonical payments: unique provider/payment identity, integer-cent USD amounts, approved source quote, current quote/lead-total agreement, cumulative coverage and gift-funded exclusions. Payments and paid markers commit together under a job row lock.
 - Refunds: unique refund identity, original-payment association, cumulative amount/funding limits, and net reconciliation. Refund-first delivery records the verified original payment and refund atomically without briefly marking the job paid. Tipped refunds require explicit allocation and currently fail closed.
-- Square adapters: retrieve payment/refund records from Square, validate completed status, location, currency, funding and stored order/job/quote association. Sandbox and production identities are separate. The adapters remain unrouted.
+- Square adapters: retrieve payment/refund records from Square, validate completed status, location, currency, funding and stored order/job/quote association. Sandbox and production identities are separate. The signed webhook calls these adapters only when both ledger and Square flags are enabled.
 - Reward settlement: uses the persisted award amount/rate on retry, validates recipient/job identity, and commits reward record, wallet credit and settlement marker atomically. Ambiguous legacy reward history requires reconciliation. Advisory locks remain on one checked-out connection.
 - Canonical reward funding: uses net payment-ledger funding and approved quote totals. Wallet settlement rechecks completion, payment coverage, refunds and reward basis under the job lock. Gift-funded dollars do not earn ordinary customer rewards.
 - Durable reward queue: unique handoffs, atomic enqueue after completed/full payment, a sweep for payment-before-completion, expiring claims, stale-worker fencing and bounded retry timing. The worker verifies durable customer/crew settlement before finishing the claim. Pending customer claims remain explicit ledger reservations.
@@ -21,8 +21,8 @@ All new flags are disabled by default:
 
 | Flag | Effect |
 | --- | --- |
-| `JOB_PAYMENT_LEDGER_ENABLED` | Enables canonical ledger services and their reward funding requirements; does not route Square events by itself. |
-| `SQUARE_JOB_PAYMENT_LEDGER_ENABLED` | Allows canonical Square adapter calls. |
+| `JOB_PAYMENT_LEDGER_ENABLED` | Enables canonical ledger services and invoice coverage requirements; Square routing also requires its adapter flag. |
+| `SQUARE_JOB_PAYMENT_LEDGER_ENABLED` | Routes supported signed Square payment/refund events into canonical adapters. |
 | `JOB_PAYMENT_REWARDS_ENABLED` | Allows canonical reward settlement and queue operations. |
 | `JOB_PAYMENT_REWARD_WORKER_ENABLED` | Along with the ledger/reward flags, starts the bounded worker sweep. |
 
@@ -30,6 +30,7 @@ Apply and verify the additive schema before enabling these flags. Existing ledge
 
 ## Verified evidence
 
+- Current application candidate `c537e3cd` passed full CI in run [34392419048](https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/34392419048). This includes overpayment caps, invoice/event attempt ownership, payload identity, separate-session PostgreSQL initial/expired claim races, and all existing release checks. It is candidate validation, not production deployment or end-to-end provider acceptance.
 - Full CI passed at `19892678` in run [34387746590](https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/34387746590): Node 20 type checking, server/authorization tests, PostgreSQL concurrency, monitoring tests, build and PWA checks.
 - PostgreSQL concurrency includes distinct backend sessions, competing/duplicate payments, excessive concurrent refunds, advisory-lock contention, exactly-once wallet credit, canonical gift-adjusted replay and a refund racing settlement. The race test observes PostgreSQL blocking before committing the refund and verifies no reward/wallet row is created afterward.
 - Local disposable database tests cover migration repeatability, payment/refund rollback and replay, changed-rate settlement retry, gift exclusions, queue deduplication/expiry/fencing, incomplete-proof and missing-crew rejection, completed worker proof, and payment-before-completion handoff.
@@ -41,8 +42,8 @@ Apply and verify the additive schema before enabling these flags. Existing ledge
 
 ## Remaining release work
 
-1. Route signed Square events into the canonical adapters while distinguishing unrelated prepaid, shop-credit and gift-card events. Coordinate invoice-side effects so legacy handlers cannot bypass canonical settlement or double-account.
-   A staged resolver now retrieves payment/refund records and classifies stored order associations as job, unrelated, or unmapped. Missing/ambiguous quote associations reject for reconciliation. Focused routing tests passed. The resolver is not registered in the webhook; durable handling of unmapped events and invoice-side-effect coordination remain open.
+1. Complete end-to-end acceptance of the newly wired, flag-gated Square path and all legacy side effects. Known unrelated events retain their existing handlers; unmapped events remain failed and retryable for reconciliation.
+   A staged resolver now retrieves payment/refund records and classifies stored order associations as job, unrelated, or unmapped. Missing/ambiguous quote associations reject for reconciliation. Focused routing tests passed. The resolver is now called by the webhook. Canonical invoice handling waits for verified payments for its stored order and uses cumulative job coverage. Deposits, early invoice delivery, unrelated orders and refund review passed disposable database tests. Provider/signature-to-effects acceptance and concurrent quote/refund coordination remain open.
    Accounting audit: job cash credits now lock the lead and commit wallet balance, reward identity and transaction together; failures propagate to the caller. Revenue allocation and contribution-count updates also commit together, retain one allocation per job, and increment counts in SQL. Disposable tests prove allocation rollback after a failed count update and cross-source replay; PostgreSQL CI now includes simultaneous same/different-job allocations. The revenue change passed full CI at `8f7e9f6a` in run [34390890663](https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/34390890663), including these PostgreSQL checks. These changes prevent new partial writes but do not reconcile historical ones. Broader invoice retry coordination remains open.
 2. Complete tipped-refund allocation and approve treatment of already-issued rewards after refunds. No automatic reversal policy has been approved.
 3. Coordinate quote/completion writers with reward settlement, including newly approved quote revisions and assignments changing during retries.

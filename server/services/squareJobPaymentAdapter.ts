@@ -6,7 +6,7 @@ import { recordConfirmedPaymentAndRefund } from "./jobPaymentRefunds";
 import { resolveSquareJobEvent, type SquareOrderBinding } from "./squareJobEventRouting";
 import { getSquareAccessToken, getSquareEnvironment, getSquareLocationId } from "./squareConfig";
 
-/** Disabled and not routed. Accept only an ID from a verified server event;
+/** Flag-gated. Accept only an ID from a verified server event;
  * retrieve authoritative payment details before deriving any ledger fields. */
 async function getLedgerClient() {
   if (process.env.JOB_PAYMENT_LEDGER_ENABLED !== "true"
@@ -33,8 +33,8 @@ async function findJobQuotes(orderId: string) {
   return rows;
 }
 
-/** Staged routing entrypoint, not yet registered in the shared webhook.
- * Unmapped events require a durable review/retry decision by that handler. */
+/** Routing entrypoint used by the signed shared webhook.
+ * Unmapped events leave the durable event claim failed for review/retry. */
 export async function resolveCanonicalSquareEvent(eventType: string, objectId: string) {
   const { client } = await getLedgerClient();
   return resolveSquareJobEvent(eventType, objectId, {
@@ -54,7 +54,7 @@ export async function confirmSquareJobPayment(paymentId: string) {
   });
 }
 
-/** Disabled and unrouted, like the payment adapter. Never requests a refund. */
+/** Flag-gated, like the payment adapter. Never requests a refund. */
 export async function recordSquareJobRefund(refundId: string) {
   const { client, locationId, environment } = await getLedgerClient();
   return verifyAndRecordSquareRefund(refundId, { locationId, environment }, {
