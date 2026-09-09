@@ -22,6 +22,14 @@ export async function classifyCanonicalInvoicePayment(input: {
         || report.reviewReasons.some(reason => ['missing_approved_usd_quote', 'quote_total_mismatch', 'refund_requires_review'].includes(reason))) {
       throw new Error("Canonical invoice requires payment reconciliation");
     }
+    const { rows: closeouts } = await client.query<{
+      status: string; customer_approved_at: Date | null; pricing_snapshot: Record<string, unknown> | null;
+    }>('SELECT status,customer_approved_at,pricing_snapshot FROM job_closeouts WHERE lead_id=$1', [input.leadId]);
+    const closeout = closeouts[0];
+    if (closeout && (!closeout.customer_approved_at || !['approved', 'balance_due', 'paid'].includes(closeout.status)
+        || closeout.pricing_snapshot?.finalQuoteRevisionId !== report.quoteRevisionId)) {
+      throw new Error('Canonical invoice is waiting for final closeout approval');
+    }
     const { rows } = await client.query<{ paid: string }>(
       `SELECT COALESCE(SUM(amount_cents),0)::text AS paid FROM job_confirmed_payments
        WHERE lead_id=$1 AND metadata->>'squareOrderId'=$2 AND provider IN ('square:production','square:sandbox')`,

@@ -16,6 +16,7 @@ try {
     tokens_disbursed_at timestamptz,completion_rewarded_at timestamptz);
     CREATE TABLE quote_revisions(id varchar PRIMARY KEY,lead_id varchar,revision int,status text,
     approved_at timestamptz,customer_total numeric,currency text);
+    CREATE TABLE job_closeouts(lead_id varchar PRIMARY KEY,status text,customer_approved_at timestamptz,pricing_snapshot jsonb);
     INSERT INTO leads VALUES('job',100,'new',NULL,NULL,NULL);
     INSERT INTO quote_revisions VALUES('quote','job',1,'approved',NOW(),100,'USD');`);
   await database.exec(JOB_PAYMENT_LEDGER_SCHEMA);
@@ -33,6 +34,15 @@ try {
   assert.equal(result.kind, 'paid_in_full');
   assert.equal(result.accountingAmount, 100);
   assert.equal(result.invoiceAmount, 70);
+  await database.exec("INSERT INTO job_closeouts VALUES('job','awaiting_customer',NULL,'{}')");
+  await assert.rejects(classifyCanonicalInvoicePayment(balance), /waiting for final closeout approval/);
+  await database.exec("UPDATE job_closeouts SET status='paid' WHERE lead_id='job'");
+  await assert.rejects(classifyCanonicalInvoicePayment(balance), /waiting for final closeout approval/);
+  await database.exec("UPDATE job_closeouts SET status='balance_due',customer_approved_at=NOW(),pricing_snapshot='{\"finalQuoteRevisionId\":\"wrong-quote\"}' WHERE lead_id='job'");
+  await assert.rejects(classifyCanonicalInvoicePayment(balance), /waiting for final closeout approval/);
+  await database.exec("UPDATE job_closeouts SET pricing_snapshot='{\"finalQuoteRevisionId\":\"quote\"}' WHERE lead_id='job'");
+  assert.equal((await classifyCanonicalInvoicePayment(balance)).kind, 'paid_in_full');
+  console.log('PASS: invoice effects wait for customer closeout approval and the matching final quote');
   await assert.rejects(classifyCanonicalInvoicePayment({ ...balance, orderId: 'unrelated-order' }), /waiting for verified/);
   await recordConfirmedJobRefund({ provider: payment.provider, providerPaymentId: 'balance', providerRefundId: 'refund',
     amountCents: 100, giftFundedCents: 0, currency: 'USD', refundedAt: '2026-09-09T13:00:00Z' });
