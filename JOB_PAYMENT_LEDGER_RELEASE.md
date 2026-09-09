@@ -79,6 +79,8 @@ The harness approves a $120 final quote with a $30 recorded payment, then invoke
 
 Required correction: persist and coordinate the final-invoice intent with job payment state, detect changed coverage before publication, and reconcile/cancel or otherwise resolve outstanding invoices when coverage changes after publication. Handle ambiguous provider responses and retries without losing the provider invoice identity. Then replace this defect characterization with regression assertions that no stale invoice remains collectible, and test payment arrival before publication, after publication, and during cancellation/recovery. Customer messaging and closeout status must reflect the reconciled result.
 
+Recovery preparation now saves the provider invoice identity and financial bindings locally as a draft before calling PublishInvoice. A failed insert stops publication. After publication, an atomic acknowledgement only promotes draft status and retains paid/canceled/refunded state, prior paid/sent timestamps and absent retry metadata. Simulated service tests cover lost provider/local responses and a payment committed during publication; `scripts/check-square-invoice-publication.ts` exercises the actual SQL with PGlite and in PostgreSQL CI. This closes the missing-local-record window after a lost publication response. It does not persist a pre-provider request intent, recheck job coverage, cancel stale invoices, or coordinate postpublication closeout/messaging. The diagnostic above remains an open-defect reproduction.
+
 ```text
 node --import tsx scripts/check-job-payment-ledger.ts <pglite-dist-index.js>
 node --import tsx scripts/check-job-ledger-settlement.ts <pglite-dist-index.js>

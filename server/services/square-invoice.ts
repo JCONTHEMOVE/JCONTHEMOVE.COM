@@ -4,6 +4,7 @@ import type { InsertSquareInvoice, Lead } from "@shared/schema";
 import type { InvoicePurpose } from "@shared/regionalAutomation";
 import { getSquareAccessToken, getSquareEnvironment, getSquareLocationId } from "./squareConfig";
 import { squareInvoiceRequestKeys, persistSquareInvoiceOnce } from './squareInvoiceRetry';
+import { recordSquareInvoicePublication } from './squareInvoicePublication';
 
 export type InvoiceDeliveryMethod = "email" | "sms" | "both" | "none";
 
@@ -105,6 +106,7 @@ export class SquareInvoiceService {
     getClient?: () => Promise<SquareClient>;
     getLocationId?: () => string | undefined | null;
     invoiceStore?: Pick<typeof storage, 'getSquareInvoiceBySquareId' | 'createSquareInvoice'>;
+    recordPublication?: typeof recordSquareInvoicePublication;
   } = {}) {}
 
   async getLocationId(): Promise<string> {
@@ -253,18 +255,12 @@ export class SquareInvoiceService {
 
     const squareInvoice = invoiceResponse.invoice!;
 
-    const publishResponse = await client.invoices.publish({
-      invoiceId: squareInvoice.id!,
-      version: squareInvoice.version!,
-      idempotencyKey: requestKeys.publish,
-    });
-
-    const publishedInvoice = publishResponse.invoice!;
-
+    // Persist provider identity and financial bindings before making the invoice
+    // collectible. A lost publish response must leave a recoverable draft row.
     const invoiceData: InsertSquareInvoice = {
       leadId: safeLeadId(lead.id),
-      squareInvoiceId: publishedInvoice.id!,
-      squareInvoiceNumber: publishedInvoice.invoiceNumber ?? undefined,
+      squareInvoiceId: squareInvoice.id!,
+      squareInvoiceNumber: squareInvoice.invoiceNumber ?? undefined,
       squareOrderId: orderId,
       customerId,
       customerEmail: lead.email,
@@ -272,8 +268,7 @@ export class SquareInvoiceService {
       amount: amount.toString(),
       currency: "USD",
       description: description || `Moving service - ${lead.serviceType}`,
-      status: "sent",
-      invoiceUrl: publishedInvoice.publicUrl,
+      status: "draft",
       dueDate: invoiceDueDate,
       purpose: options.purpose || "legacy_unknown",
       quoteRevisionId: options.quoteRevisionId || undefined,
@@ -283,6 +278,23 @@ export class SquareInvoiceService {
     const savedInvoice = await persistSquareInvoiceOnce(invoiceData, {
       find: id => (this.dependencies.invoiceStore || storage).getSquareInvoiceBySquareId(id),
       create: data => (this.dependencies.invoiceStore || storage).createSquareInvoice(data),
+    });
+
+    if (['canceled', 'failed', 'refunded'].includes(savedInvoice.status)) {
+      throw new Error('Square invoice is closed; reconciliation is required before retrying');
+    }
+    const publishResponse = await client.invoices.publish({
+      invoiceId: squareInvoice.id!,
+      version: squareInvoice.version!,
+      idempotencyKey: requestKeys.publish,
+    });
+    const publishedInvoice = publishResponse.invoice!;
+    if (publishedInvoice?.id !== squareInvoice.id) {
+      throw new Error('Square publication identity requires reconciliation');
+    }
+    await (this.dependencies.recordPublication || recordSquareInvoicePublication)({
+      squareInvoiceId: publishedInvoice.id!, invoiceUrl: publishedInvoice.publicUrl,
+      invoiceNumber: publishedInvoice.invoiceNumber,
     });
 
     return {

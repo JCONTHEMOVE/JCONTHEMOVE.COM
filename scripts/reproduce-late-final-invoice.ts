@@ -34,6 +34,10 @@ export async function reproduceLateFinalInvoice(input: {
     },
   } as unknown as SquareClient;
   const service = new SquareInvoiceService({ getClient: async () => client,
+    recordPublication: async () => {
+      assert.ok(saved, 'provider identity must already be saved before publication acknowledgement');
+      saved.status = 'sent';
+    },
     getLocationId: () => 'synthetic-location', invoiceStore: {
       getSquareInvoiceBySquareId: async () => undefined,
       createSquareInvoice: async data => {
