@@ -105,7 +105,7 @@ export async function getNorthwoodsDashboard() {
     activeCampaign: campaign.rows[0] || null,
     metrics: {
       confirmedOpenings: availability.rows.filter((row: any) => row.confirmed_at && row.status !== "closed" && Number(row.open_slots) > 0).length,
-      advertisingMarkets: marketRows.filter((row: any) => row.ads_enabled).length,
+      advertisingMarkets: marketRows.filter((row: any) => row.ads_enabled && row.verification_status === "verified").length,
       newReservations: reservations.rows.filter((row: any) => ["new", "needs_review", "changed"].includes(row.status)).length,
       importIssues: importIssues.rows.length,
       pendingScans: scans.rows.filter((row: any) => row.status === "pending_review").length,
