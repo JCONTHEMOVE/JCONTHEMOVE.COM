@@ -309,6 +309,10 @@ type PackageDraft = {
   minPrice: number | null;
   maxPrice: number | null;
   priceLabel?: string | null;
+  description?: string | null;
+  pricingType?: string | null;
+  depositRequired?: boolean | null;
+  duration?: string | null;
   source: "quoteSnapshot" | "details" | "requestedItem";
 };
 
@@ -343,6 +347,11 @@ function packageDraftFromUnknown(raw: unknown, source: PackageDraft["source"]): 
     minPrice: numericValue(obj.minPrice ?? obj.basePrice ?? obj.unitPrice ?? nestedDetails.minPrice ?? nestedDetails.basePrice),
     maxPrice: numericValue(obj.maxPrice ?? obj.totalPrice ?? obj.price ?? nestedDetails.maxPrice ?? nestedDetails.totalPrice),
     priceLabel: stringValue(obj.priceLabel ?? nestedDetails.priceLabel),
+    description: stringValue(obj.desc ?? obj.description ?? nestedDetails.desc ?? nestedDetails.description),
+    pricingType: stringValue(obj.pricingType ?? obj.tag ?? nestedDetails.pricingType ?? nestedDetails.tag),
+    depositRequired: typeof (obj.depositRequired ?? nestedDetails.depositRequired) === "boolean"
+      ? (obj.depositRequired ?? nestedDetails.depositRequired) as boolean : null,
+    duration: stringValue(obj.duration ?? nestedDetails.duration),
     source,
   };
 }
@@ -1642,6 +1651,34 @@ export default function LeadDetailPage() {
             )}
           </CardContent>
         </Card>
+
+        {packageDraft && (
+          <Card className="mb-4" data-testid="selected-package-summary">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Customer-selected package</CardTitle>
+              <p className="min-w-0 font-medium [overflow-wrap:anywhere]">{packageDraft.label}</p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                <div className="min-w-0"><dt className="text-muted-foreground">Selected price</dt>
+                  <dd className="font-medium [overflow-wrap:anywhere]">{packageDraft.priceLabel || (
+                    packageDraft.minPrice != null && packageDraft.maxPrice != null && packageDraft.minPrice !== packageDraft.maxPrice
+                      ? `${formatMoney(packageDraft.minPrice)}–${formatMoney(packageDraft.maxPrice)}`
+                      : formatMoney(packageDraft.maxPrice ?? packageDraft.minPrice))}</dd></div>
+                <div><dt className="text-muted-foreground">Duration</dt><dd className="font-medium">{packageDraft.duration || (
+                  packageDraft.hours && packageDraft.hours > 0 ? `${packageDraft.hours} hour${packageDraft.hours === 1 ? "" : "s"}` : "To be confirmed")}</dd></div>
+                <div><dt className="text-muted-foreground">Pricing type</dt><dd className="font-medium">{
+                  /hourly/i.test(packageDraft.pricingType || "") ? "Hourly"
+                    : /flat[ -]?rate/i.test(packageDraft.pricingType || "") ? "Flat rate" : "To be confirmed"}</dd></div>
+                <div><dt className="text-muted-foreground">Deposit</dt><dd className="font-medium">{
+                  (packageDraft.depositRequired ?? lead.depositRequired) === true ? "Required"
+                    : (packageDraft.depositRequired ?? lead.depositRequired) === false ? "Not required" : "To be confirmed"}</dd></div>
+              </dl>
+              {packageDraft.description && <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">{packageDraft.description}</p>}
+              <p className="text-xs text-muted-foreground">Customer selection. Review the saved quote for the agreed job total.</p>
+            </CardContent>
+          </Card>
+        )}
 
         {showJobSetup && (
           <div ref={jobSetupRef}>
