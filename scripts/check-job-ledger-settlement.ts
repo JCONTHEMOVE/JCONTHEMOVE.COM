@@ -1,7 +1,6 @@
-// Runs actual settlement SQL against disposable PGlite, never production.
+// Runs actual settlement SQL against disposable PostgreSQL/PGlite, never production.
 import assert from "node:assert/strict";
-import { pathToFileURL } from "node:url";
-import { resolve } from "node:path";
+import { createDisposableLedgerDatabase } from "./disposable-ledger-database";
 import { pool } from "../server/db";
 import { settleJobLedgerRecipient } from "../server/services/jobLedgerSettlement";
 import { JOB_PAYMENT_LEDGER_SCHEMA } from "../server/services/jobPaymentLedger";
@@ -10,9 +9,7 @@ import { recordConfirmedJobRefund } from "../server/services/jobPaymentRefunds";
 import { enqueueJobReward, claimJobReward, finishJobReward } from "../server/services/jobRewardQueue";
 import { processOneJobReward, enqueueCompletedPaidJobs } from "../server/services/jobRewardWorker";
 
-if (!process.argv[2]) throw new Error("Provide an installed PGlite dist/index.js path");
-const { PGlite } = await import(pathToFileURL(resolve(process.argv[2])).href);
-const database = new PGlite();
+const database = await createDisposableLedgerDatabase(process.argv[2]);
 const previous = pool.connect;
 const previousQuery = pool.query;
 pool.query = ((sql: string, args?: unknown[]) => database.query(sql, args)) as typeof pool.query;

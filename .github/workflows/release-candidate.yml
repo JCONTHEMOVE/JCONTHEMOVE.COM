@@ -46,6 +46,10 @@ jobs:
         env:
           TEST_DATABASE_URL: postgresql://ledger_test:disposable_test_only@127.0.0.1:5432/jc_ledger_test
         run: node --import tsx scripts/check-payment-concurrency.ts
+      - name: Reward queue, worker and rollback acceptance
+        env:
+          TEST_DATABASE_URL: postgresql://ledger_test:disposable_test_only@127.0.0.1:5432/jc_ledger_test
+        run: node --import tsx scripts/check-job-ledger-settlement.ts --postgres
       - name: Monitoring tests without live delivery
         run: node --test scripts/__tests__/*.test.mjs
       - name: Build release candidate
