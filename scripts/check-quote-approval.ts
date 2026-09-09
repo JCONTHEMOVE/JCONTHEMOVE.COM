@@ -87,6 +87,19 @@ try {
   assert.equal(retriedCloseout.quoteRevisionId, approvedCloseout.quoteRevisionId);
   assert.equal(retriedCloseout.invoiceDueDate, '2030-01-01', 'retry retains the persisted due date instead of recalculating it');
   assert.equal(retriedCloseout.invoiceRequestKey, approvedCloseout.invoiceRequestKey);
+  if (process.argv.includes('--reproduce-late-final-invoice')) {
+    // Opt-in characterization of an OPEN release blocker, not a passing safety gate.
+    // Provider behavior is simulated; approval, payment ledger and invoice orchestration are real.
+    const { reproduceLateFinalInvoice } = await import('./reproduce-late-final-invoice');
+    await reproduceLateFinalInvoice({
+      approval: retriedCloseout,
+      recordLatePayment: () => confirmJobPayment({ ...deposit, providerPaymentId: 'closeout-balance',
+        quoteRevisionId: approvedCloseout.quoteRevisionId, amountCents: 9000 }),
+      paidCents: async () => Number((await database.query(
+        "SELECT SUM(amount_cents) AS paid FROM job_confirmed_payments WHERE lead_id='closeout-job'",
+      )).rows[0].paid),
+    });
+  }
   await confirmJobPayment({ ...deposit, providerPaymentId: 'closeout-balance', quoteRevisionId: approvedCloseout.quoteRevisionId, amountCents: 9000 });
   await database.exec("UPDATE job_closeouts SET status='awaiting_customer',balance_due=0 WHERE id='closeout'");
   assert.equal((await approveCanonicalCloseout('closeout')).balanceDue, 0);
