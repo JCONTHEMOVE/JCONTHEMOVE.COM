@@ -2,15 +2,17 @@ export interface ConfirmedJobPayment {
   provider: string;
   providerPaymentId: string;
   leadId: string;
+  quoteRevisionId: string;
   amountCents: number;
   currency: "USD";
   tenderType: string;
   giftFundedCents: number;
   paidAt: string;
+  metadata?: Record<string, unknown>;
 }
 
 export function validateConfirmedJobPayment(payment: ConfirmedJobPayment): void {
-  for (const key of ["provider", "providerPaymentId", "leadId", "tenderType"] as const) {
+  for (const key of ["provider", "providerPaymentId", "leadId", "quoteRevisionId", "tenderType"] as const) {
     if (typeof payment[key] !== "string" || !payment[key].trim() || payment[key].length > 255) {
       throw new Error(`Invalid payment ${key}`);
     }
@@ -23,6 +25,10 @@ export function validateConfirmedJobPayment(payment: ConfirmedJobPayment): void 
       || payment.giftFundedCents > payment.amountCents) throw new Error("Invalid gift-funded amount");
   if (typeof payment.paidAt !== "string" || !Number.isFinite(Date.parse(payment.paidAt))) {
     throw new Error("A verified payment timestamp is required");
+  }
+  if (payment.metadata !== undefined && (payment.metadata === null || Array.isArray(payment.metadata)
+      || typeof payment.metadata !== "object" || Buffer.byteLength(JSON.stringify(payment.metadata), "utf8") > 8192)) {
+    throw new Error("Payment metadata must be an object no larger than 8 KB");
   }
 }
 

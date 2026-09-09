@@ -9,7 +9,7 @@ Verification: the policy test covers invalid amounts/currency/timestamps, partia
 Remaining requirements from issue #7:
 
 - Implement verified provider adapters using provider payment IDs, not invoice IDs. Never accept client payment-success claims.
-- Record metadata and finalized quote/revision identity, and reconcile existing paid markers before migration. The foundation reads `leads.total_price`; approval/revision provenance must be enforced before activation.
+- Reconcile existing paid markers before migration, including jobs whose approved total increased after payment. Payments now record bounded metadata and an approved source quote revision belonging to the job in the same currency; settlement requires the current approved quote and lead total to agree. Existing ledger installations need quote-revision backfill before adding the non-null revision column.
 - Add auditable refunds/reversals and determine the owner-approved treatment of already-issued rewards. No refund policy has been approved in this task yet.
 - Add a durable reward-trigger queue behind a separate disabled-by-default flag, using the existing completed-and-paid gates. Preserve gift-funded exclusions and editable reward rates.
 - Add the authenticated owner/admin reconciliation view and surface partial payments, conflicts, refunds, and failed reward attempts.

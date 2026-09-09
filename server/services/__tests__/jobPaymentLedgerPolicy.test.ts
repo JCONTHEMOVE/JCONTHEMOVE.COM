@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { validateConfirmedJobPayment, reconcileJobPaymentTotals, type ConfirmedJobPayment } from "../jobPaymentLedgerPolicy";
 
 const payment: ConfirmedJobPayment = { provider: "square", providerPaymentId: "test-payment",
-  leadId: "test-job", amountCents: 10000, giftFundedCents: 2000, currency: "USD",
+  leadId: "test-job", quoteRevisionId: "test-quote", amountCents: 10000, giftFundedCents: 2000, currency: "USD",
   tenderType: "mixed", paidAt: "2026-09-09T12:00:00Z" };
 validateConfirmedJobPayment(payment);
 for (const amountCents of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
@@ -14,6 +14,9 @@ for (const giftFundedCents of [-1, 10001, 0.5]) {
 assert.throws(() => validateConfirmedJobPayment({ ...payment, currency: "EUR" as "USD" }));
 assert.throws(() => validateConfirmedJobPayment({ ...payment, paidAt: "invalid" }));
 assert.throws(() => validateConfirmedJobPayment({ ...payment, providerPaymentId: " " }));
+assert.throws(() => validateConfirmedJobPayment({ ...payment, quoteRevisionId: " " }));
+assert.throws(() => validateConfirmedJobPayment({ ...payment, metadata: { oversized: "🙂".repeat(3000) } }));
+validateConfirmedJobPayment({ ...payment, metadata: { eventId: "verified-test-event" } });
 assert.equal(reconcileJobPaymentTotals(200000, 60000, 0).paidInFull, false);
 assert.equal(reconcileJobPaymentTotals(200000, 199999, 0).outstandingCents, 1);
 assert.deepEqual(reconcileJobPaymentTotals(200000, 200000, 50000), {
