@@ -399,7 +399,7 @@ export function formatMovingFlowSummary(item: SelectedItem): string[] {
     if (path) bits.push(path.label);
   }
   if (item.details.scope?.trim()) bits.push(item.details.scope.trim());
-  if (item.details.loadType) bits.push(item.details.loadType.replace(/^.[^\w]?\s*/, ""));
+  if (item.details.loadType) bits.push(item.details.loadType.replace(/^[^\p{L}\p{N}]+/u, "").trim());
   if (item.details.truckNeeded === true) {
     bits.push(item.details.truckSize ? `JC truck: ${item.details.truckSize}` : "JC provides truck");
   } else if (item.details.truckNeeded === false) {
