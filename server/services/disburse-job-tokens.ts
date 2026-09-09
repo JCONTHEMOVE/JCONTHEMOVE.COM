@@ -37,6 +37,7 @@ import { regularPaymentRewardBonus } from "@shared/paymentIncentives";
 import { getJobRateCard } from "./jobRateCard";
 import { emitJobEvent } from "./jobEventBus";
 import { calculateCustomerRewardBase } from "../../shared/giftCardBonuses";
+import { acquireJobDisbursementLock } from "./jobDisbursementLock";
 
 const TOKEN_PRICE            = 0.00000508432;
 const HOURS_RATE             = 25;    // JCMOVES per confirmed hour per crew member
@@ -448,8 +449,8 @@ export async function disburseJobTokens(leadId: string): Promise<DisbursementSum
 
   // Level 2 — concurrency guard: advisory lock (only one caller proceeds at a time)
   const lockKey = leadIdToLockKey(leadId);
-  const lockResult = await pool.query("SELECT pg_try_advisory_lock($1) AS acquired", [lockKey]);
-  if (!lockResult.rows[0]?.acquired) {
+  const releaseLock = await acquireJobDisbursementLock(pool, lockKey);
+  if (!releaseLock) {
     console.log(`ℹ️ Job ${leadId} disbursement in-progress elsewhere — skipping`);
     return null;
   }
@@ -749,7 +750,7 @@ export async function disburseJobTokens(leadId: string): Promise<DisbursementSum
 
     return summary;
   } finally {
-    await pool.query("SELECT pg_advisory_unlock($1)", [lockKey]).catch(() => {});
+    await releaseLock();
   }
 }
 
