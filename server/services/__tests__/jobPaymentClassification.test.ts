@@ -102,4 +102,23 @@ test("uses explicit final-balance purpose after an earlier deposit", () => {
   }), { kind: "paid_in_full", invoiceAmount: 1400, jobTotal: 2000, accountingAmount: 2000 });
 });
 
+test("zero and short deposit invoices cannot confirm dispatch", () => {
+  for (const invoicePurpose of [undefined, "deposit"]) {
+    for (const invoiceAmount of [0, 1, 599.98, 599.99]) {
+      assert.equal(classifyJobInvoicePayment({ invoiceAmount, jobTotal: 2000,
+        depositAmount: 600, depositRequired: true, depositAlreadyPaid: false,
+        invoicePurpose }).kind, "partial");
+    }
+  }
+});
+
+test("a one-cent final balance is still due", () => {
+  assert.equal(classifyJobInvoicePayment({ invoiceAmount: 1999.99, jobTotal: 2000,
+    depositAmount: 600, depositRequired: true, depositAlreadyPaid: true,
+    invoicePurpose: "deposit" }).kind, "deposit");
+  assert.equal(classifyJobInvoicePayment({ invoiceAmount: 1399.99, jobTotal: 2000,
+    depositAmount: 600, depositRequired: true, depositAlreadyPaid: true,
+    invoicePurpose: "final_balance" }).kind, "partial");
+});
+
 if (!process.exitCode) console.log(`  ${passed} tests passed`);

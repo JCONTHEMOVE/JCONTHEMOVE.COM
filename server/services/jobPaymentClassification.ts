@@ -31,8 +31,9 @@ export function classifyJobInvoicePayment(input: {
   const jobTotal = dollars(input.jobTotal);
   const depositAmount = dollars(input.depositAmount);
   const isFirstRequiredPayment = input.depositRequired === true && input.depositAlreadyPaid !== true;
-  const isLessThanJobTotal = jobTotal > 0 && invoiceAmount < jobTotal - 0.01;
-  const matchesConfiguredDeposit = depositAmount > 0 && Math.abs(invoiceAmount - depositAmount) <= 0.02;
+  const isLessThanJobTotal = jobTotal > 0 && invoiceAmount < jobTotal;
+  const matchesConfiguredDeposit = depositAmount > 0 && invoiceAmount === depositAmount;
+  const coversDeposit = invoiceAmount > 0 && invoiceAmount >= depositAmount;
   // Matching the configured deposit remains a deposit on duplicate webhook
   // delivery even after deposit_paid has already flipped to true. A later
   // balance invoice is classified as full payment only after that guard.
@@ -41,9 +42,10 @@ export function classifyJobInvoicePayment(input: {
   const coversJob = jobTotal > 0 && invoiceAmount > 0
     && Math.round((invoiceAmount + confirmedDeposit) * 100) >= Math.round(jobTotal * 100);
   const kind: JobInvoicePaymentKind = explicitPurpose === "deposit"
-    ? "deposit"
+    ? coversDeposit ? "deposit" : "partial"
     : !["final_balance", "supplement"].includes(explicitPurpose) && input.depositRequired === true
-        && ((matchesConfiguredDeposit && isLessThanJobTotal) || (isFirstRequiredPayment && isLessThanJobTotal))
+        && coversDeposit
+        && ((matchesConfiguredDeposit && isLessThanJobTotal) || (isFirstRequiredPayment && depositAmount > 0 && isLessThanJobTotal))
         ? "deposit"
         : coversJob ? "paid_in_full" : "partial";
 
