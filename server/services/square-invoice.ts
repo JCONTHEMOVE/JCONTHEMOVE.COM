@@ -6,6 +6,7 @@ import { getSquareAccessToken, getSquareEnvironment, getSquareLocationId } from 
 import { squareInvoiceRequestKeys, persistSquareInvoiceOnce } from './squareInvoiceRetry';
 import { recordSquareInvoicePublication } from './squareInvoicePublication';
 import { assertCanonicalFinalInvoicePublication } from './canonicalInvoicePublication';
+import { cancelSquareInvoiceWithRecovery, recordSquareInvoiceCancellation } from './squareInvoiceCancellation';
 
 export type InvoiceDeliveryMethod = "email" | "sms" | "both" | "none";
 
@@ -108,6 +109,7 @@ export class SquareInvoiceService {
     getLocationId?: () => string | undefined | null;
     invoiceStore?: Pick<typeof storage, 'getSquareInvoiceBySquareId' | 'createSquareInvoice'>;
     recordPublication?: typeof recordSquareInvoicePublication;
+    recordCancellation?: typeof recordSquareInvoiceCancellation;
   } = {}) {}
 
   async getLocationId(): Promise<string> {
@@ -577,26 +579,12 @@ export class SquareInvoiceService {
   }
 
   async cancelInvoice(squareInvoiceId: string): Promise<void> {
-    try {
-      const client = await (this.dependencies.getClient || getSquareClient)();
-      const getResponse = await client.invoices.get({ invoiceId: squareInvoiceId });
-      const version = getResponse.invoice?.version;
-
-      if (!version) {
-        throw new Error("Could not get invoice version");
-      }
-
-      await client.invoices.cancel({
-        invoiceId: squareInvoiceId,
-        version,
-      });
-
-      await storage.updateSquareInvoiceStatus(squareInvoiceId, "canceled");
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error("Error canceling invoice:", msg);
-      throw new Error(`Failed to cancel invoice: ${msg}`);
-    }
+    const client = await (this.dependencies.getClient || getSquareClient)();
+    await cancelSquareInvoiceWithRecovery(squareInvoiceId, {
+      get: async () => (await client.invoices.get({ invoiceId: squareInvoiceId })).invoice,
+      cancel: async version => (await client.invoices.cancel({ invoiceId: squareInvoiceId, version })).invoice,
+      recordCanceled: () => (this.dependencies.recordCancellation || recordSquareInvoiceCancellation)(squareInvoiceId),
+    });
   }
 
   async syncInvoiceStatus(squareInvoiceId: string): Promise<string> {

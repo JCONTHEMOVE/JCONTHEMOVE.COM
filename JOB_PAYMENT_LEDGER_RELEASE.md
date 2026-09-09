@@ -67,6 +67,8 @@ Apply and verify the additive schema before enabling these flags. Existing ledge
 
 ## Test commands
 
+Cancellation recovery now verifies provider identity/state/version, re-reads ambiguous cancellation results and retries acknowledgement of an already-canceled invoice. Local acknowledgement only changes draft/sent/canceled records; paid, refunded and unexpected states require reconciliation. Tests invoke the actual service with simulated responses and execute the acknowledgement SQL against disposable databases. The cancellation helper does not refund payments, delete drafts or run automatically when another payment arrives. See [Square cancellation requirements](https://developer.squareup.com/docs/invoices-api/cancel-delete-invoices). Durable invoice intent, automatic postpublication reconciliation and controlled provider acceptance remain open.
+
 ### Regression: payment during final invoice creation
 
 ```text

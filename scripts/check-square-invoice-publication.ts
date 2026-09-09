@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { pool } from '../server/db';
 import { recordSquareInvoicePublication } from '../server/services/squareInvoicePublication';
+import { recordSquareInvoiceCancellation } from '../server/services/squareInvoiceCancellation';
 import { createDisposableLedgerDatabase } from './disposable-ledger-database';
 
 const database = await createDisposableLedgerDatabase(process.argv[2]);
@@ -37,6 +38,20 @@ try {
     assert.equal(String(row.sent_at), String(first.sent_at));
   }
   await assert.rejects(recordSquareInvoicePublication({ squareInvoiceId: 'missing' }), /missing its local recovery record/);
+  for (const status of ['paid', 'refunded', 'failed', 'unknown']) {
+    await database.query('UPDATE square_invoices SET status=$1', [status]);
+    await assert.rejects(recordSquareInvoiceCancellation('provider'), /payment-state reconciliation/);
+    assert.equal((await database.query('SELECT status FROM square_invoices')).rows[0].status, status);
+  }
+  await database.exec("UPDATE square_invoices SET status='sent'");
+  loseResponse = true;
+  await assert.rejects(recordSquareInvoiceCancellation('provider'), /Lost committed acknowledgement/);
+  await recordSquareInvoiceCancellation('provider');
+  const canceled = (await database.query('SELECT * FROM square_invoices')).rows[0];
+  assert.equal(canceled.status, 'canceled');
+  assert.equal(new Date(canceled.paid_at).toISOString(), '2026-09-09T12:00:00.000Z');
+  await assert.rejects(recordSquareInvoiceCancellation('missing'), /payment-state reconciliation/);
+  console.log('PASS: cancellation acknowledgement rejects paid/refunded state and missing rows, preserves payment timestamps and recovers committed responses');
   console.log('PASS: actual publication acknowledgement preserves payment/closed state, timestamps and metadata across lost-response replay');
 } finally {
   pool.query = previousQuery;
