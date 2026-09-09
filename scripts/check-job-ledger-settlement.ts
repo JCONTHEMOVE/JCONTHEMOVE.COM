@@ -8,6 +8,7 @@ import { JOB_PAYMENT_LEDGER_SCHEMA } from "../server/services/jobPaymentLedger";
 import { readCanonicalRewardBasis } from "../server/services/canonicalRewardBasis";
 import { recordConfirmedJobRefund } from "../server/services/jobPaymentRefunds";
 import { enqueueJobReward, claimJobReward, finishJobReward } from "../server/services/jobRewardQueue";
+import { processOneJobReward, enqueueCompletedPaidJobs } from "../server/services/jobRewardWorker";
 
 if (!process.argv[2]) throw new Error("Provide an installed PGlite dist/index.js path");
 const { PGlite } = await import(pathToFileURL(resolve(process.argv[2])).href);
@@ -94,6 +95,32 @@ try {
   await database.exec("UPDATE job_jcmoves_ledger SET quote_total=60 WHERE id=2");
   assert.equal(await settleJobLedgerRecipient(canonicalRecipient), true);
   assert.equal(Number((await database.query("SELECT token_balance::text FROM wallet_accounts WHERE user_id='gift-customer'")).rows[0].token_balance), 600);
+  await database.exec(`ALTER TABLE leads ADD COLUMN tokens_disbursed_at timestamptz,
+    ADD COLUMN completion_rewarded_at timestamptz,ADD COLUMN crew_members text[],ADD COLUMN assigned_to_user_id varchar;
+    ALTER TABLE job_jcmoves_ledger ADD COLUMN recipient_type text DEFAULT 'customer';
+    UPDATE job_reward_queue SET status='pending',next_attempt_at=NOW() WHERE lead_id='canonical';`);
+  assert.equal((await processOneJobReward(async () => null)).status, "retry", "missing stamps cannot complete the handoff");
+  await database.exec("UPDATE job_reward_queue SET next_attempt_at=NOW()-INTERVAL '1 second'");
+  const finished = await processOneJobReward(async () => {
+    await database.exec("UPDATE leads SET tokens_disbursed_at=NOW(),completion_rewarded_at=NOW() WHERE id='canonical'");
+  });
+  assert.equal(finished.status, "done");
+  assert.equal((await processOneJobReward(async () => { throw new Error('must not reissue'); })).status, "idle");
+  assert.equal(Number((await database.query("SELECT token_balance::text FROM wallet_accounts WHERE user_id='gift-customer'")).rows[0].token_balance), 600);
+  await database.exec(`UPDATE leads SET crew_members=ARRAY['missing-crew'] WHERE id='canonical';
+    UPDATE job_reward_queue SET status='pending',next_attempt_at=NOW() WHERE lead_id='canonical';`);
+  assert.equal((await processOneJobReward(async () => null)).status, "retry", "missing assigned crew cannot complete the handoff");
+  console.log("PASS: worker retries incomplete proof, completes durable settlement and refuses missing crew");
+  await database.exec(`INSERT INTO leads(id,total_price,status,payment_paid_at) VALUES('payment-first',100,'new',NOW());
+    INSERT INTO quote_revisions VALUES('payment-first-quote','payment-first',1,'approved',NOW(),100,'USD');
+    INSERT INTO job_confirmed_payments(provider,provider_payment_id,lead_id,quote_revision_id,
+      amount_cents,currency,tender_type,gift_funded_cents,paid_at)
+      VALUES('square:sandbox','payment-first','payment-first','payment-first-quote',10000,'USD','card',0,NOW());`);
+  assert.equal(await enqueueCompletedPaidJobs(), 0);
+  await database.exec("UPDATE leads SET status='completed' WHERE id='payment-first'");
+  assert.equal(await enqueueCompletedPaidJobs(), 1);
+  assert.equal(await enqueueCompletedPaidJobs(), 0);
+  console.log("PASS: payment-before-completion sweep and duplicate handoff prevention");
   await database.exec("UPDATE leads SET status='new' WHERE id='canonical'");
   await assert.rejects(readCanonicalRewardBasis("canonical"), /completed and paid/);
   await database.exec("UPDATE leads SET status='completed' WHERE id='canonical'");

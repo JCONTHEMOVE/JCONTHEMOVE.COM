@@ -44,9 +44,9 @@ export async function claimJobReward() {
   return rows[0] || null;
 }
 
-export async function finishJobReward(claim: { lead_id: string; lease_token: string }, settled: boolean) {
+export async function finishJobReward(claim: { lead_id: string; lease_token: string }, settled: boolean, transaction?: PoolClient) {
   if (!canonicalRewardQueueEnabled()) return false;
-  const { rows } = await pool.query(
+  const { rows } = await (transaction || pool).query(
     `UPDATE job_reward_queue SET status=$3,lease_token=NULL,lease_expires_at=NULL,
        completed_at=CASE WHEN $3='done' THEN NOW() ELSE NULL END,
        next_attempt_at=NOW()+INTERVAL '1 minute'*LEAST(60,GREATEST(1,attempts)),
