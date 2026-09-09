@@ -34,11 +34,13 @@ Apply and verify the additive schema before enabling these flags. Existing ledge
 - The queue/worker harness now also runs in a dedicated PostgreSQL CI step. Its PostgreSQL execution passed at `637ea010` in run [34388707086](https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/34388707086), together with the full release suite. Later commits are not validated by earlier green CI.
 - A synthetic desktop browser preview verified reconciliation totals, refund display, retry warnings, paused processing and empty/disabled states. It does not prove live owner-account or mobile acceptance.
 - Twelve invoice-classification tests and the server build passed for the invoice-sync correction.
+- Full release CI also passed at `04c47671` in run [34389507530](https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/34389507530), including the staged Square event resolver.
 
 ## Remaining release work
 
 1. Route signed Square events into the canonical adapters while distinguishing unrelated prepaid, shop-credit and gift-card events. Coordinate invoice-side effects so legacy handlers cannot bypass canonical settlement or double-account.
    A staged resolver now retrieves payment/refund records and classifies stored order associations as job, unrelated, or unmapped. Missing/ambiguous quote associations reject for reconciliation. Focused routing tests passed. The resolver is not registered in the webhook; durable handling of unmapped events and invoice-side-effect coordination remain open.
+   Accounting audit: job cash credits now lock the lead and commit wallet balance, reward identity and transaction together; failures propagate to the caller. Disposable tests prove rollback after wallet/reward/transaction failures and cross-source replay, and PostgreSQL CI now tests simultaneous grants. This prevents new partial grants but does not reconcile historical ones. `recordRevenueSplit` still checks before separate writes and catches failures; revenue allocation and broader invoice retry coordination remain open. The earlier resolver CI result does not validate these later changes.
 2. Complete tipped-refund allocation and approve treatment of already-issued rewards after refunds. No automatic reversal policy has been approved.
 3. Coordinate quote/completion writers with reward settlement, including newly approved quote revisions and assignments changing during retries.
 4. Verify migration against the actual production schema and reconcile historical paid/reward markers. Complete an isolated Replit production recovery drill. Scheduled backups are enabled; first-backup success and recovery have not been proved.

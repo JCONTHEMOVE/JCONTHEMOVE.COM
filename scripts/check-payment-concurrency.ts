@@ -7,6 +7,7 @@ import { JOB_PAYMENT_LEDGER_SCHEMA, confirmJobPayment } from "../server/services
 import { recordConfirmedJobRefund } from "../server/services/jobPaymentRefunds";
 import { settleJobLedgerRecipient } from "../server/services/jobLedgerSettlement";
 import { acquireJobDisbursementLock } from "../server/services/jobDisbursementLock";
+import { creditJobCash } from "../server/services/jobCashCredit";
 
 const url = new URL(process.env.TEST_DATABASE_URL || "http://missing");
 if (url.protocol !== "postgresql:" || !["127.0.0.1", "localhost"].includes(url.hostname)
@@ -118,6 +119,20 @@ try {
     refundWriter.release();
     if (waitingAward) await waitingAward;
   }
+  await testPool.query(`ALTER TABLE leads ADD COLUMN email text;
+    ALTER TABLE wallet_accounts ADD COLUMN cash_balance numeric DEFAULT 0;
+    CREATE TABLE users(id text PRIMARY KEY,email text);
+    CREATE TABLE wallet_transactions(transaction_type text,amount numeric,balance_after numeric,status text,metadata jsonb);
+    INSERT INTO users VALUES('cash-customer','cash@example.test');
+    INSERT INTO leads(id,email) VALUES('cash-job','cash@example.test');`);
+  const cashResults = await Promise.all([
+    creditJobCash('cash-job', 100, 'webhook'), creditJobCash('cash-job', 100, 'invoice_sync'),
+  ]);
+  assert.deepEqual(cashResults.sort(), ['credited', 'duplicate']);
+  assert.equal(Number((await testPool.query("SELECT cash_balance FROM wallet_accounts WHERE user_id='cash-customer'")).rows[0].cash_balance), 100);
+  assert.equal((await testPool.query("SELECT COUNT(*)::int AS n FROM rewards WHERE reference_id='cash-job'")).rows[0].n, 1);
+  assert.equal((await testPool.query("SELECT COUNT(*)::int AS n FROM wallet_transactions")).rows[0].n, 1);
+  console.log("PASS: concurrent cross-source job cash credits issue one grant");
   console.log("PASS: canonical gift-funded reward replay and observed refund/settlement lock contention");
   console.log("PASS: separate PostgreSQL sessions, duplicate/concurrent payments, competing refunds, advisory lock and exactly-once wallet settlement");
 } finally {

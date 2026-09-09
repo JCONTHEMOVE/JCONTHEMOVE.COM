@@ -1,3 +1,4 @@
+import { creditJobCash } from "./services/jobCashCredit";
 import { validateCustomerPhoneSubmission } from "./services/customerPhoneValidation";
 import { normalizeCustomerPhone, phoneError, unchangedLegacyPhone } from "@shared/phone";
 import { optionalPhoneNumberSchema } from "@shared/schema";
@@ -33819,82 +33820,9 @@ async function creditJcMovesUsd(
   amountUsd: number,
   source: string = 'payment'
 ): Promise<void> {
-  try {
-    // Guardrail: refuse non-finite, NaN, negative, or zero amounts. JCMOVES USD
-    // is service credit — credits must always be a positive USD value.
-    if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
-      console.warn(`[JCMOVES USD] Refused invalid mint amount=${amountUsd} for lead ${leadId} (source: ${source})`);
-      return;
-    }
-
-    // Idempotency: one mint per lead
-    const existing = await pool.query(
-      `SELECT id FROM rewards WHERE reward_type = 'jcmoves_usd_mint' AND reference_id = $1 LIMIT 1`,
-      [leadId]
-    );
-    if (existing.rows.length > 0) {
-      console.log(`[JCMOVES USD] Already minted for lead ${leadId} — skipping (source: ${source})`);
-      return;
-    }
-
-    // Find customer by email from lead
-    const leadRow = await pool.query(
-      `SELECT email FROM leads WHERE id = $1 LIMIT 1`,
-      [leadId]
-    );
-    if (!leadRow.rows.length || !leadRow.rows[0].email) {
-      console.warn(`[JCMOVES USD] No email on lead ${leadId} — cannot mint`);
-      return;
-    }
-    const email = leadRow.rows[0].email as string;
-
-    const userRow = await pool.query(
-      `SELECT id FROM users WHERE email = $1 LIMIT 1`,
-      [email]
-    );
-    if (!userRow.rows.length) {
-      console.warn(`[JCMOVES USD] No user found for email ${email} (lead ${leadId}) — cannot mint`);
-      return;
-    }
-    const userId = userRow.rows[0].id as string;
-
-    // Ensure wallet exists
-    await pool.query(
-      `INSERT INTO wallet_accounts (user_id, token_balance, cash_balance)
-       VALUES ($1, '0', '0.00')
-       ON CONFLICT (user_id) DO NOTHING`,
-      [userId]
-    );
-
-    // Credit cash_balance and read back the new balance for the ledger entry
-    const { rows: updatedRows } = await pool.query(
-      `UPDATE wallet_accounts SET cash_balance = cash_balance + $1 WHERE user_id = $2
-       RETURNING cash_balance`,
-      [amountUsd.toFixed(2), userId]
-    );
-    const balanceAfter = updatedRows[0]?.cash_balance ?? amountUsd.toFixed(2);
-
-    // Record in rewards table for idempotency guard (one row per lead)
-    await pool.query(
-      `INSERT INTO rewards (user_id, reward_type, token_amount, cash_value, status, reference_id, metadata)
-       VALUES ($1, 'jcmoves_usd_mint', '0', $2, 'confirmed', $3, $4)`,
-      [userId, amountUsd.toFixed(2), leadId, JSON.stringify({ source, leadId })]
-    );
-
-    // Write wallet_transactions ledger entry (type = jcmoves_usd_mint)
-    // user_wallet_id is nullable — we use null since this is cash_balance, not the crypto wallet
-    await pool.query(
-      `INSERT INTO wallet_transactions (transaction_type, amount, balance_after, status, metadata)
-       VALUES ('jcmoves_usd_mint', $1, $2, 'confirmed', $3::jsonb)`,
-      [amountUsd.toFixed(2), balanceAfter, JSON.stringify({ userId, leadId, source, currency: 'JCMOVES_USD' })]
-    );
-
-    console.log(`[JCMOVES USD] Minted $${amountUsd.toFixed(2)} credit for user ${userId} (lead ${leadId}, source: ${source})`);
-  } catch (err) {
-    console.error(`⚠️ creditJcMovesUsd failed (non-fatal):`, err);
-  }
+  const result = await creditJobCash(leadId, amountUsd, source);
+  console.log(`[JCMOVES USD] Job credit ${result} (lead ${leadId}, source: ${source})`);
 }
-
 // ── JCMOVES USD: Mint service credit from a Prepaid Top-Up ───────────────────
 // Used when a customer purchases JCMOVES USD credit directly (not tied to a job).
 // Idempotent on the Square payment ID (one mint per payment).
