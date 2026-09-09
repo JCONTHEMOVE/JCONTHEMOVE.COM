@@ -121,4 +121,18 @@ test("a one-cent final balance is still due", () => {
     invoicePurpose: "final_balance" }).kind, "partial");
 });
 
+test("overpayment preserves the invoice amount but caps job accounting at the approved total", () => {
+  for (const invoicePurpose of [undefined, "final_balance", "supplement"]) {
+    const result = classifyJobInvoicePayment({ invoiceAmount: 2100, jobTotal: 2000, invoicePurpose });
+    assert.deepEqual(result, { kind: "paid_in_full", invoiceAmount: 2100, jobTotal: 2000, accountingAmount: 2000 });
+  }
+});
+
+test("excess final collection after a deposit cannot enlarge the job grant", () => {
+  const result = classifyJobInvoicePayment({ invoiceAmount: 2100, jobTotal: 2000,
+    depositAmount: 600, depositAlreadyPaid: true, invoicePurpose: "final_balance" });
+  assert.equal(result.accountingAmount, 2000);
+  assert.equal(result.invoiceAmount, 2100);
+});
+
 if (!process.exitCode) console.log(`  ${passed} tests passed`);

@@ -55,7 +55,7 @@ export function classifyJobInvoicePayment(input: {
     jobTotal,
     // Full-payment accounting represents the approved job total. This also
     // includes an earlier deposit when the final Square invoice is only the
-    // remaining balance.
-    accountingAmount: kind === "paid_in_full" ? Math.max(invoiceAmount, jobTotal) : 0,
+    // remaining balance. Excess collection does not enlarge the job's grant.
+    accountingAmount: kind === "paid_in_full" ? jobTotal : 0,
   };
 }
