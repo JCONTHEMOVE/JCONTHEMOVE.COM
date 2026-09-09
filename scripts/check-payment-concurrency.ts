@@ -9,6 +9,8 @@ import { settleJobLedgerRecipient } from "../server/services/jobLedgerSettlement
 import { acquireJobDisbursementLock } from "../server/services/jobDisbursementLock";
 import { creditJobCash } from "../server/services/jobCashCredit";
 import { recordJobRevenue } from "../server/services/jobRevenueAllocation";
+import { createInvoiceEffectClaims, SQUARE_INVOICE_CLAIM_UPGRADE } from "../server/services/squareInvoiceEffectClaims";
+import { createSquareEventClaims, SQUARE_EVENT_CLAIM_UPGRADE } from "../server/services/squareEventClaims";
 
 const url = new URL(process.env.TEST_DATABASE_URL || "http://missing");
 if (url.protocol !== "postgresql:" || !["127.0.0.1", "localhost"].includes(url.hostname)
@@ -147,6 +149,39 @@ try {
   assert.equal((await testPool.query('SELECT COUNT(*)::int AS n FROM revenue_allocations')).rows[0].n, 2);
   assert.equal((await testPool.query('SELECT fee_contribution_count FROM buyback_fund')).rows[0].fee_contribution_count, 6);
   console.log("PASS: same-job allocation replay and different-job contribution increments");
+  await testPool.query(`CREATE TABLE square_invoice_payment_effects(square_invoice_id text PRIMARY KEY,
+    event_id text NOT NULL,status text NOT NULL,last_error text,started_at timestamptz DEFAULT NOW(),completed_at timestamptz);
+    CREATE TABLE square_webhook_events(event_id text PRIMARY KEY,event_type text NOT NULL,square_object_id text,
+    payload_hash text NOT NULL,status text NOT NULL,last_error text,received_at timestamptz DEFAULT NOW(),processed_at timestamptz);
+    ${SQUARE_INVOICE_CLAIM_UPGRADE}
+    ${SQUARE_EVENT_CLAIM_UPGRADE}`);
+  const claimClients = await Promise.all([testPool.connect(), testPool.connect()]);
+  try {
+    const claimPids = await Promise.all(claimClients.map(client => client.query('SELECT pg_backend_pid() AS pid')));
+    assert.notEqual(claimPids[0].rows[0].pid, claimPids[1].rows[0].pid);
+    const invoiceAttempts = claimClients.map(client => createInvoiceEffectClaims((sql, args) => client.query(sql, args)));
+    const invoiceRace = await Promise.all(invoiceAttempts.map(attempt => attempt.claim('racing-invoice', 'event')));
+    assert.deepEqual(invoiceRace.map(result => result.status).sort(), ['claimed', 'in_progress']);
+    const originalInvoice = invoiceRace.find(result => result.status === 'claimed');
+    assert.ok(originalInvoice?.status === 'claimed');
+    await testPool.query("UPDATE square_invoice_payment_effects SET started_at=NOW()-INTERVAL '6 minutes'");
+    const invoiceReclaims = await Promise.all(invoiceAttempts.map(attempt => attempt.claim('racing-invoice', 'event')));
+    assert.deepEqual(invoiceReclaims.map(result => result.status).sort(), ['claimed', 'in_progress']);
+    assert.equal(await invoiceAttempts[0].complete(originalInvoice.claim), false);
+    assert.equal(await invoiceAttempts[1].fail(originalInvoice.claim, 'stale'), false);
+    const eventAttempts = claimClients.map(client => createSquareEventClaims((sql, args) => client.query(sql, args)));
+    const eventInput = { eventId: 'racing-event', eventType: 'payment.updated', rawBody: '{"id":"racing-event"}' };
+    const eventRace = await Promise.all(eventAttempts.map(attempt => attempt.claim(eventInput)));
+    assert.deepEqual(eventRace.map(result => result.status).sort(), ['claimed', 'in_progress']);
+    const originalEvent = eventRace.find(result => result.status === 'claimed');
+    assert.ok(originalEvent?.status === 'claimed');
+    await testPool.query("UPDATE square_webhook_events SET received_at=NOW()-INTERVAL '6 minutes'");
+    const eventReclaims = await Promise.all(eventAttempts.map(attempt => attempt.claim(eventInput)));
+    assert.deepEqual(eventReclaims.map(result => result.status).sort(), ['claimed', 'in_progress']);
+    assert.equal(await eventAttempts[0].complete(originalEvent.claim), false);
+    assert.equal(await eventAttempts[1].fail(originalEvent.claim, 'stale'), false);
+  } finally { claimClients.forEach(client => client.release()); }
+  console.log('PASS: distinct PostgreSQL sessions race invoice/event claims and expired reclaims with one winner');
   console.log("PASS: canonical gift-funded reward replay and observed refund/settlement lock contention");
   console.log("PASS: separate PostgreSQL sessions, duplicate/concurrent payments, competing refunds, advisory lock and exactly-once wallet settlement");
 } finally {
