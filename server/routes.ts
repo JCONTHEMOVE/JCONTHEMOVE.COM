@@ -24765,6 +24765,7 @@ Thank you for your business!
             }
           } catch (grantErr) {
             console.error("[Square webhook] shop-card grant disbursement failed:", (grantErr as Error).message);
+            throw grantErr;
           }
 
           const localInvoice = await storage.getSquareInvoiceBySquareId(squareInvoiceId);
