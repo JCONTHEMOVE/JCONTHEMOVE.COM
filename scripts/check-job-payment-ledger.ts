@@ -7,6 +7,7 @@ import { pool } from "../server/db";
 import { confirmJobPayment, JOB_PAYMENT_LEDGER_SCHEMA } from "../server/services/jobPaymentLedger";
 import type { ConfirmedJobPayment } from "../server/services/jobPaymentLedgerPolicy";
 import { verifyAndConfirmSquarePayment } from "../server/services/squareJobPaymentVerification";
+import { getJobPaymentReconciliation } from "../server/services/jobPaymentReconciliation";
 
 if (!process.argv[2]) throw new Error("Provide an installed PGlite dist/index.js path");
 const { PGlite } = await import(pathToFileURL(resolve(process.argv[2])).href);
@@ -24,8 +25,8 @@ let connections = 0;
 };
 try {
   await database.exec(`CREATE TABLE leads(id varchar PRIMARY KEY, total_price numeric(10,2),
-    status text NOT NULL, payment_paid_at timestamptz);
-    INSERT INTO leads VALUES ('job',2000,'completed',NULL),('other',2000,'new',NULL),
+    status text NOT NULL, payment_paid_at timestamptz,tokens_disbursed_at timestamptz,completion_rewarded_at timestamptz);
+    INSERT INTO leads(id,total_price,status,payment_paid_at) VALUES ('job',2000,'completed',NULL),('other',2000,'new',NULL),
       ('rollback',100,'completed',NULL);
     CREATE TABLE quote_revisions(id varchar PRIMARY KEY, lead_id varchar REFERENCES leads(id),
       revision int, status text, approved_at timestamptz, customer_total numeric(10,2), currency text);
@@ -63,6 +64,18 @@ try {
   assert.equal(adapted.customerEligibleCents, 0);
   assert.equal(adapted.completed, false);
   assert.equal(adapted.rewardsTriggered, false);
+  const report = await getJobPaymentReconciliation("other");
+  assert.ok(report?.enabled);
+  assert.equal(report.paymentCount, 1);
+  assert.equal(report.giftFundedCents, 200000);
+  assert.deepEqual(report.reviewReasons, []);
+  await database.exec("UPDATE leads SET total_price=2500,tokens_disbursed_at=NOW() WHERE id='other'; UPDATE quote_revisions SET customer_total=2500 WHERE id='other-quote'");
+  const mismatched = await getJobPaymentReconciliation("other");
+  assert.ok(mismatched?.enabled);
+  assert.ok(mismatched.reviewReasons.includes("paid_marker_without_ledger_coverage"));
+  assert.ok(mismatched.reviewReasons.includes("reward_marker_requires_review"));
+  assert.equal(mismatched.totals?.outstandingCents, 50000);
+  assert.ok((await database.query("SELECT payment_paid_at FROM leads WHERE id='other'")).rows[0].payment_paid_at);
   const settled = await confirmJobPayment({ ...base, providerPaymentId: "balance",
     amountCents: 140000, giftFundedCents: 50000, tenderType: "mixed" });
   assert.equal(settled.paidInFull, true);

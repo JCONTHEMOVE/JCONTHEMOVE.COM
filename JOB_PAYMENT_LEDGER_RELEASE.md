@@ -12,7 +12,7 @@ Remaining requirements from issue #7:
 - Reconcile existing paid markers before migration, including jobs whose approved total increased after payment. Payments now record bounded metadata and an approved source quote revision belonging to the job in the same currency; settlement requires the current approved quote and lead total to agree. Existing ledger installations need quote-revision backfill before adding the non-null revision column.
 - Add auditable refunds/reversals and determine the owner-approved treatment of already-issued rewards. No refund policy has been approved in this task yet.
 - Add a durable reward-trigger queue behind a separate disabled-by-default flag, using the existing completed-and-paid gates. Preserve gift-funded exclusions and editable reward rates.
-- Add the authenticated owner/admin reconciliation view and surface partial payments, conflicts, refunds, and failed reward attempts.
+- The read-only admin/owner endpoint `/api/admin/payments/reconciliation/:leadId` now returns one consistent database snapshot of payment IDs, totals, gift funding, quote and reward markers, and mismatch reasons. It returns disabled without querying the ledger while the feature flag is off. The UI, refund information, failed reward attempts, and HTTP authorization acceptance remain open.
 - Verify competing payments in separate PostgreSQL sessions, transaction failures and replay, actual provider signatures/server verification, refund ordering, both payment/completion orders, reward exactly-once behavior, and wallet/ledger balances.
 - Complete an isolated production-schema/restore check and one specifically authorized live payment test before switching any adapter or enabling automatic rewards.
 
@@ -25,5 +25,7 @@ node --import tsx scripts/check-job-payment-ledger.ts <path-to-pglite-dist-index
 The harness replaces the connection method only within its own process and uses synthetic jobs. It does not read production data or apply migrations to the configured database.
 
 The adapter orchestration test verifies retrieval → stored association → settlement ordering and confirms that provider failures, missing/ambiguous associations, invalid payment snapshots, and ledger failures are not acknowledged as successful. The disposable PostgreSQL harness also runs this orchestration into the actual ledger transaction with a simulated Square gift-card payment; the job settles with zero customer-eligible gift-funded cents and no rewards. These use a simulated provider, not a live Square credential or webhook.
+
+The same harness verifies a reconciliation mismatch after a paid job's approved total increases from $2,000 to $2,500: it reports the $500 shortfall and flags paid/reward markers without modifying either. This surfaces the inconsistency; automatic correction and reward reversal are not implemented.
 
 Square adapter checks follow the [Payment object](https://developer.squareup.com/reference/square/objects/payment) and [refund documentation](https://developer.squareup.com/docs/payments-api/refund-payments). Principal uses amountMoney, excluding tips; COMPLETED alone is insufficient because refunded payments retain that status. Cross-method gift-card refunds require separate refund-event handling before activation. No provider API was called during local mapping tests.

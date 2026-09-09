@@ -27574,6 +27574,18 @@ Thank you for your business!
     }
   });
 
+  app.get("/api/admin/payments/reconciliation/:leadId", isAuthenticated, requireAdmin, async (req, res) => {
+    try {
+      const { getJobPaymentReconciliation } = await import("./services/jobPaymentReconciliation");
+      const report = await getJobPaymentReconciliation(req.params.leadId);
+      if (!report) return res.status(404).json({ error: "Job not found" });
+      return res.json(report);
+    } catch (error) {
+      console.error("[Payment reconciliation] read failed:", error instanceof Error ? error.message : error);
+      return res.status(500).json({ error: "Payment reconciliation is unavailable" });
+    }
+  });
+
   app.get("/api/admin/btc-payments", isAuthenticated, requireBusinessOwner, async (_req, res) => {
     try {
       const payments = await db.select().from(bitcoinPayments).orderBy(sql`created_at DESC`);
