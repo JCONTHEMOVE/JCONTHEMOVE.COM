@@ -8,7 +8,7 @@ import { getSquareAccessToken, getSquareEnvironment, getSquareLocationId } from 
 
 /** Flag-gated. Accept only an ID from a verified server event;
  * retrieve authoritative payment details before deriving any ledger fields. */
-async function getLedgerClient() {
+export async function getLedgerClient() {
   if (process.env.JOB_PAYMENT_LEDGER_ENABLED !== "true"
       || process.env.SQUARE_JOB_PAYMENT_LEDGER_ENABLED !== "true") {
     throw new Error("Square canonical payment adapter is disabled");

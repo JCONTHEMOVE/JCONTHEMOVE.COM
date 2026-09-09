@@ -581,8 +581,8 @@ export class SquareInvoiceService {
   async cancelInvoice(squareInvoiceId: string): Promise<void> {
     const client = await (this.dependencies.getClient || getSquareClient)();
     await cancelSquareInvoiceWithRecovery(squareInvoiceId, {
-      get: async () => (await client.invoices.get({ invoiceId: squareInvoiceId })).invoice,
-      cancel: async version => (await client.invoices.cancel({ invoiceId: squareInvoiceId, version })).invoice,
+      get: async () => (await client.invoices.get({ invoiceId: squareInvoiceId }, { timeoutInSeconds: 10, maxRetries: 0 })).invoice,
+      cancel: async version => (await client.invoices.cancel({ invoiceId: squareInvoiceId, version }, { timeoutInSeconds: 10, maxRetries: 0 })).invoice,
       recordCanceled: () => (this.dependencies.recordCancellation || recordSquareInvoiceCancellation)(squareInvoiceId),
     });
   }

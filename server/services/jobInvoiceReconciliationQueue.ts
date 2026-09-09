@@ -35,6 +35,19 @@ export function invoiceReconciliationWorkerEnabled() {
 
 export type InvoiceReconciliationClaim = { lead_id: string; generation: string; lease_token: string };
 
+/** Recover publication acknowledgement loss and missing historical requests.
+ * Do not reset active leases or bypass an existing retry's backoff. */
+export async function enqueueInvoiceReconciliationBacklog() {
+  if (!invoiceReconciliationWorkerEnabled()) return 0;
+  const result = await pool.query(`INSERT INTO job_invoice_reconciliation_queue(lead_id)
+    SELECT DISTINCT lead_id FROM square_invoices WHERE lead_id IS NOT NULL
+      AND purpose='final_balance' AND status IN ('draft','sent')
+    ON CONFLICT(lead_id) DO UPDATE SET generation=job_invoice_reconciliation_queue.generation+1,
+      status='pending',next_attempt_at=NOW(),completed_at=NULL,last_failure_code=NULL,updated_at=NOW()
+    WHERE job_invoice_reconciliation_queue.status='done' RETURNING lead_id`);
+  return result.rows.length;
+}
+
 export async function claimJobInvoiceReconciliation() {
   if (!invoiceReconciliationWorkerEnabled()) return null;
   const result = await pool.query<InvoiceReconciliationClaim>(`UPDATE job_invoice_reconciliation_queue

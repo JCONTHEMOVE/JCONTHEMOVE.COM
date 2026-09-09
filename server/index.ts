@@ -598,6 +598,29 @@ server.listen(port, '0.0.0.0', () => {
       setInterval(rewardTick, 60_000);
     }
 
+    // Invoice collection recovery stays off until migration/provider acceptance.
+    if (process.env.JOB_PAYMENT_LEDGER_ENABLED === 'true'
+        && process.env.SQUARE_JOB_PAYMENT_LEDGER_ENABLED === 'true'
+        && process.env.JOB_INVOICE_RECONCILIATION_ENABLED === 'true') {
+      let invoiceTickRunning = false;
+      const invoiceTick = async () => {
+        if (invoiceTickRunning) return;
+        invoiceTickRunning = true;
+        try {
+          const { enqueueInvoiceReconciliationBacklog } = await import('./services/jobInvoiceReconciliationQueue');
+          const { processOneJobInvoiceReconciliation } = await import('./services/jobInvoiceReconciliationWorker');
+          await enqueueInvoiceReconciliationBacklog();
+          for (let count = 0; count < 10; count++) {
+            const result = await processOneJobInvoiceReconciliation();
+            if (result.status === 'idle' || result.status === 'disabled') break;
+          }
+        } catch { console.error('[invoice-reconciliation] sweep failed; durable claims will retry'); }
+        finally { invoiceTickRunning = false; }
+      };
+      setTimeout(invoiceTick, 15_000);
+      setInterval(invoiceTick, 60_000);
+    }
+
     // Lead-response safety net. The sweep is idempotent and guarded by a
     // Postgres advisory lock, so multiple Railway instances cannot deliver
     // the same 24-hour reminder or 48-hour red flag twice.

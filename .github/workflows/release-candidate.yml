@@ -55,6 +55,7 @@ jobs:
           node --import tsx scripts/check-square-invoice-claims.ts --postgres
           node --import tsx scripts/check-square-invoice-publication.ts --postgres
           node --import tsx scripts/check-canonical-invoice.ts --postgres
+          node --import tsx scripts/check-invoice-reconciliation-worker.ts --postgres
           node --import tsx scripts/check-quote-approval.ts --postgres
           node --import tsx scripts/test-restore-evidence.ts --postgres
       - name: Monitoring tests without live delivery
