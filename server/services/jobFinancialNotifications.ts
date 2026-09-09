@@ -16,6 +16,16 @@ export const JOB_FINANCIAL_NOTIFICATIONS_SCHEMA = `
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
   CREATE INDEX IF NOT EXISTS idx_job_financial_notifications_due ON job_financial_notifications(status,next_attempt_at);
+  CREATE TABLE IF NOT EXISTS job_financial_notice_attempts (
+    event_key TEXT NOT NULL REFERENCES job_financial_notifications(event_key),
+    channel TEXT NOT NULL CHECK(channel IN ('email','sms')),
+    destination_hash TEXT NOT NULL,
+    attempt_token UUID NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('sending','sent','review')),
+    provider_reference TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY(event_key,channel)
+  );
 `;
 
 async function queue(client: PoolClient, input: {
