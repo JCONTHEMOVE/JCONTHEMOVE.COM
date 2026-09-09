@@ -324,16 +324,23 @@ export async function approveCustomerCloseout(token: string) {
     );
     throw error;
   }
-  await pool.query(
-    `UPDATE job_closeouts SET status='balance_due', customer_approved_at=COALESCE(customer_approved_at,NOW()),
+  if (canonicalApproval) {
+    const { attachCanonicalFinalInvoice } = await import('./reconciledCloseout');
+    const attached = await attachCanonicalFinalInvoice({ leadId:closeout.lead_id,closeoutId:closeout.id,
+      quoteId:canonicalApproval.quoteRevisionId,invoiceId:invoice.squareInvoiceId,invoiceUrl:invoice.invoiceUrl,balanceDue });
+    if (attached.status === 'paid') return { ok:true,status:'paid',balanceDue:0,invoiceUrl:null };
+  } else {
+    await pool.query(
+      `UPDATE job_closeouts SET status='balance_due', customer_approved_at=COALESCE(customer_approved_at,NOW()),
             square_invoice_id=$2, updated_at=NOW() WHERE id=$1`,
-    [closeout.id, invoice.squareInvoiceId],
-  );
-  await pool.query(
-    `UPDATE leads SET closeout_status='balance_due', financial_status='balance_due',
+      [closeout.id, invoice.squareInvoiceId],
+    );
+    await pool.query(
+      `UPDATE leads SET closeout_status='balance_due', financial_status='balance_due',
             final_invoice_url=$2, final_balance_amount=$3 WHERE id=$1`,
-    [closeout.lead_id, invoice.invoiceUrl, balanceDue],
-  );
+      [closeout.lead_id, invoice.invoiceUrl, balanceDue],
+    );
+  }
   await emitCustomerLifecycleEvent({
     leadId: closeout.lead_id,
     type: "final_invoice_sent",

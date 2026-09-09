@@ -2,6 +2,7 @@ import { pool } from '../db';
 import { JOB_PAYMENT_TOTALS_SQL } from './jobPaymentLedger';
 import { claimJobInvoiceReconciliation, finishJobInvoiceReconciliation, invoiceReconciliationWorkerEnabled,
   type InvoiceReconciliationClaim } from './jobInvoiceReconciliationQueue';
+import { finishReconciledCloseout, type ReconciledInvoiceEvidence } from './reconciledCloseout';
 
 type ProviderInvoice = { id: string; orderId: string; status: string; amountCents: number; currency: string };
 type Invoice = { square_invoice_id: string; square_order_id: string; amount: string; currency: string;
@@ -70,8 +71,8 @@ async function readBasis(claim: InvoiceReconciliationClaim) {
   finally { client.release(); }
 }
 
-/** Processes only outstanding-invoice collection. It does not issue refunds,
- * approve closeouts, send messages or settle rewards. No HTTP runs under a DB lock. */
+/** Reconcile collection and already-approved financial closeout. It does not
+ * issue refunds, send messages or settle rewards. No HTTP runs under a DB lock. */
 export async function processOneJobInvoiceReconciliation(injectedProvider?: InvoiceReconciliationProvider) {
   if (!invoiceReconciliationWorkerEnabled()) return { status: 'disabled' as const };
   const claim = await claimJobInvoiceReconciliation();
@@ -82,6 +83,7 @@ export async function processOneJobInvoiceReconciliation(injectedProvider?: Invo
     const initial = await readBasis(claim);
     const api = initial.invoices.length ? injectedProvider || await provider() : null;
     let collectible = 0;
+    const evidence: ReconciledInvoiceEvidence[] = [];
     for (const original of initial.invoices) {
       const remote = await api!.inspect(original.square_invoice_id, original.square_order_id);
       // Provider inspection can take time. Recheck the claim and all financial
@@ -93,6 +95,9 @@ export async function processOneJobInvoiceReconciliation(injectedProvider?: Invo
       if (remote.id !== invoice.square_invoice_id || remote.orderId !== invoice.square_order_id
           || remote.currency !== 'USD' || remote.amountCents !== amount || !Number.isSafeInteger(amount) || amount <= 0
           || !Number.isSafeInteger(ownPaid) || ownPaid < 0 || ownPaid > basis.paid) throw new Error('Invoice amount requires review');
+      const observed = { id:invoice.square_invoice_id,orderId:invoice.square_order_id,amountCents:amount,
+        quoteId:invoice.quote_revision_id,closeoutId:invoice.closeout_id,status:remote.status };
+      evidence.push(observed);
       if (remote.status === 'CANCELED') {
         if (invoice.status !== 'canceled') await api!.cancel(invoice.square_invoice_id);
         continue;
@@ -103,6 +108,7 @@ export async function processOneJobInvoiceReconciliation(injectedProvider?: Invo
       const availableForInvoice = Math.max(0, basis.total - (basis.paid - ownPaid));
       if (amount > availableForInvoice || invoice.quote_revision_id !== basis.quoteId) {
         await api!.cancel(invoice.square_invoice_id);
+        observed.status = 'CANCELED';
         canceled.push(invoice.square_invoice_id);
       } else {
         collectible++;
@@ -113,10 +119,12 @@ export async function processOneJobInvoiceReconciliation(injectedProvider?: Invo
     // Multiple live final invoices or an overpayment still need review, even
     // when none individually exceeds the remaining approved amount.
     if (collectible > 1 || initial.paid > initial.total) complete = false;
-    const finished = await finishJobInvoiceReconciliation(claim, complete);
-    const state = finished && complete ? (await pool.query(
-      'SELECT status FROM job_invoice_reconciliation_queue WHERE lead_id=$1', [claim.lead_id])).rows[0]?.status : null;
-    return { status: state === 'done' ? 'done' as const : 'retry' as const, canceled };
+    if (!complete) {
+      await finishJobInvoiceReconciliation(claim,false);
+      return { status:'retry' as const,canceled };
+    }
+    const result = await finishReconciledCloseout(claim,{quoteId:initial.quoteId,totalCents:initial.total,invoices:evidence});
+    return { status:'done' as const,canceled,closeoutPaid:result.closed };
   } catch {
     await finishJobInvoiceReconciliation(claim, false);
     return { status: 'retry' as const, canceled };

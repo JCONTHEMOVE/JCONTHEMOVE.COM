@@ -61,9 +61,9 @@ export async function claimJobInvoiceReconciliation() {
   return result.rows[0] || null;
 }
 
-export async function finishJobInvoiceReconciliation(claim: InvoiceReconciliationClaim, complete: boolean) {
+export async function finishJobInvoiceReconciliation(claim: InvoiceReconciliationClaim, complete: boolean, transaction?: PoolClient) {
   if (!invoiceReconciliationWorkerEnabled()) return false;
-  const result = await pool.query(`UPDATE job_invoice_reconciliation_queue SET
+  const result = await (transaction || pool).query(`UPDATE job_invoice_reconciliation_queue SET
     status=CASE WHEN generation<>$3::bigint THEN 'pending' WHEN $4 THEN 'done' ELSE 'retry' END,
     completed_at=CASE WHEN generation=$3::bigint AND $4 THEN NOW() ELSE NULL END,
     next_attempt_at=CASE WHEN generation<>$3::bigint THEN NOW() ELSE NOW()+INTERVAL '1 minute' END,

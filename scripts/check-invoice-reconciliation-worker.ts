@@ -5,6 +5,7 @@ import { confirmJobPayment, JOB_PAYMENT_LEDGER_SCHEMA } from '../server/services
 import { recordConfirmedJobRefund } from '../server/services/jobPaymentRefunds';
 import { recordSquareInvoiceCancellation } from '../server/services/squareInvoiceCancellation';
 import { enqueueInvoiceReconciliationBacklog } from '../server/services/jobInvoiceReconciliationQueue';
+import { attachCanonicalFinalInvoice } from '../server/services/reconciledCloseout';
 import { processOneJobInvoiceReconciliation, type InvoiceReconciliationProvider } from '../server/services/jobInvoiceReconciliationWorker';
 
 const database = await createDisposableLedgerDatabase(process.argv[2]);
@@ -12,7 +13,11 @@ const priorQuery = pool.query, priorConnect = pool.connect;
 const flags = ['JOB_PAYMENT_LEDGER_ENABLED','JOB_INVOICE_RECONCILIATION_ENABLED','JOB_PAYMENT_REWARDS_ENABLED',
   'SQUARE_JOB_PAYMENT_LEDGER_ENABLED','SQUARE_ENVIRONMENT','SQUARE_PRODUCTION_ACCESS_TOKEN','SQUARE_PRODUCTION_LOCATION_ID','NODE_ENV'] as const;
 const previous = flags.map(flag => process.env[flag]);
-pool.query = ((sql: string, args?: unknown[]) => database.query(sql, args)) as typeof pool.query;
+let failFinalization = false;
+pool.query = ((sql: string, args?: unknown[]) => {
+  if (failFinalization && sql.includes('UPDATE leads SET closeout_status')) throw new Error('Injected financial closeout failure');
+  return database.query(sql, args);
+}) as typeof pool.query;
 pool.connect = (async () => ({ query: pool.query, release() {} })) as typeof pool.connect;
 process.env.JOB_PAYMENT_LEDGER_ENABLED = 'true';
 process.env.JOB_INVOICE_RECONCILIATION_ENABLED = 'true';
@@ -29,28 +34,43 @@ try {
     INSERT INTO quote_revisions VALUES('quote','job',1,'approved',NOW(),120,'USD');
     INSERT INTO job_closeouts VALUES('closeout','job','approved',NOW(),'{"finalQuoteRevisionId":"quote"}');
     INSERT INTO square_invoices VALUES('invoice','job','final-order',90,'USD','quote','closeout','sent','final_balance',NOW());
-    ALTER TABLE square_invoices ADD COLUMN id varchar DEFAULT 'local';`);
+    ALTER TABLE square_invoices ADD COLUMN id varchar DEFAULT 'local';
+    ALTER TABLE leads ADD COLUMN closeout_status text DEFAULT 'balance_due',ADD COLUMN financial_status text DEFAULT 'balance_due',
+      ADD COLUMN final_balance_amount numeric DEFAULT 90,ADD COLUMN final_invoice_url text DEFAULT 'https://example.invalid/invoice';
+    ALTER TABLE job_closeouts ADD COLUMN calculated_final_total numeric DEFAULT 120,ADD COLUMN balance_due numeric DEFAULT 90,
+      ADD COLUMN updated_at timestamptz,ADD COLUMN square_invoice_id varchar DEFAULT 'invoice';`);
   await database.exec(JOB_PAYMENT_LEDGER_SCHEMA);
   const pay = (id: string, amount: number, order = 'other-order') => confirmJobPayment({
     provider:'square:production',providerPaymentId:id,leadId:'job',quoteRevisionId:'quote',amountCents:amount,
     currency:'USD',tenderType:'card',giftFundedCents:0,paidAt:'2026-09-09T12:00:00Z',metadata:{squareOrderId:order},
   });
-  let status = 'UNPAID', cancels = 0, inspectHook: (() => Promise<void>) | undefined;
+  let status = 'UNPAID', cancels = 0, inspectHook: (() => Promise<void>) | undefined, cancelHook: (()=>Promise<void>) | undefined;
   const api: InvoiceReconciliationProvider = {
     inspect: async () => {
       const hook = inspectHook; inspectHook = undefined; await hook?.();
       return { id:'invoice',orderId:'final-order',amountCents:9000,currency:'USD',status };
     },
-    cancel: async id => { cancels++; status='CANCELED'; await recordSquareInvoiceCancellation(id); },
+    cancel: async id => {
+      cancels++; status='CANCELED'; await recordSquareInvoiceCancellation(id);
+      const hook=cancelHook; cancelHook=undefined; await hook?.();
+    },
   };
   const reset = async () => {
     await database.exec(`DELETE FROM job_confirmed_refunds; DELETE FROM job_confirmed_payments;
-      DELETE FROM job_invoice_reconciliation_queue; UPDATE leads SET payment_paid_at=NULL;
-      UPDATE square_invoices SET status='sent';`);
-    status='UNPAID'; cancels=0; inspectHook=undefined;
+      DELETE FROM job_invoice_reconciliation_queue; UPDATE leads SET payment_paid_at=NULL,closeout_status='balance_due',
+        financial_status='balance_due',final_balance_amount=90,final_invoice_url='https://example.invalid/invoice';
+      UPDATE job_closeouts SET status='approved',balance_due=90;
+      DELETE FROM square_invoices WHERE square_invoice_id<>'invoice'; UPDATE square_invoices SET status='sent';`);
+    status='UNPAID'; cancels=0; inspectHook=undefined; cancelHook=undefined;
     await pay('deposit',3000);
   };
   await reset();
+  const attachment={leadId:'job',closeoutId:'closeout',quoteId:'quote',invoiceId:'invoice',invoiceUrl:'https://example.invalid/invoice',balanceDue:90};
+  failFinalization=true;
+  await assert.rejects(attachCanonicalFinalInvoice(attachment),/Injected financial closeout failure/);
+  failFinalization=false;
+  assert.equal((await database.query('SELECT status FROM job_closeouts')).rows[0].status,'approved');
+  assert.equal((await attachCanonicalFinalInvoice(attachment)).status,'balance_due');
   await database.exec('DELETE FROM job_invoice_reconciliation_queue');
   assert.equal(await enqueueInvoiceReconciliationBacklog(),1);
   assert.equal(await enqueueInvoiceReconciliationBacklog(),0);
@@ -60,6 +80,31 @@ try {
   await pay('late-payment',9000);
   assert.equal((await processOneJobInvoiceReconciliation(api)).status,'done'); assert.equal(cancels,1);
   assert.equal((await database.query('SELECT status FROM square_invoices')).rows[0].status,'canceled');
+  assert.equal((await database.query('SELECT status FROM job_closeouts')).rows[0].status,'paid');
+  assert.equal(Number((await database.query('SELECT balance_due FROM job_closeouts')).rows[0].balance_due),0);
+  const attached=await attachCanonicalFinalInvoice({leadId:'job',closeoutId:'closeout',quoteId:'quote',invoiceId:'invoice',
+    invoiceUrl:'https://example.invalid/old-invoice',balanceDue:90});
+  assert.equal(attached.status,'paid','late HTTP completion cannot restore balance due');
+  assert.equal((await database.query('SELECT financial_status,final_invoice_url FROM leads')).rows[0].financial_status,'paid');
+  assert.equal((await database.query('SELECT final_invoice_url FROM leads')).rows[0].final_invoice_url,null);
+  await reset(); await pay('closeout-rollback',9000); failFinalization=true;
+  assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry');
+  failFinalization=false;
+  assert.equal((await database.query('SELECT status FROM job_closeouts')).rows[0].status,'approved');
+  assert.equal((await database.query('SELECT financial_status FROM leads')).rows[0].financial_status,'balance_due');
+  await database.exec("UPDATE job_invoice_reconciliation_queue SET next_attempt_at=NOW()-INTERVAL '1 minute'");
+  assert.equal((await processOneJobInvoiceReconciliation(api)).status,'done');
+  assert.equal(cancels,1,'closeout retry does not repeat provider cancellation');
+  await reset(); await pay('before-finalization',9000);
+  cancelHook=async()=>{ await pay('during-finalization',1); };
+  assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry');
+  assert.equal((await database.query('SELECT status FROM job_closeouts')).rows[0].status,'approved');
+  await reset(); await pay('before-new-invoice',9000);
+  cancelHook=async()=>{ await database.exec(`INSERT INTO square_invoices(square_invoice_id,lead_id,square_order_id,amount,currency,
+    quote_revision_id,closeout_id,status,purpose) VALUES('new-invoice','job','new-order',90,'USD','quote','closeout','draft','final_balance')`); };
+  assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry');
+  assert.equal((await database.query('SELECT status FROM job_closeouts')).rows[0].status,'approved');
+  console.log('PASS: financial closeout/queue completion is atomic; late attachments, new payments and new invoices cannot regress or falsely complete it');
   await reset(); await pay('own-payment',9000,'final-order'); status='PAID';
   assert.equal((await processOneJobInvoiceReconciliation(api)).status,'done'); assert.equal(cancels,0);
   await reset(); await pay('own-partial',2000,'final-order'); status='PARTIALLY_PAID';
