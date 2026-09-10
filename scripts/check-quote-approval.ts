@@ -97,6 +97,7 @@ try {
   await database.exec("UPDATE job_closeouts SET customer_approved_at=NULL WHERE id='closeout'");
   await assert.rejects(approveCanonicalCloseout('closeout'),/Recorded closeout approval requires reconciliation/);
   await database.query("UPDATE job_closeouts SET customer_approved_at=$1 WHERE id='closeout'",[approvalBefore]);
+  await (await import('./check-closeout-request-recovery')).checkCloseoutRequestRecovery(sql=>database.exec(sql));
   const publication = { leadId: 'closeout-job', closeoutId: 'closeout',
     quoteRevisionId: approvedCloseout.quoteRevisionId, amount: 90 };
   await assertCanonicalFinalInvoicePublication(publication);
