@@ -48,6 +48,29 @@ export async function checkLateFinalInvoicePublication(input: {
   const previousFetch = globalThis.fetch;
   globalThis.fetch = async () => { throw new Error('Regression must not contact a live provider'); };
   try {
+    let known: SquareInvoice | undefined;
+    let publications=0;
+    const knownClient={customers:{search:async()=>({customers:[{id:'known-customer'}]})},
+      orders:{create:async()=>({order:{id:'known-order'}})},
+      invoices:{create:async()=>({invoice:{id:'known-invoice',version:0}}),publish:async()=>{
+        publications++;return {invoice:{id:'known-invoice',version:1,publicUrl:'https://example.invalid/known'}};
+      }}} as unknown as SquareClient;
+    const knownService=new SquareInvoiceService({getClient:async()=>knownClient,getLocationId:()=> 'synthetic-location',
+      invoiceStore:{getSquareInvoiceBySquareId:async()=>known,createSquareInvoice:async data=>{
+        known={...data,id:'known-local'} as SquareInvoice;return known;
+      }},recordPublication:async result=>{known!.status='sent';known!.invoiceUrl=result.invoiceUrl || null;}});
+    const retryKnown=()=>knownService.createInvoiceForLead({id:'closeout-job',firstName:'Synthetic',lastName:'Customer',
+      email:'synthetic@example.invalid',phone:null,serviceType:'moving'} as Lead,
+      input.approval.balanceDue,'Known final balance',input.approval.invoiceDueDate,'none',
+      {purpose:'final_balance',closeoutId:'closeout',quoteRevisionId:input.approval.quoteRevisionId,
+        idempotencyKey:input.approval.invoiceRequestKey+':known-publication'});
+    const firstPublication=await retryKnown();
+    assert.deepEqual(await retryKnown(),firstPublication);
+    assert.equal(publications,1,'known publication must return its saved URL without publishing again');
+    known!.invoiceUrl=null;
+    await assert.rejects(retryKnown(),/Published invoice URL requires reconciliation/);
+    assert.equal(publications,1,'missing saved URL must not cause another publication');
+    known!.invoiceUrl=firstPublication.invoiceUrl;
     await assert.rejects(service.createInvoiceForLead({ id: 'closeout-job', firstName: 'Synthetic', lastName: 'Customer',
       email: 'synthetic@example.invalid', phone: null, serviceType: 'moving' } as Lead,
     input.approval.balanceDue, 'Synthetic final balance', input.approval.invoiceDueDate, 'none',
@@ -58,6 +81,9 @@ export async function checkLateFinalInvoicePublication(input: {
     assert.equal(invoiceCents, 9000);
     assert.equal(Number(saved?.amount), 90);
     assert.equal(saved?.status, 'draft', 'retain unpublished provider identity for recovery');
+    await assert.rejects(retryKnown(),/payment coverage changed/);
+    assert.equal(publications,1,'returning a known invoice still requires unchanged funding');
+    console.log('PASS: actual invoice service reuses known publication, holds missing URLs and rechecks changed funding without republishing');
     console.log('PASS: payment committed during invoice creation prevents publication and retains the recovery draft; post-check/payment races remain outside this test');
   } finally { globalThis.fetch = previousFetch; }
 }

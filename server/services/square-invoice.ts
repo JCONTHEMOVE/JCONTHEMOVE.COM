@@ -315,6 +315,12 @@ export class SquareInvoiceService {
     if (process.env.JOB_PAYMENT_LEDGER_ENABLED === 'true' && options.purpose === 'final_balance') {
       await assertCanonicalFinalInvoicePublication({ leadId: lead.id, amount,
         closeoutId: options.closeoutId, quoteRevisionId: options.quoteRevisionId });
+      if (savedInvoice.status === 'sent') {
+        if (!savedInvoice.invoiceUrl || !savedInvoice.squareInvoiceId || savedInvoice.squareInvoiceId!==squareInvoice.id) {
+          throw new Error('Published invoice URL requires reconciliation');
+        }
+        return {invoiceId:savedInvoice.id,squareInvoiceId:savedInvoice.squareInvoiceId,invoiceUrl:savedInvoice.invoiceUrl};
+      }
     }
     const publishResponse = await client.invoices.publish({
       invoiceId: squareInvoice.id!,
