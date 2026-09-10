@@ -24,6 +24,8 @@ Use Replit first. Additional Neon databases are optional only after identifying 
 
 ## Final cutover writer inventory — September 10
 
+At 14:20 UTC, the actual quote infrastructure, regional automation and Quick Book migration SQL passed three executions on the isolated restored copy inside one transaction. Session-table privileges, session indexes and agreement columns were verified. The transaction was rolled back, then all 202 table digests, public constraints/indexes and 63 sequence states matched their pre-test values. The target therefore retains its unmigrated snapshot state for final synchronization. See QUICK_BOOK_RELEASE.md for scope; this is not a committed production migration or live application acceptance.
+
 Railway production service `jc-on-the-move` remains active on deployment `e936c06d-1427-441c-b058-b6ba3e967923`, titled `Record JC-87 notification rollout result`. Its deployment menu exposes Restart, Redeploy and Remove. Database settings are service variables, distinct from the unused shared DATABASE_URL variable. No variable or deployment was changed during this inspection.
 
 The original Replit app is also still published at `JCONTHEMOVE.replit.app`, with a release shown as four months old and a connected production database. Publishing > Manage provides Pause. Publishing > Adjust settings lists production DATABASE_URL and PostgreSQL secrets; applying changes uses Publish. Its unchecked “Copy your development database to production database” control is destructive and must remain unchecked. No Replit publish, pause or secret edit was performed.

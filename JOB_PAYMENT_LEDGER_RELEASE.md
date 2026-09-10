@@ -1,5 +1,7 @@
 # Canonical payments and rewards: release status
 
+Candidate `4e9c7652852aeaf8ff86102805c52217f0d02dc4` passed full [CI run 34487745554](https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/34487745554), including the new signed invoice checkout case in PostgreSQL, authorization/server tests, concurrency and worker checks, monitoring, build and PWA verification. This is draft-candidate validation; production remains unchanged.
+
 Signed invoice checkout acceptance now runs through the actual HTTP handler, event/invoice claim SQL and checkout update. Local PGlite passed partial-payment rejection before invoice lookup, missing local invoice failure with retryable event and invoice claims, successful retry after the fixture mapping is restored, and same-event/different-event duplicate suppression preserving payment timestamps. Existing job funding, lead state and wallet rows remain unchanged. Invoice storage uses a fixture SQL adapter; this standalone checkout has no job, order or wallet-grant association and makes no provider request. Full job-invoice accounting, grants, dispatch, lifecycle and live provider acceptance remain open. The new case is included in the existing PostgreSQL CI harness; the local result alone does not establish that CI passed.
 
 Updated September 10, 2026 (UTC). Implementation is a draft candidate, not a deployed service. Square canonical adapters are connected behind disabled flags; the additive payment schema is not registered as a startup migration. Do not enable the production flags yet.

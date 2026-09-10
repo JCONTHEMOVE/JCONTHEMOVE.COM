@@ -1,5 +1,11 @@
 # Quick Book owner release checks
 
+## Restored production-schema check — September 10
+
+At 14:20 UTC, the checked-in quote infrastructure, regional automation and Quick Book SQL ran three times inside one transaction on the owner's isolated Neon migration copy (`fragrant-art-08929708`, PostgreSQL 16). The intended role had SELECT/INSERT/UPDATE/DELETE privileges on the session table; both session indexes and agreement acceptance columns were present. Rolling back restored the original state: all 202 table-content digests, public constraints/indexes and all 63 sequence states matched their pre-test values. Private evidence is retained outside Git. No application worker or production migration ran.
+
+This closes the earlier minimal-fixture limitation for SQL compatibility and repeated execution against the restored September 10 schema. It does not establish live lock contention, a committed deployment/startup sequence, authenticated owner drafts, booking writes or notification delivery. Repeat the relevant checks if the final migration source schema changes; the live release and owner acceptance gates below remain open.
+
 September 8, 2026. Candidate preparation only; production is still on `25b985e4`.
 
 ## First deployment configuration
