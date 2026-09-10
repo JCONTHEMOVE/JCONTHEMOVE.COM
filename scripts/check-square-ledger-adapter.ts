@@ -147,6 +147,39 @@ try {
     assert.equal((await database.query("SELECT status FROM square_webhook_events WHERE event_id='retry-event'")).rows[0].status, 'processed');
     assert.deepEqual(await state(), signedPayment);
     console.log('PASS: production signed HTTP handler rejects invalid signatures, verifies provider data, deduplicates and reclaims failed events');
+    await database.exec(`CREATE TABLE gift_card_bonus_purchases(square_order_id text,square_payment_id text,created_at timestamptz);
+      DELETE FROM job_confirmed_refunds; DELETE FROM job_confirmed_payments; DELETE FROM job_invoice_reconciliation_queue;
+      UPDATE leads SET tokens_disbursed_at='2026-09-09T10:00:00Z',completion_rewarded_at='2026-09-09T10:00:00Z';`);
+    const rewardMarkers = (await database.query('SELECT tokens_disbursed_at,completion_rewarded_at FROM leads')).rows;
+    amount = 10000; refundAmount = 1000;
+    const refundEvent = JSON.stringify({ event_id: 'signed-refund', type: 'refund.updated',
+      data: { object: { refund: { id: 'refund', status: 'COMPLETED', payment_id: 'payment',
+        amount_money: { amount: 999999, currency: 'USD' } } } } });
+    const beforeRefund = requests.length;
+    assert.equal((await send(refundEvent, 'invalid')).status, 401);
+    assert.equal(requests.length, beforeRefund);
+    assert.equal((await state()).payments.length, 0);
+    assert.equal((await send(refundEvent)).status, 200);
+    const signedRefund = await state();
+    assert.equal(signedRefund.payments.length, 1, 'refund-first delivery records the verified original payment');
+    assert.equal(Number(signedRefund.payments[0].amount_cents), 10000);
+    assert.equal(signedRefund.refunds.length, 1);
+    assert.equal(Number(signedRefund.refunds[0].amount_cents), 1000, 'provider refund amount wins over webhook amount');
+    assert.equal(signedRefund.lead.payment_paid_at, null, 'refund-first delivery must not temporarily settle the job');
+    assert.equal(signedRefund.queue[0].generation, '2');
+    assert.equal((await database.query('SELECT * FROM job_reward_queue')).rows.length, 0);
+    const afterRefund = requests.length;
+    assert.equal((await send(refundEvent)).status, 200);
+    assert.equal(requests.length, afterRefund, 'same event skips provider entry');
+    assert.equal((await send(refundEvent.replace('signed-refund', 'another-refund-event'))).status, 200);
+    assert.deepEqual(await state(), signedRefund, 'different event for the same refund preserves one ledger effect');
+    refundAmount = 1100;
+    const conflictingRefund = refundEvent.replace('signed-refund', 'conflicting-refund');
+    assert.equal((await send(conflictingRefund)).status, 500);
+    assert.deepEqual(await state(), signedRefund);
+    assert.equal((await database.query("SELECT status FROM square_webhook_events WHERE event_id='conflicting-refund'")).rows[0].status, 'failed');
+    assert.deepEqual((await database.query('SELECT tokens_disbursed_at,completion_rewarded_at FROM leads')).rows, rewardMarkers);
+    console.log('PASS: signed refund-first delivery, provider amount, event/refund replay and conflict rollback without paid or reward handoff');
   } finally {
     await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
   }
