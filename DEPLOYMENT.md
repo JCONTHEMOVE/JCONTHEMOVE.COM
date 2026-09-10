@@ -201,6 +201,25 @@ After deploy, verify:
 
 ---
 
+## Production availability owner alerts
+
+The draft uses one incident-service reporting job for automatic readiness and
+apex/www entrypoint outcomes. It incorporates PR #8's email-first escalation
+plan and replaces the earlier direct Discord failure reporter.
+
+Follow [AVAILABILITY_RELEASE.md](AVAILABILITY_RELEASE.md) for the concrete
+activation sequence, private heartbeat secrets, isolated fail/resolve drills,
+recipient verification and independent missed-check coverage. A missing
+heartbeat secret fails visibly; no incident service was configured by this
+code change. Ordinary manual health checks do not notify or refresh the
+production incident monitor.
+
+Do not follow the former instructions to create a
+`PRODUCTION_ALERT_DISCORD_WEBHOOK_URL` secret or trigger an alert by supplying
+an intentionally wrong production commit. Use the separate drill heartbeat.
+Local reporter and entrypoint tests use fake HTTP responses and do not prove
+real email/Discord receipt or escalation timing.
+
 ## 7) Troubleshooting
 
 ### Build fails with missing tools/deps

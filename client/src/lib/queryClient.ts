@@ -1,4 +1,6 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { customerPhoneIssue } from "@shared/customerPhonePolicy";
+import { formatPhoneEntry } from "@shared/phone";
 
 const NATIVE_API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
@@ -58,6 +60,17 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  const phoneIssue = customerPhoneIssue(method, url, data);
+  if (phoneIssue) {
+    const fields = document.querySelectorAll<HTMLInputElement>('input[data-customer-phone]');
+    const field = Array.from(fields).find(input => input.value === formatPhoneEntry(String(phoneIssue.value ?? "")));
+    if (field) {
+      field.setCustomValidity(phoneIssue.message);
+      field.reportValidity();
+      field.focus();
+    }
+    throw new Error(phoneIssue.message);
+  }
   const base = getApiBase();
   const fullUrl = url.startsWith("http") ? url : `${base}${url}`;
 

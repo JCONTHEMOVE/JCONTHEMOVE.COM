@@ -1,5 +1,7 @@
 import { pool } from "../db";
 import { ensureQuoteRevisionInfrastructure } from "./quoteRevisions";
+import { SQUARE_INVOICE_CLAIM_UPGRADE } from "./squareInvoiceEffectClaims";
+import { SQUARE_EVENT_CLAIM_UPGRADE } from "./squareEventClaims";
 
 let migrationPromise: Promise<void> | null = null;
 
@@ -63,6 +65,9 @@ async function runMigration(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE(lead_id, quote_revision_id, terms_hash)
     );
+    ALTER TABLE job_agreements
+      ADD COLUMN IF NOT EXISTS accepted_by_name TEXT,
+      ADD COLUMN IF NOT EXISTS acceptance_evidence JSONB NOT NULL DEFAULT '{}'::jsonb;
 
     CREATE TABLE IF NOT EXISTS dispatch_offers (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -180,6 +185,8 @@ async function runMigration(): Promise<void> {
       started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       completed_at TIMESTAMPTZ
     );
+    ${SQUARE_INVOICE_CLAIM_UPGRADE}
+    ${SQUARE_EVENT_CLAIM_UPGRADE}
   `);
 
   await pool.query(`

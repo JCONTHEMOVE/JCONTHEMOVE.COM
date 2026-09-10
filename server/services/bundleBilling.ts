@@ -303,6 +303,9 @@ export async function grantWalletCreditForSource(args: GrantArgs): Promise<Credi
         `[bundleBilling] grantWalletCreditForSource failed for grant ${grant.id}:`,
         (err as Error).message,
       );
+      // The caller must retry the invoice instead of acknowledging a lost
+      // credit. Previously committed grants are skipped on the next attempt.
+      throw err;
     } finally {
       client.release();
     }

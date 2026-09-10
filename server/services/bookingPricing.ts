@@ -48,6 +48,17 @@ export const MAX_BUNDLE_DISCOUNT_USD = CANONICAL_PRICING_2026_08.offers.bundleMa
  *  passing `flatBookingBonus` in options. */
 export const DEFAULT_FLAT_BOOKING_BONUS = 250;
 
+/** The client records truckFee as base plus mileage, while retaining the
+ * mileage component for display. Legacy mileage-only details remain valid. */
+export function bookingAddOnTotal(details: Record<string, unknown>): number {
+  const positive = (value: unknown) => {
+    const amount = Number(value ?? 0);
+    return Number.isFinite(amount) && amount > 0 ? amount : 0;
+  };
+  const truck = positive(details.truckFee) || positive(details.truckMileageFee);
+  return truck + positive(details.oversizedItemFee) + positive(details.disposalFee) + positive(details.materialsFee);
+}
+
 export interface BookingPricingItemInput {
   serviceCode: string;
   /** Display label snapshot (catalog name unless overridden). */

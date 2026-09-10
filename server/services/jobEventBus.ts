@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { getPushReadiness } from './pushConfig';
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import { notificationService } from "./notification";
@@ -105,7 +106,8 @@ export function getJobEventWebhookReadiness() {
     configuredCount: urls.length,
     providers: Array.from(new Set(urls.map(webhookProvider))),
     signingSecretConfigured: Boolean(currentWebhookSecret()),
-    pushConfigured: Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY),
+    pushConfigured: getPushReadiness().ready,
+    push: getPushReadiness(),
   };
 }
 
@@ -591,15 +593,13 @@ export async function emitStandaloneQuoteOpportunity(input: {
     // audit problem must not prevent the configured webhook from firing.
     try {
       recipients = uniqueRecipients([...(await ownerRecipients()), ...(await allCrewRecipients())]);
-      const personalAlertsAlreadyAttempted = await hasJobAlertDelivery(input.eventId);
-      personalRecipients = personalAlertsAlreadyAttempted
-        ? []
-        : recipients.filter((recipient) => recipient.jobAlertChannelPreference !== "discord");
+      personalRecipients = recipients.filter((recipient) => recipient.jobAlertChannelPreference !== "discord");
     } catch (error) {
       console.warn("[jobEventBus] standalone personal recipient lookup failed; continuing with webhooks:", error instanceof Error ? error.message : error);
     }
 
     await Promise.allSettled(personalRecipients.map(async (recipient) => {
+      if (await hasJobAlertDelivery(input.eventId,recipient.id)) return;
       const isOwnerRecipient = ["admin", "business_owner"].includes(String(recipient.role || ""));
       const result = await notificationService.sendNotification({
         userId: recipient.id,
@@ -696,17 +696,12 @@ export async function emitJobEvent(
     }
     const message = messageFor(effectiveType, lead, effectiveOptions);
     let recipients: UserRecipient[] = [];
-    let personalAlertsAlreadyAttempted = false;
     try {
       recipients = uniqueRecipients(await recipientsFor(message.scope, lead));
       if (options.recipientUserIds?.length) {
         const allowed = new Set(options.recipientUserIds);
         recipients = recipients.filter((recipient) => allowed.has(recipient.id));
       }
-      // A stable event may already have delivered its personal notifications.
-      // Webhooks are handled separately so a failed Discord attempt can retry
-      // without duplicating in-app notifications.
-      personalAlertsAlreadyAttempted = Boolean(options.eventId && await hasJobAlertDelivery(eventId));
     } catch (error) {
       console.warn("[jobEventBus] personal recipient lookup failed; continuing with webhooks:", error instanceof Error ? error.message : error);
     }
@@ -724,10 +719,12 @@ export async function emitJobEvent(
       ...(effectiveOptions.extra || {}),
     };
 
-    const personalRecipients = personalAlertsAlreadyAttempted
-      ? []
-      : recipients.filter((recipient) => recipient.jobAlertChannelPreference !== "discord");
+    const personalRecipients = recipients.filter((recipient) => recipient.jobAlertChannelPreference !== "discord");
     await Promise.allSettled(personalRecipients.map(async (recipient) => {
+      // One recipient's audit must not suppress another recipient. Retain the
+      // existing no-repeat rule within each recipient until channel recovery
+      // can distinguish confirmed delivery from uncertain provider outcomes.
+      if (options.eventId && await hasJobAlertDelivery(eventId,recipient.id)) return;
       const isOwnerRecipient = ["admin", "business_owner"].includes(String(recipient.role || ""));
       const personalUrl = effectiveType === "jcmoves_disbursed"
         ? (isOwnerRecipient ? "/admin/finance" : "/crew/earnings")

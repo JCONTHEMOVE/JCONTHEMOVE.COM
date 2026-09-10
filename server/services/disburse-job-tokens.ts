@@ -37,6 +37,9 @@ import { regularPaymentRewardBonus } from "@shared/paymentIncentives";
 import { getJobRateCard } from "./jobRateCard";
 import { emitJobEvent } from "./jobEventBus";
 import { calculateCustomerRewardBase } from "../../shared/giftCardBonuses";
+import { settleJobLedgerRecipient } from "./jobLedgerSettlement";
+import { readCanonicalRewardBasis } from "./canonicalRewardBasis";
+import { acquireJobDisbursementLock } from "./jobDisbursementLock";
 
 const TOKEN_PRICE            = 0.00000508432;
 const HOURS_RATE             = 25;    // JCMOVES per confirmed hour per crew member
@@ -189,91 +192,6 @@ export function calculateCrewPoolAllocation(
   return { crewIds, crewLeadId, leadBonus, baseShare, roundingRemainder, amounts };
 }
 
-type JobLedgerRecipient = {
-  ledgerId: number;
-  leadId: string;
-  userId: string;
-  rewardType: "customer_paid_completed_pool" | "crew_paid_completed_pool";
-  amount: number;
-  quoteTotal: number;
-  ratePerDollar: number;
-  metadata?: Record<string, unknown>;
-};
-
-/**
- * Settles an already-recorded job ledger entry atomically. The durable ledger
- * is written before this runs; the reward row, wallet balance, and settlement
- * marker are committed together, so a retry cannot double-credit after a
- * partial failure.
- */
-async function settleJobLedgerRecipient(input: JobLedgerRecipient): Promise<boolean> {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const { rows: ledgerRows } = await client.query<{ metadata: Record<string, unknown> | null }>(
-      "SELECT metadata FROM job_jcmoves_ledger WHERE id = $1 FOR UPDATE",
-      [input.ledgerId],
-    );
-    if (!ledgerRows.length) throw new Error(`JCMOVES ledger ${input.ledgerId} was not found`);
-    if (ledgerRows[0].metadata?.walletCreditedAt) {
-      await client.query("COMMIT");
-      return false;
-    }
-
-    const existingReward = await client.query(
-      `SELECT 1 FROM rewards
-        WHERE user_id = $1 AND reward_type = $2 AND reference_id = $3
-        LIMIT 1`,
-      [input.userId, input.rewardType, input.leadId],
-    );
-    if (existingReward.rowCount === 0) {
-      await client.query(
-        `INSERT INTO rewards (user_id, reward_type, token_amount, cash_value, status, earned_date, reference_id, metadata)
-         VALUES ($1,$2,$3,$4,'confirmed',NOW(),$5,$6::jsonb)`,
-        [
-          input.userId,
-          input.rewardType,
-          input.amount.toFixed(8),
-          (input.amount * TOKEN_PRICE).toFixed(6),
-          input.leadId,
-          JSON.stringify({
-            jobId: input.leadId,
-            ratePerDollar: input.ratePerDollar,
-            quoteTotal: input.quoteTotal,
-            ...(input.metadata ?? {}),
-          }),
-        ],
-      );
-    }
-
-    await client.query(
-      "INSERT INTO wallet_accounts (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING",
-      [input.userId],
-    );
-    await client.query(
-      `UPDATE wallet_accounts
-          SET token_balance = (COALESCE(token_balance, 0)::numeric + $2)::numeric(18,8),
-              total_earned = (COALESCE(total_earned, 0)::numeric + $2)::numeric(18,8),
-              last_activity = NOW()
-        WHERE user_id = $1`,
-      [input.userId, input.amount],
-    );
-    await client.query(
-      `UPDATE job_jcmoves_ledger
-          SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('walletCreditedAt', NOW()::text)
-        WHERE id = $1`,
-      [input.ledgerId],
-    );
-    await client.query("COMMIT");
-    return true;
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
 /**
  * Current job-card reward rule: one customer pool and one crew pool, each
  * equal to quote dollars × the editable JCMOVES rate. The crew lead receives
@@ -281,6 +199,9 @@ async function settleJobLedgerRecipient(input: JobLedgerRecipient): Promise<bool
  * (including the lead), with whole-token rounding remainder going to the lead.
  */
 async function disburseRateCardJcMoves(leadId: string, lead: Lead & { crewLeadUserId?: string | null; jcmovesRewardBase?: string | null }) {
+  const canonical = process.env.JOB_PAYMENT_LEDGER_ENABLED === "true";
+  if (canonical && process.env.JOB_PAYMENT_REWARDS_ENABLED !== "true") return null;
+  const canonicalBasis = canonical ? await readCanonicalRewardBasis(leadId) : null;
   const { rows: paymentRows } = await pool.query<{ payment_paid_at: Date | null; jcmoves_reward_base: string | null }>(
     "SELECT payment_paid_at, jcmoves_reward_base FROM leads WHERE id = $1 LIMIT 1",
     [leadId],
@@ -295,21 +216,21 @@ async function disburseRateCardJcMoves(leadId: string, lead: Lead & { crewLeadUs
   }
 
   const rateCard = await getJobRateCard();
-  const quoteTotal = Number(paymentRows[0]?.jcmoves_reward_base || lead.jcmovesRewardBase || lead.totalPrice || lead.basePrice || 0);
+  const quoteTotal = canonicalBasis?.quoteTotalUsd ?? Number(paymentRows[0]?.jcmoves_reward_base || lead.jcmovesRewardBase || lead.totalPrice || lead.basePrice || 0);
   if (!Number.isFinite(quoteTotal) || quoteTotal <= 0) {
     console.warn(`[JCMOVES] ${leadId} has no finalized quote; ledger issuance deferred.`);
     return null;
   }
   const poolTokens = Math.round(quoteTotal * rateCard.jcmovesPerDollar);
-  const giftCardTenderResult = await pool.query<{ gift_card_funded_usd: string }>(
+  const giftCardTenderResult = canonicalBasis ? null : await pool.query<{ gift_card_funded_usd: string }>(
     `SELECT COALESCE(SUM(gift_card_paid_amount), 0)::text AS gift_card_funded_usd
        FROM square_invoices
       WHERE lead_id=$1 AND status='paid'`,
     [leadId],
   );
-  const giftCardFundedUsd = Math.min(quoteTotal, Number(giftCardTenderResult.rows[0]?.gift_card_funded_usd || 0));
+  const giftCardFundedUsd = canonicalBasis?.giftFundedUsd ?? Math.min(quoteTotal, Number(giftCardTenderResult?.rows[0]?.gift_card_funded_usd || 0));
   const customerEligibleQuoteTotal = calculateCustomerRewardBase(quoteTotal, giftCardFundedUsd);
-  const customerPoolTokens = Math.round(customerEligibleQuoteTotal * rateCard.jcmovesPerDollar);
+  let customerPoolTokens = Math.round(customerEligibleQuoteTotal * rateCard.jcmovesPerDollar);
   const crewAllocation = calculateCrewPoolAllocation(poolTokens, [
     ...(Array.isArray(lead.crewMembers) ? lead.crewMembers : []),
     ...(lead.assignedToUserId ? [lead.assignedToUserId] : []),
@@ -331,17 +252,17 @@ async function disburseRateCardJcMoves(leadId: string, lead: Lead & { crewLeadUs
     quoteTotalUsd?: number;
     metadata: Record<string, unknown>;
   }) {
-    const result = await pool.query<{ id: number }>(
+    const result = await pool.query<{ id: number; token_amount: string }>(
       `INSERT INTO job_jcmoves_ledger
         (lead_id, recipient_type, recipient_user_id, recipient_label, reward_kind, token_amount, quote_total, rate_per_dollar, metadata)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
        ON CONFLICT DO NOTHING
-       RETURNING id`,
+       RETURNING id,token_amount::text`,
       [leadId, input.recipientType, input.recipientUserId, input.recipientLabel, input.rewardKind, input.amount, input.quoteTotalUsd ?? quoteTotal, rateCard.jcmovesPerDollar, JSON.stringify(input.metadata)],
     );
     if (result.rows[0]) return result.rows[0];
-    const { rows } = await pool.query<{ id: number }>(
-      `SELECT id FROM job_jcmoves_ledger
+    const { rows } = await pool.query<{ id: number; token_amount: string }>(
+      `SELECT id,token_amount::text FROM job_jcmoves_ledger
         WHERE lead_id = $1
           AND recipient_type = $2
           AND reward_kind = $3
@@ -374,6 +295,7 @@ async function disburseRateCardJcMoves(leadId: string, lead: Lead & { crewLeadUs
       giftCardDoubleEarnExcluded: giftCardFundedUsd > 0,
     },
   });
+  customerPoolTokens = Number(customerLedger.token_amount);
   if (customer && customerPoolTokens > 0) {
     await settleJobLedgerRecipient({
       ledgerId: customerLedger.id,
@@ -390,7 +312,7 @@ async function disburseRateCardJcMoves(leadId: string, lead: Lead & { crewLeadUs
   for (const memberId of crewIds) {
     const amount = crewAllocation.amounts[memberId];
     const crewMember = await storage.getUser(memberId).catch(() => null);
-    if (!crewMember || amount <= 0) continue;
+    if (!crewMember) continue;
     const crewLedger = await writeLedger({
       recipientType: "crew",
       recipientUserId: memberId,
@@ -399,6 +321,7 @@ async function disburseRateCardJcMoves(leadId: string, lead: Lead & { crewLeadUs
       amount,
       metadata: { source: "rate_card", paid: true, completed: true, crewLead: memberId === crewLeadId, leadBonus, baseShare, roundingRemainder },
     });
+    crewAllocation.amounts[memberId] = Number(crewLedger.token_amount);
     await settleJobLedgerRecipient({
       ledgerId: crewLedger.id,
       leadId,
@@ -448,8 +371,8 @@ export async function disburseJobTokens(leadId: string): Promise<DisbursementSum
 
   // Level 2 — concurrency guard: advisory lock (only one caller proceeds at a time)
   const lockKey = leadIdToLockKey(leadId);
-  const lockResult = await pool.query("SELECT pg_try_advisory_lock($1) AS acquired", [lockKey]);
-  if (!lockResult.rows[0]?.acquired) {
+  const releaseLock = await acquireJobDisbursementLock(pool, lockKey);
+  if (!releaseLock) {
     console.log(`ℹ️ Job ${leadId} disbursement in-progress elsewhere — skipping`);
     return null;
   }
@@ -749,7 +672,7 @@ export async function disburseJobTokens(leadId: string): Promise<DisbursementSum
 
     return summary;
   } finally {
-    await pool.query("SELECT pg_advisory_unlock($1)", [lockKey]).catch(() => {});
+    await releaseLock();
   }
 }
 

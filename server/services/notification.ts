@@ -1,15 +1,12 @@
 import webpush from 'web-push';
 import { storage } from '../storage';
 import type { InsertNotification } from '@shared/schema';
+import { pushConfig } from './pushConfig';
 
-const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
-const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
-const vapidEmail = process.env.VAPID_EMAIL || 'mailto:upmichiganstatemovers@gmail.com';
-
-if (vapidPublicKey && vapidPrivateKey) {
-  webpush.setVapidDetails(vapidEmail, vapidPublicKey, vapidPrivateKey);
+if (pushConfig.ready) {
+  webpush.setVapidDetails(pushConfig.subject, pushConfig.publicKey, pushConfig.privateKey);
 } else {
-  console.warn('[PushNotification] VAPID keys not configured — push notifications disabled');
+  console.warn('[PushNotification] Disabled:', pushConfig.blockers.join(' '));
 }
 
 export interface NotificationData {
@@ -31,7 +28,7 @@ export type NotificationSendResult = {
 };
 
 export class NotificationService {
-  private vapidReady = !!(vapidPublicKey && vapidPrivateKey);
+  private vapidReady = pushConfig.ready;
 
   async createNotification(notificationData: NotificationData): Promise<NotificationDeliveryResult> {
     try {
@@ -55,7 +52,7 @@ export class NotificationService {
     notification: { title: string; body: string; tag?: string; requireInteraction?: boolean; data?: any }
   ): Promise<NotificationDeliveryResult> {
     if (!this.vapidReady) {
-      return { status: 'skipped', error: 'Push notifications are not configured (VAPID keys missing).' };
+      return { status: 'skipped', error: pushConfig.blockers.join(' ') };
     }
     try {
       const user = await storage.getUser(userId);
@@ -73,11 +70,11 @@ export class NotificationService {
         data: { url: '/rewards', ...(notification.data || {}) },
       });
 
-      await webpush.sendNotification(user.pushSubscription as webpush.PushSubscription, payload);
+      await webpush.sendNotification(user.pushSubscription as webpush.PushSubscription, payload, { timeout: 10000, TTL: 300 });
       console.log(`[PushNotification] Sent to user ${userId}: ${notification.title}`);
       return { status: 'sent' };
     } catch (error: any) {
-      if (error?.statusCode === 410) {
+      if (error?.statusCode === 410 || error?.statusCode === 404) {
         // Subscription expired — clear it
         await storage.updateUserPushSubscription(userId, null as any);
         console.log(`[PushNotification] Cleared expired subscription for ${userId}`);

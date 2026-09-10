@@ -35,8 +35,6 @@ export function NotificationPrompt() {
     setShowPrompt(false);
     if (result === 'granted') {
       localStorage.setItem('notifications-enabled', 'true');
-      // Register push subscription with server
-      await notificationService.subscribeToServerPush();
     }
   };
 
@@ -95,17 +93,27 @@ export function NotificationPrompt() {
 export function NotificationToggle() {
   const [enabled, setEnabled] = useState(false);
   const [supported, setSupported] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     setSupported(notificationService.isSupported());
     const permission = notificationService.getPermissionStatus();
-    setEnabled(permission === 'granted');
+    if (permission === 'granted') {
+      notificationService.subscribeToServerPush().then(ok => {
+        setEnabled(ok);
+        setError(notificationService.lastPushError);
+      });
+    }
   }, []);
 
   const handleToggle = async () => {
     if (!enabled) {
+      setBusy(true);
       const result = await notificationService.requestPermission();
-      setEnabled(result === 'granted');
+      setEnabled(result === 'granted' && !notificationService.lastPushError);
+      setError(notificationService.lastPushError || (result !== 'granted' ? 'Allow notifications in your browser settings, then retry.' : null));
+      setBusy(false);
     }
   };
 
@@ -114,10 +122,12 @@ export function NotificationToggle() {
   }
 
   return (
+    <div>
     <Button
       variant={enabled ? "default" : "outline"}
       size="sm"
       onClick={handleToggle}
+      disabled={busy}
       className="gap-2"
     >
       {enabled ? (
@@ -132,5 +142,7 @@ export function NotificationToggle() {
         </>
       )}
     </Button>
+    {error && <p role="status" className="mt-2 max-w-sm text-sm text-amber-500">{error}</p>}
+    </div>
   );
 }

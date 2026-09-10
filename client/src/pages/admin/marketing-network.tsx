@@ -437,7 +437,7 @@ export default function AdminMarketingNetworkPage() {
                 <div><Label>Tagline</Label><Input value={form.tagline} onChange={e => setForm({ ...form, tagline: e.target.value })} className="bg-zinc-900 border-white/10" /></div>
                 <div className="grid grid-cols-2 gap-3">
                   <div><Label>Promo code</Label><Input value={form.promoCode} onChange={e => setForm({ ...form, promoCode: e.target.value.toUpperCase() })} className="bg-zinc-900 border-white/10 font-mono" /></div>
-                  <div><Label>Phone</Label><Input value={form.phoneNumber} onChange={e => setForm({ ...form, phoneNumber: e.target.value })} className="bg-zinc-900 border-white/10" /></div>
+                  <div><Label>Phone</Label><Input type="tel" value={form.phoneNumber} onChange={e => setForm({ ...form, phoneNumber: e.target.value })} className="bg-zinc-900 border-white/10" /></div>
                 </div>
                 <div><Label>CTA label</Label><Input value={form.ctaLabel} onChange={e => setForm({ ...form, ctaLabel: e.target.value })} className="bg-zinc-900 border-white/10" /></div>
                 <div><Label>Service focus, one per line</Label><Textarea value={form.serviceFocus} onChange={e => setForm({ ...form, serviceFocus: e.target.value })} className="bg-zinc-900 border-white/10 min-h-24" /></div>

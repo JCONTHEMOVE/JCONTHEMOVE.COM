@@ -1073,8 +1073,8 @@ function JobDetailSheet({
                     </label>
                     <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                       Phone
-                      <Input
-                        value={editForm.phone}
+                      <Input type="tel"
+                        legacyPhoneValue={lead.phone} value={editForm.phone}
                         onChange={e => setEditForm(form => form ? { ...form, phone: e.target.value } : form)}
                         className="mt-1 bg-slate-950/60 border-slate-700 text-white"
                       />

@@ -1,3 +1,4 @@
+import { leadPhoneNumberSchema } from "@shared/schema";
 // Multi-Service Booking endpoints (Task #128).
 //
 //   POST /api/bookings/quote      → live quote, no persistence
@@ -12,7 +13,7 @@ import { Router, Request, Response } from "express";
 import crypto from "crypto";
 import { eq, and, asc, desc, or, inArray, ilike, gte, lte, sql } from "drizzle-orm";
 import { disburseBookingTokens, loadBookingRewardSettings } from "../services/disburseBookingTokens";
-import { computeBookingReward } from "../services/bookingPricing";
+import { bookingAddOnTotal, computeBookingReward } from "../services/bookingPricing";
 import { notifyAdminNewQuote, notifyCustomerBookingRequestReceived } from "../services/email";
 import { smsService } from "../services/sms";
 import { ZodError, z } from "zod";
@@ -112,7 +113,7 @@ const instantBookingRequestSchema = z.object({
   service: z.enum(["moving", "labor", "junk"]),
   customerName: z.string().trim().min(2, "Enter your name").max(120),
   customerEmail: z.union([z.string().trim().email(), z.literal("")]).optional().transform((value) => value || ""),
-  customerPhone: z.string().trim().min(7, "Enter a phone number"),
+  customerPhone: leadPhoneNumberSchema,
   serviceAddress: z.string().trim().min(5, "Enter the service address").max(350),
   destinationAddress: z.string().trim().max(350).optional().transform((value) => value || ""),
   zip: z.string().trim().regex(/^\d{5}(?:-\d{4})?$/, "Enter a 5-digit ZIP code"),
@@ -1530,11 +1531,7 @@ function resolveItems(
         })
       : null;
     if (rateCardLine) {
-      const addOnKeys = ["truckFee", "truckMileageFee", "oversizedItemFee", "disposalFee", "materialsFee"];
-      const addOnTotal = addOnKeys.reduce((sum, key) => {
-        const amount = Number(rateDetails[key] ?? 0);
-        return sum + (Number.isFinite(amount) && amount > 0 ? amount : 0);
-      }, 0);
+      const addOnTotal = bookingAddOnTotal(rateDetails);
       unitPrice = +(rateCardLine.subtotal + addOnTotal).toFixed(2);
       collapseQuantityToOne = true;
       rateCardLaborOverride = {

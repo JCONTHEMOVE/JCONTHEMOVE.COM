@@ -1,3 +1,4 @@
+import { leadPhoneNumberSchema } from "./schema";
 import { z } from "zod";
 
 export const cartItemTypeSchema = z.enum([
@@ -46,7 +47,7 @@ export const commerceCheckoutSchema = commercePreviewSchema.extend({
   firstName: z.string().trim().min(1).max(100),
   lastName: z.string().trim().min(1).max(100),
   email: z.string().trim().email(),
-  phone: z.string().trim().min(7).max(40),
+  phone: leadPhoneNumberSchema,
   shippingAddress: z.string().trim().max(1_000).optional(),
   fromAddress: z.string().trim().max(1_000).optional(),
   toAddress: z.string().trim().max(1_000).optional(),

@@ -786,7 +786,7 @@ export default function SnowRemovalPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>Phone</Label>
-                  <Input
+                  <Input type="tel"
                     value={customerForm.phone}
                     onChange={(e) => setCustomerForm({ ...customerForm, phone: e.target.value })}
                     placeholder="Phone number"

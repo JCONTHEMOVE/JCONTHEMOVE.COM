@@ -1,3 +1,4 @@
+import { normalizeCustomerPhone, phoneError } from "./phone";
 import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, index, jsonb, decimal, integer, bigint, date, boolean, uniqueIndex, unique, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
@@ -1111,26 +1112,14 @@ export type JewelryItem = typeof jewelryItems.$inferSelect;
  * number is worse than rejecting the submission: it creates a lead we cannot
  * call back.
  */
-export function normalizeLeadPhoneNumber(value: unknown): string | null {
-  const digits = String(value ?? "").replace(/\D/g, "");
-  const nationalNumber = digits.length === 11 && digits.startsWith("1")
-    ? digits.slice(1)
-    : digits;
-
-  // North American area codes and exchange codes cannot begin with 0 or 1.
-  if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(nationalNumber)) {
-    return null;
-  }
-
-  return `(${nationalNumber.slice(0, 3)}) ${nationalNumber.slice(3, 6)}-${nationalNumber.slice(6)}`;
-}
-
+export const normalizeLeadPhoneNumber = normalizeCustomerPhone;
 export const leadPhoneNumberSchema = z.string().trim()
-  .refine(
-    (value) => normalizeLeadPhoneNumber(value) !== null,
-    "Enter a complete 10-digit phone number so we can call you back.",
-  )
-  .transform((value) => normalizeLeadPhoneNumber(value)!);
+  .superRefine((value, ctx) => {
+    const message = phoneError(value);
+    if (message) ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+  })
+  .transform((value) => normalizeCustomerPhone(value)!);
+export const optionalPhoneNumberSchema = z.union([z.literal(""), leadPhoneNumberSchema]).nullable().optional();
 
 export const insertLeadSchema = createInsertSchema(leads).omit({
   id: true,
@@ -1156,7 +1145,7 @@ export function formatOrderNumber(n: number): string {
 export const insertContactSchema = createInsertSchema(contacts).omit({
   id: true,
   createdAt: true,
-});
+}).extend({ phone: optionalPhoneNumberSchema });
 
 export const insertUserSchema = createInsertSchema(users).omit({
   role: true, // Role set during user creation/management
@@ -2063,6 +2052,8 @@ export const jobAgreements = pgTable("job_agreements", {
   termsHash: text("terms_hash").notNull(),
   acceptanceMethod: text("acceptance_method").notNull().default("web_checkbox"),
   acceptedByUserId: varchar("accepted_by_user_id").references(() => users.id),
+  acceptedByName: text("accepted_by_name"),
+  acceptanceEvidence: jsonb("acceptance_evidence").notNull().default("{}"),
   acceptanceTokenId: text("acceptance_token_id"),
   acceptedAt: timestamp("accepted_at").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -3497,6 +3488,35 @@ export const bookingServiceItems = pgTable("booking_service_items", {
   index("idx_booking_items_service").on(table.serviceCode),
 ]);
 
+// Resumable, staff-only conversational booking drafts. The normalized draft
+// is safe to resume across devices; raw microphone audio is never stored.
+export const quickBookingSessions = pgTable("quick_booking_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
+  status: text("status").notNull().default("draft"),
+  revision: integer("revision").notNull().default(1),
+  transcriptText: text("transcript_text"),
+  structuredDraft: jsonb("structured_draft").notNull().default("{}"),
+  fieldMeta: jsonb("field_meta").notNull().default("{}"),
+  missingFields: jsonb("missing_fields").notNull().default("[]"),
+  reviewReasons: jsonb("review_reasons").notNull().default("[]"),
+  pricingPreview: jsonb("pricing_preview"),
+  suggestedCrew: jsonb("suggested_crew").notNull().default("[]"),
+  assistantMessage: text("assistant_message"),
+  nextQuestion: text("next_question"),
+  suggestions: jsonb("suggestions").notNull().default("[]"),
+  agentMetadata: jsonb("agent_metadata").notNull().default("{}"),
+  metrics: jsonb("metrics").notNull().default("{}"),
+  bookingId: varchar("booking_id").references(() => bookings.id),
+  leadId: varchar("lead_id").references(() => leads.id),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  index("idx_quick_booking_sessions_creator").on(table.createdByUserId, table.updatedAt),
+  index("idx_quick_booking_sessions_status").on(table.status, table.updatedAt),
+]);
+
 // Task #130: admin override of an auto-applied bundle discount, with an audit
 // trail. Admin can change `bookings.discountTotal`; we snapshot the original
 // value once on the booking row and append an audit row per change.
@@ -3676,7 +3696,7 @@ export type BookingQuoteRequest = z.infer<typeof bookingQuoteRequestSchema>;
 export const bookingCreateRequestSchema = bookingQuoteRequestSchema.extend({
   customerName: z.string().min(1),
   customerEmail: z.string().email().optional().or(z.literal("")),
-  customerPhone: z.string().min(7),
+  customerPhone: leadPhoneNumberSchema,
   serviceAddress: z.string().optional(),
   notes: z.string().optional(),
   // Customer self-service requests receive a transactional receipt. Worker

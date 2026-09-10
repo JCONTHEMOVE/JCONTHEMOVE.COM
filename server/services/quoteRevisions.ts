@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { pool } from "../db";
 import {
   applyGeographicQuotePolicy,
@@ -216,14 +217,16 @@ export async function ensureQuoteRevisionInfrastructure(): Promise<void> {
   return infrastructurePromise;
 }
 
-async function getLead(leadId: string): Promise<LeadForQuote | null> {
-  const result = await pool.query<LeadForQuote>(`
+const quoteLeadSelect = `
     SELECT id, booking_id, service_type, from_address, to_address,
            confirmed_from_address, confirmed_to_address, confirmed_date, move_date,
            crew_size, confirmed_hours, base_price, total_price,
            total_special_items_fee, order_line_items, quote_snapshot, quote_notes
     FROM leads WHERE id = $1 LIMIT 1
-  `, [leadId]);
+`;
+
+async function getLead(leadId: string): Promise<LeadForQuote | null> {
+  const result = await pool.query<LeadForQuote>(quoteLeadSelect, [leadId]);
   return result.rows[0] || null;
 }
 
@@ -407,6 +410,15 @@ export async function saveQuoteDraft(input: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // Payment/refund/reward writers lock the job before its quote. Use the
+    // same order, including when this is the first draft for a job.
+    const lockedLead = await client.query<LeadForQuote>(`${quoteLeadSelect} FOR UPDATE`, [lead.id]);
+    if (!lockedLead.rows.length) throw new Error("Lead not found");
+    // Route lookup stays outside the transaction. Check every job field used
+    // by calculation/persistence again under the lock before saving its result.
+    if (!isDeepStrictEqual(lead, lockedLead.rows[0])) {
+      throw new Error("Job details changed while calculating the quote. Reload the job and retry.");
+    }
     const latestResult = await client.query(`SELECT * FROM quote_revisions WHERE lead_id = $1 ORDER BY revision DESC LIMIT 1 FOR UPDATE`, [lead.id]);
     const latest = latestResult.rows[0];
     if (latest?.status === "draft") {
@@ -463,9 +475,8 @@ export async function saveQuoteDraft(input: {
       input.notes ?? lead.quote_notes,
       input.actorUserId,
     ]);
-    if (latest && ["approved", "sent"].includes(latest.status)) {
-      await client.query(`UPDATE quote_revisions SET status='superseded', superseded_by_quote_id=$2, updated_at=NOW() WHERE id=$1`, [latest.id, quoteId]);
-    }
+    // A draft does not replace an approved financial basis. Supersession
+    // happens atomically with approval of the replacement revision below.
     await client.query("COMMIT");
     return rowToQuote(inserted.rows[0]);
   } catch (error) {
@@ -485,10 +496,20 @@ export async function approveQuoteRevision(input: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const lockedLead = await client.query(
+      "SELECT id FROM leads WHERE id=(SELECT lead_id FROM quote_revisions WHERE id=$1) FOR UPDATE", [input.quoteId],
+    );
+    if (!lockedLead.rows.length) throw new Error("Quote revision lead not found");
     const result = await client.query(`SELECT * FROM quote_revisions WHERE id=$1 FOR UPDATE`, [input.quoteId]);
     const row = result.rows[0];
     if (!row) throw new Error("Quote revision not found");
+    if (row.lead_id !== lockedLead.rows[0].id) throw new Error("Quote revision changed jobs; retry approval");
     if (row.status !== "draft") throw new Error("Only a draft quote can be approved");
+    const newer = await client.query(
+      "SELECT id FROM quote_revisions WHERE lead_id=$1 AND revision>$2 AND status IN ('draft','approved','sent') LIMIT 1",
+      [row.lead_id, row.revision],
+    );
+    if (newer.rows.length) throw new Error("A newer quote revision must be reviewed instead");
     const eligibility = plainRecord(row.travel_eligibility);
     const { requiresOwner, overrideReason } = assertQuoteApprovalAllowed({
       travelEligibility: eligibility,
@@ -496,11 +517,15 @@ export async function approveQuoteRevision(input: {
       overrideReason: input.overrideReason,
     });
 
+    await client.query(`
+      UPDATE quote_revisions SET status='superseded',superseded_by_quote_id=$2,updated_at=NOW()
+      WHERE lead_id=$1 AND id<>$2 AND status IN ('approved','sent')
+    `, [row.lead_id, row.id]);
     const updated = await client.query(`
       UPDATE quote_revisions SET
-        status='approved', approved_by_user_id=$2, approved_at=NOW(),
+        status='approved', approved_by_user_id=$2::varchar, approved_at=NOW(),
         owner_override_reason=$3,
-        owner_override_by_user_id=CASE WHEN $4 THEN $2 ELSE NULL END,
+        owner_override_by_user_id=CASE WHEN $4 THEN $2::varchar ELSE NULL END,
         owner_override_at=CASE WHEN $4 THEN NOW() ELSE NULL END,
         updated_at=NOW()
       WHERE id=$1 RETURNING *

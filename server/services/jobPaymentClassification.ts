@@ -1,4 +1,4 @@
-export type JobInvoicePaymentKind = "deposit" | "paid_in_full";
+export type JobInvoicePaymentKind = "deposit" | "partial" | "paid_in_full";
 
 export type JobInvoicePaymentClassification = {
   kind: JobInvoicePaymentKind;
@@ -28,23 +28,26 @@ export function classifyJobInvoicePayment(input: {
   invoicePurpose?: string | null;
 }): JobInvoicePaymentClassification {
   const invoiceAmount = dollars(input.invoiceAmount);
-  const jobTotal = dollars(input.jobTotal) || invoiceAmount;
+  const jobTotal = dollars(input.jobTotal);
   const depositAmount = dollars(input.depositAmount);
   const isFirstRequiredPayment = input.depositRequired === true && input.depositAlreadyPaid !== true;
-  const isLessThanJobTotal = jobTotal > 0 && invoiceAmount < jobTotal - 0.01;
-  const matchesConfiguredDeposit = depositAmount > 0 && Math.abs(invoiceAmount - depositAmount) <= 0.02;
+  const isLessThanJobTotal = jobTotal > 0 && invoiceAmount < jobTotal;
+  const matchesConfiguredDeposit = depositAmount > 0 && invoiceAmount === depositAmount;
+  const coversDeposit = invoiceAmount > 0 && invoiceAmount >= depositAmount;
   // Matching the configured deposit remains a deposit on duplicate webhook
   // delivery even after deposit_paid has already flipped to true. A later
   // balance invoice is classified as full payment only after that guard.
   const explicitPurpose = String(input.invoicePurpose || "").toLowerCase();
+  const confirmedDeposit = input.depositAlreadyPaid === true ? depositAmount : 0;
+  const coversJob = jobTotal > 0 && invoiceAmount > 0
+    && Math.round((invoiceAmount + confirmedDeposit) * 100) >= Math.round(jobTotal * 100);
   const kind: JobInvoicePaymentKind = explicitPurpose === "deposit"
-    ? "deposit"
-    : ["final_balance", "supplement"].includes(explicitPurpose)
-      ? "paid_in_full"
-      : input.depositRequired === true
-        && ((matchesConfiguredDeposit && isLessThanJobTotal) || (isFirstRequiredPayment && isLessThanJobTotal))
+    ? coversDeposit ? "deposit" : "partial"
+    : !["final_balance", "supplement"].includes(explicitPurpose) && input.depositRequired === true
+        && coversDeposit
+        && ((matchesConfiguredDeposit && isLessThanJobTotal) || (isFirstRequiredPayment && depositAmount > 0 && isLessThanJobTotal))
         ? "deposit"
-        : "paid_in_full";
+        : coversJob ? "paid_in_full" : "partial";
 
   return {
     kind,
@@ -52,7 +55,7 @@ export function classifyJobInvoicePayment(input: {
     jobTotal,
     // Full-payment accounting represents the approved job total. This also
     // includes an earlier deposit when the final Square invoice is only the
-    // remaining balance.
-    accountingAmount: kind === "paid_in_full" ? Math.max(invoiceAmount, jobTotal) : 0,
+    // remaining balance. Excess collection does not enlarge the job's grant.
+    accountingAmount: kind === "paid_in_full" ? jobTotal : 0,
   };
 }
