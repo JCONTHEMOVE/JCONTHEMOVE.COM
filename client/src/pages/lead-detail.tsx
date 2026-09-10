@@ -22,6 +22,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { JobOrderTicket } from "@/components/job-order-ticket";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { PaymentReconciliationPanel } from "@/components/PaymentReconciliationPanel";
+import { AdminJobPaymentShortcut } from "@/components/AdminJobPaymentShortcut";
 import { JobSetupWorkspace, type JobSetupSection } from "@/components/job-setup-workspace";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -1500,13 +1501,16 @@ export default function LeadDetailPage() {
               <ArrowLeft className="h-4 w-4" />
               Back
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button variant="outline" className="min-h-11">Actions <ChevronDown className="ml-2 h-4 w-4" /></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem className="min-h-11" onSelect={() => setShowCrewSuggestions(true)}>Crew suggestions</DropdownMenuItem>
-                {hasAdminAccess && <DropdownMenuItem className="min-h-11 text-red-400" onSelect={() => { setRemoveIntent("archive"); setShowArchiveDialog(true); }}>Archive job request</DropdownMenuItem>}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <div className="flex items-center gap-2">
+              {hasAdminAccess && <AdminJobPaymentShortcut key={lead.id} leadId={lead.id} />}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild><Button variant="outline" className="min-h-11">Actions <ChevronDown className="ml-2 h-4 w-4" /></Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem className="min-h-11" onSelect={() => setShowCrewSuggestions(true)}>Crew suggestions</DropdownMenuItem>
+                  {hasAdminAccess && <DropdownMenuItem className="min-h-11 text-red-400" onSelect={() => { setRemoveIntent("archive"); setShowArchiveDialog(true); }}>Archive job request</DropdownMenuItem>}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
 
           {lead.workerVisibility && lead.workerVisibility.locked.length > 0 && (
