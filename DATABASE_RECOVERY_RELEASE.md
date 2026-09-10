@@ -20,6 +20,8 @@ The inventory contains 201 public tables and 2,713 columns. Existing `leads`, `q
 
 The candidate's `quick_booking_sessions`, `job_confirmed_payments`, `job_confirmed_refunds`, `job_reward_queue`, `job_invoice_reconciliation_queue`, `job_financial_notifications` and `square_invoice_intents` are absent. Keep their release flags disabled pending migration and acceptance gates. This inventory establishes a current schema baseline only: it is not a same-recovery-point baseline, full migration compatibility check, successful backup or isolated restore.
 
+An offline compatibility check then created the collector's 16 referenced tables in an empty local PGlite database using the saved production column inventory and executed the actual collector SQL successfully, including its read-only transaction. All referenced tables are present and the queries resolve against those columns. The inventory lacks array element types, so arrays were represented as `text[]`; constraints, indexes, defaults and rows were not reproduced. This checks column compatibility only, not production query performance, data integrity or restoration. No additional production query was made for this check.
+
 1. Record the successful backup/recovery point, its time and the provider's retention window.
 2. Prove the restore target is isolated from both production and the existing development database. Record project, endpoint and database identity privately, without credentials. Obtain specific approval for the restore operation and any added recurring cost.
 3. Restore to that target without starting the application, enabling jobs or webhooks, or running migrations. Record start/end times and provider outcome.
