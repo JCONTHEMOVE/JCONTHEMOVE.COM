@@ -40,10 +40,10 @@ export async function recordJobAlertDelivery(input: {
   );
 }
 
-export async function hasJobAlertDelivery(eventId: string): Promise<boolean> {
+export async function hasJobAlertDelivery(eventId: string, recipientUserId: string): Promise<boolean> {
   const { rowCount } = await pool.query(
-    "SELECT 1 FROM job_alert_deliveries WHERE event_id = $1 LIMIT 1",
-    [eventId],
+    "SELECT 1 FROM job_alert_deliveries WHERE event_id = $1 AND recipient_user_id = $2 LIMIT 1",
+    [eventId,recipientUserId],
   );
   return (rowCount || 0) > 0;
 }

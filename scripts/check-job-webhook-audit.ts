@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { pool } from '../server/db';
-import { recordJobWebhookDelivery,hasSuccessfulJobWebhookDelivery } from '../server/services/jobAlertDelivery';
+import { recordJobWebhookDelivery,hasSuccessfulJobWebhookDelivery,hasJobAlertDelivery,recordJobAlertDelivery } from '../server/services/jobAlertDelivery';
 import { createDisposableLedgerDatabase } from './disposable-ledger-database';
 const database=await createDisposableLedgerDatabase(process.argv[2]);
 const priorQuery=pool.query;
@@ -22,4 +22,14 @@ try {
   await recordJobWebhookDelivery({...base,webhookUrlHash:'other-target',status:'failed',responseStatus:401});
   assert.equal(await hasSuccessfulJobWebhookDelivery('event','other-target'),false);
   console.log('PASS: actual webhook audit SQL preserves confirmed delivery across late failures while accumulating attempts and isolating targets');
+  await database.exec(`CREATE TABLE job_alert_deliveries(event_id text,lead_id text,recipient_user_id text,channel text,
+    status text,error_message text,metadata jsonb,attempts integer DEFAULT 1,updated_at timestamptz,
+    UNIQUE(event_id,recipient_user_id,channel))`);
+  await recordJobAlertDelivery({eventId:'personal-event',recipientUserId:'first',channel:'in_app',status:'sent'});
+  assert.equal(await hasJobAlertDelivery('personal-event','first'),true);
+  assert.equal(await hasJobAlertDelivery('personal-event','second'),false);
+  await recordJobAlertDelivery({eventId:'personal-event',recipientUserId:'third',channel:'push',status:'failed'});
+  assert.equal(await hasJobAlertDelivery('personal-event','second'),false,'a failed recipient cannot block an unattempted recipient');
+  assert.equal(await hasJobAlertDelivery('another-event','first'),false);
+  console.log('PASS: personal alert attempt lookup isolates recipients and events');
 } finally {pool.query=priorQuery;await database.close();}

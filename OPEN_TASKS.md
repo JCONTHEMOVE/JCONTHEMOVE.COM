@@ -4,6 +4,8 @@ Updated September 9, 2026. This register distinguishes checked code from live se
 
 ## Current release and service
 
+- Personal job-alert retry suppression is now scoped to event plus recipient in both normal job events and standalone quote opportunities. Previously any audit row skipped every personal recipient on replay; now an attempted recipient cannot suppress someone never attempted. Disposable SQL tests cover successful/failed prior recipients and separate events. The existing within-recipient no-repeat rule remains: channel-specific failure/uncertain-outcome recovery is still open, as are live delivery and VAPID/webhook configuration. No external notification was sent.
+
 - Fixed operational webhook audit regression: a late failed attempt can no longer overwrite an existing sent result, HTTP success code or successful metadata. Attempt counts still accumulate. An actual disposable-SQL test covers failure → success → late failure and separate target hashes; it is registered in PostgreSQL CI. This preserves future retry suppression but does not prevent two initially concurrent sends or prove live recipient receipt. Production remains unchanged.
 
 - Operational webhook sender behavior now has intercepted-HTTP coverage through its crew-announcement entry point: no configured target makes no request; 204 records success; 429/network errors retry; 5xx stops after three attempts; 401 stops after one; an existing successful audit suppresses sending. Audit arguments retain a target hash without the webhook URL. HTTP and audit storage are mocked, so this does not prove durable database concurrency, live job-route delivery or recipient receipt. Production webhook configuration remains missing and no external notification was sent.
