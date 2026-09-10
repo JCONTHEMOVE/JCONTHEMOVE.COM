@@ -61,6 +61,7 @@ jobs:
           node --import tsx scripts/check-financial-notice-worker.ts --postgres
           node --import tsx scripts/check-financial-notice-review.ts --postgres
           node --import tsx scripts/check-quote-approval.ts --postgres
+          node --import tsx scripts/check-job-webhook-audit.ts --postgres
           node --import tsx scripts/test-restore-evidence.ts --postgres
       - name: Monitoring tests without live delivery
         run: node --test scripts/__tests__/*.test.mjs
@@ -68,5 +69,5 @@ jobs:
         run: npm run build
       - name: Verify built PWA assets
         run: node scripts/check-built-public-assets.mjs
-      # This workflow uses no production secrets and never starts the server,
+      # This workflow uses no production secrets and never starts a production server,
       # changes production databases, sends alerts, or deploys the candidate.

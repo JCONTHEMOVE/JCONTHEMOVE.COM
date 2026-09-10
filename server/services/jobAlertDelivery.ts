@@ -51,8 +51,9 @@ export async function hasJobAlertDelivery(eventId: string): Promise<boolean> {
 export type JobWebhookDeliveryStatus = "sent" | "failed";
 
 /**
- * Webhooks are audited separately from per-user notifications. A target hash
- * makes retries idempotent without storing the Discord/Slack webhook secret.
+ * Webhooks aggregate attempts separately from per-user notifications. Preserve
+ * confirmed success even if another in-flight attempt later reports failure.
+ * A target hash avoids storing the Discord/Slack webhook secret.
  */
 export async function recordJobWebhookDelivery(input: {
   eventId: string;
@@ -73,11 +74,11 @@ export async function recordJobWebhookDelivery(input: {
      DO UPDATE SET
        lead_id = COALESCE(EXCLUDED.lead_id, job_webhook_deliveries.lead_id),
        provider = EXCLUDED.provider,
-       status = EXCLUDED.status,
-       response_status = EXCLUDED.response_status,
-       error_message = EXCLUDED.error_message,
+       status = CASE WHEN job_webhook_deliveries.status='sent' THEN 'sent' ELSE EXCLUDED.status END,
+       response_status = CASE WHEN job_webhook_deliveries.status='sent' THEN job_webhook_deliveries.response_status ELSE EXCLUDED.response_status END,
+       error_message = CASE WHEN job_webhook_deliveries.status='sent' THEN job_webhook_deliveries.error_message ELSE EXCLUDED.error_message END,
        attempts = job_webhook_deliveries.attempts + EXCLUDED.attempts,
-       metadata = EXCLUDED.metadata,
+       metadata = CASE WHEN job_webhook_deliveries.status='sent' THEN job_webhook_deliveries.metadata ELSE EXCLUDED.metadata END,
        updated_at = NOW()`,
     [
       input.eventId,

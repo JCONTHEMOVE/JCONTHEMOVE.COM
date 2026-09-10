@@ -4,6 +4,8 @@ Updated September 9, 2026. This register distinguishes checked code from live se
 
 ## Current release and service
 
+- Fixed operational webhook audit regression: a late failed attempt can no longer overwrite an existing sent result, HTTP success code or successful metadata. Attempt counts still accumulate. An actual disposable-SQL test covers failure → success → late failure and separate target hashes; it is registered in PostgreSQL CI. This preserves future retry suppression but does not prevent two initially concurrent sends or prove live recipient receipt. Production remains unchanged.
+
 - Operational webhook sender behavior now has intercepted-HTTP coverage through its crew-announcement entry point: no configured target makes no request; 204 records success; 429/network errors retry; 5xx stops after three attempts; 401 stops after one; an existing successful audit suppresses sending. Audit arguments retain a target hash without the webhook URL. HTTP and audit storage are mocked, so this does not prove durable database concurrency, live job-route delivery or recipient receipt. Production webhook configuration remains missing and no external notification was sent.
 
 - Historical pricing audit traced May scenario commit a47709b5 and June replacement f7a750fb: the latter explicitly replaces $150/30-mile truck rules with size-based $500/$1,000 fees and 50 included miles. Current source retains the later rule; the old values were not restored. The active chatbot's 400 lb and 800+ lb options displayed $300/$800 while its oversized calculation used $500/$1,000. Labels now match those existing calculations; no fee changed. Full historical scenario/rate-card alignment remains open.
