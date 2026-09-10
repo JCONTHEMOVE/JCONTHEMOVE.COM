@@ -7,7 +7,7 @@ import { squareInvoiceRequestKeys, persistSquareInvoiceOnce } from './squareInvo
 import { recordSquareInvoicePublication } from './squareInvoicePublication';
 import { assertCanonicalFinalInvoicePublication } from './canonicalInvoicePublication';
 import { cancelSquareInvoiceWithRecovery, recordSquareInvoiceCancellation } from './squareInvoiceCancellation';
-import { reserveSquareInvoiceIntent } from './squareInvoiceIntent';
+import { reserveSquareInvoiceIntent, recoverSquareInvoicePhase } from './squareInvoiceIntent';
 
 export type InvoiceDeliveryMethod = "email" | "sms" | "both" | "none";
 
@@ -221,59 +221,68 @@ export class SquareInvoiceService {
     const locationId = intentLocation || await this.getLocationId();
     const customerName = `${lead.firstName} ${lead.lastName}`;
     const requestKeys = squareInvoiceRequestKeys(options.idempotencyKey);
-    const customerId = await this.createOrGetCustomer(lead.email, customerName, lead.phone || undefined, requestKeys.customer);
+    const createCustomer = async () => ({ id:await this.createOrGetCustomer(lead.email, customerName, lead.phone || undefined, requestKeys.customer) });
+    const customer = canonicalFinal ? await recoverSquareInvoicePhase(options.idempotencyKey!,'customer',createCustomer) : await createCustomer();
+    const customerId = customer.id;
 
     const amountInCents = BigInt(Math.round(amount * 100));
 
-    const orderResponse = await client.orders.create({
-      idempotencyKey: requestKeys.order,
-      order: {
-        locationId,
-        customerId,
-        lineItems: [
-          {
-            name: description || `Moving Service - ${lead.serviceType}`,
-            quantity: "1",
-            basePriceMoney: {
-              amount: amountInCents,
-              currency: "USD",
+    const createOrder = async () => {
+      const orderResponse = await client.orders.create({
+        idempotencyKey: requestKeys.order,
+        order: {
+          locationId,
+          customerId,
+          lineItems: [
+            {
+              name: description || `Moving Service - ${lead.serviceType}`,
+              quantity: "1",
+              basePriceMoney: {
+                amount: amountInCents,
+                currency: "USD",
+              },
             },
-          },
-        ],
-      },
-    });
+          ],
+        },
+      });
 
-    const orderId = orderResponse.order!.id!;
+      return { id:orderResponse.order?.id! };
+    };
+    const order = canonicalFinal ? await recoverSquareInvoicePhase(options.idempotencyKey!,'order',createOrder) : await createOrder();
+    const orderId = order.id;
     const squareDelivery = primarySquareDeliveryMethod(deliveryMethod);
 
-    const invoiceResponse = await client.invoices.create({
-      idempotencyKey: requestKeys.invoice,
-      invoice: {
-        orderId,
-        locationId,
-        primaryRecipient: {
-          customerId,
-        },
-        paymentRequests: [
-          {
-            requestType: "BALANCE",
-            dueDate: invoiceDueDate,
+    const createInvoice = async () => {
+      const invoiceResponse = await client.invoices.create({
+        idempotencyKey: requestKeys.invoice,
+        invoice: {
+          orderId,
+          locationId,
+          primaryRecipient: {
+            customerId,
           },
-        ],
-        deliveryMethod: squareDelivery,
-        acceptedPaymentMethods: {
-          card: true,
-          bankAccount: true,
-          squareGiftCard: true,
-          buyNowPayLater: false,
-          cashAppPay: true,
+          paymentRequests: [
+            {
+              requestType: "BALANCE",
+              dueDate: invoiceDueDate,
+            },
+          ],
+          deliveryMethod: squareDelivery,
+          acceptedPaymentMethods: {
+            card: true,
+            bankAccount: true,
+            squareGiftCard: true,
+            buyNowPayLater: false,
+            cashAppPay: true,
+          },
+          title: `Invoice - JC ON THE MOVE`,
+          description: description || `Moving service for ${customerName}`,
         },
-        title: `Invoice - JC ON THE MOVE`,
-        description: description || `Moving service for ${customerName}`,
-      },
-    });
+      });
 
-    const squareInvoice = invoiceResponse.invoice!;
+      return { id:invoiceResponse.invoice?.id!,version:invoiceResponse.invoice?.version!,invoiceNumber:invoiceResponse.invoice?.invoiceNumber ?? undefined };
+    };
+    const squareInvoice = canonicalFinal ? await recoverSquareInvoicePhase(options.idempotencyKey!,'invoice',createInvoice) : await createInvoice();
 
     // Persist provider identity and financial bindings before making the invoice
     // collectible. A lost publish response must leave a recoverable draft row.
