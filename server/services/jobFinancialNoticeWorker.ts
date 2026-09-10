@@ -41,7 +41,7 @@ async function prepare(claim: FinancialNoticeClaim, channel: Channel, available:
       if (status === 'review') { await client.query('COMMIT'); return { status }; }
       await client.query(`UPDATE job_financial_notifications SET status=$2,lease_token=NULL,lease_expires_at=NULL,
         last_failure_code=$3,updated_at=NOW() WHERE event_key=$1`,
-        [row.event_key, status, status === 'review' ? 'financial_notice_requires_review' : 'financial_notice_outdated']);
+        [row.event_key, status, 'financial_notice_outdated']);
       await client.query('COMMIT');
       return { status };
     };
