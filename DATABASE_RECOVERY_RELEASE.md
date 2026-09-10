@@ -49,6 +49,16 @@ The collector covers the existing booking, quote, assignment, invoice, payout, r
 
 ## Collector validation
 
+### Local recovery tools and logical-backup alternative
+
+September 10 local inspection verified `pg_dump`, `pg_restore` and `psql` at `C:\Program Files\PostgreSQL\17\bin`, each reporting PostgreSQL 17.9. They are installed but absent from the current shell's PATH; invoke their absolute paths. No installation, database connection, export or restore was needed for this check. Confirm the source server major version before exporting: a 17.x dump client cannot dump a newer server major version.
+
+The proposed additional Neon recovery destination remains pending owner confirmation. If selected, use a fresh logical backup and identify the result as a logical export/restore drill; it will not establish recovery from Replit's scheduled backup or PITR. Do not reuse either existing unrelated Neon project as the destination without confirming its role and isolation.
+
+For a logical drill, hold a read-only repeatable-read source transaction, export its snapshot and pass that snapshot to `pg_dump --snapshot`. Collect the source comparison evidence from that same transaction, preserving it until the dump completes. PostgreSQL documents this synchronized-snapshot option in [pg_dump](https://www.postgresql.org/docs/17/app-pgdump.html). The current standalone collector opens its own transaction; running it separately without importing the exported snapshot is not a same-point baseline. Snapshot coordination must be implemented and verified before claiming that comparison. Sequence state is not frozen by MVCC snapshots and needs separate explanation if it advances during the export.
+
+Keep the dump archive, connection settings and aggregate evidence private outside Git. Bound connection and lock waits, record the archive hash and export/restore times, verify a newly provisioned target is empty and isolated, and restore with stop-on-error behavior. Do not use cleanup flags against an existing database or start application workers against the restored copy. Record any role, ownership, extension or permission adjustments rather than silently dropping incompatible objects. These preparations do not constitute a successful backup or restore.
+
 `scripts/test-restore-evidence.ts` executes the actual SQL against disposable PostgreSQL in release CI, or an in-memory PGlite instance locally. It derives column names/types from the application schema, seeds orphan and duplicate records plus invoice totals, checks the read-only transaction and row preservation, and verifies a missing column causes failure. Fixture constraints are deliberately omitted to admit corrupt records; this does not test a real backup, actual production constraints or data fidelity.
 
 Local invocation accepts the installed PGlite module path. CI invokes `node --import tsx scripts/test-restore-evidence.ts --postgres`; the shared harness only accepts the local `jc_ledger_test` database and creates/drops its own schema. Neither mode reads production `DATABASE_URL`.
