@@ -34,7 +34,7 @@ try {
       quote_revision_id varchar,closeout_id varchar,status text,purpose text,updated_at timestamptz);
     INSERT INTO leads VALUES('job',120,'completed',NULL);
     INSERT INTO quote_revisions VALUES('quote','job',1,'approved',NOW(),120,'USD');
-    INSERT INTO job_closeouts VALUES('closeout','job','approved',NOW(),'{"finalQuoteRevisionId":"quote"}');
+    INSERT INTO job_closeouts VALUES('closeout','job','approved',NOW(),'{"finalQuoteRevisionId":"quote","invoiceDueDate":"2026-09-24"}');
     INSERT INTO square_invoices VALUES('invoice','job','final-order',90,'USD','quote','closeout','sent','final_balance',NOW());
     ALTER TABLE square_invoices ADD COLUMN id varchar DEFAULT 'local';
     ALTER TABLE leads ADD COLUMN closeout_status text DEFAULT 'balance_due',ADD COLUMN financial_status text DEFAULT 'balance_due',
@@ -58,7 +58,7 @@ try {
     },
   };
   const reset = async () => {
-    await database.exec(`DELETE FROM job_financial_notifications; DELETE FROM job_confirmed_refunds; DELETE FROM job_confirmed_payments;
+    await database.exec(`DELETE FROM job_invoice_replacements; DELETE FROM job_financial_notifications; DELETE FROM job_confirmed_refunds; DELETE FROM job_confirmed_payments;
       DELETE FROM job_invoice_reconciliation_queue; UPDATE leads SET payment_paid_at=NULL,closeout_status='balance_due',
         financial_status='balance_due',final_balance_amount=90,final_invoice_url='https://example.invalid/invoice';
       UPDATE job_closeouts SET status='approved',balance_due=90;
@@ -150,6 +150,7 @@ try {
   assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry'); assert.equal(cancels,1);
   failFinalization=false;
   assert.equal(Number((await database.query('SELECT balance_due FROM job_closeouts')).rows[0].balance_due),90,'partial closeout update rolls back with lead failure');
+  assert.equal((await database.query('SELECT * FROM job_invoice_replacements')).rows.length,0,'replacement request rolls back with the balance');
   await database.exec("UPDATE job_invoice_reconciliation_queue SET next_attempt_at=NOW()-INTERVAL '1 minute'");
   const replacement=await processOneJobInvoiceReconciliation(api);
   assert.equal(replacement.status,'retry'); assert.equal('needsReplacement' in replacement && replacement.needsReplacement,true);
@@ -161,6 +162,19 @@ try {
   assert.equal((await database.query('SELECT status FROM job_invoice_reconciliation_queue')).rows[0].status,'retry');
   assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,0,'no replacement or paid message before a replacement exists');
   await assert.rejects(attachCanonicalFinalInvoice(attachment),/balance requires reconciliation/);
+  const reserved=(await database.query('SELECT * FROM job_invoice_replacements')).rows;
+  assert.equal(reserved.length,1);
+  assert.equal(reserved[0].request_payload.amountCents,6000);
+  assert.equal(reserved[0].request_payload.previousInvoiceId,'invoice');
+  assert.deepEqual(reserved[0].request_payload.predecessorInvoiceIds,['invoice']);
+  assert.equal(reserved[0].request_payload.dueDate,'2026-09-24');
+  await database.exec("UPDATE job_invoice_reconciliation_queue SET next_attempt_at=NOW()-INTERVAL '1 minute'");
+  assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry');
+  assert.deepEqual((await database.query('SELECT * FROM job_invoice_replacements')).rows,reserved,'replay preserves request identity and payload');
+  await pay('after-replacement-reservation',1);
+  assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry');
+  assert.deepEqual((await database.query('SELECT * FROM job_invoice_replacements')).rows,reserved,'changed funding cannot allocate a second replacement for the same predecessors');
+  assert.equal(Number((await database.query('SELECT balance_due FROM job_closeouts')).rows[0].balance_due),60,'conflicting replacement leaves balance transaction unchanged');
   console.log('PASS: canceled partial invoice preserves its audit binding, corrects the remainder atomically and retains replacement work');
   await reset(); inspectHook=async () => { await pay('during-inspection',9000); };
   assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry'); assert.equal(cancels,0);

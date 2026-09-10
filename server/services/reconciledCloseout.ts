@@ -1,5 +1,6 @@
 import { pool } from '../db';
 import { JOB_PAYMENT_TOTALS_SQL } from './jobPaymentLedger';
+import { reserveCanonicalReplacement, type CanonicalReplacementRequest } from './canonicalInvoiceReplacement';
 import { enqueueJobReward } from './jobRewardQueue';
 import { queuePaidCloseoutNotice, queueFinalInvoiceNotice } from './jobFinancialNotifications';
 import { finishJobInvoiceReconciliation, invoiceReconciliationWorkerEnabled, type InvoiceReconciliationClaim } from './jobInvoiceReconciliationQueue';
@@ -46,6 +47,7 @@ export async function finishReconciledCloseout(claim: InvoiceReconciliationClaim
     if (!Number.isSafeInteger(paid) || paid < 0 || paid > total || Number(sums.refund_count)!==0) throw new Error('Payment coverage requires review');
     let closed = false;
     let needsReplacement = false;
+    let replacementRequest: CanonicalReplacementRequest | undefined;
     if (paid < total && closeout
         && (input.invoices.length > 0 || closeout.customer_approved_at || ['approved','balance_due'].includes(closeout.status))
         && input.invoices.every(invoice=>['PAID','CANCELED','FAILED'].includes(invoice.status))) {
@@ -61,6 +63,11 @@ export async function finishReconciledCloseout(claim: InvoiceReconciliationClaim
       // customer retry can resume its existing provider request identity.
       await client.query("UPDATE job_closeouts SET status=$3,balance_due=$2,updated_at=NOW() WHERE id=$1",
         [closeout.id,balance,input.invoices.length ? 'balance_due' : closeout.status]);
+      if (input.invoices.length) replacementRequest=await reserveCanonicalReplacement(client,{
+        leadId:claim.lead_id,closeoutId:closeout.id,quoteId:quote.id,totalCents:total,paidCents:paid,
+        dueDate:closeout.pricing_snapshot?.invoiceDueDate,previousInvoiceId:closeout.square_invoice_id || null,
+        invoices:input.invoices,
+      });
       await client.query(`UPDATE leads SET closeout_status='balance_due',financial_status='balance_due',
         final_balance_amount=$2,final_invoice_url=NULL WHERE id=$1`,[claim.lead_id,balance]);
       needsReplacement = true;
@@ -81,7 +88,7 @@ export async function finishReconciledCloseout(claim: InvoiceReconciliationClaim
     }
     if (!await finishJobInvoiceReconciliation(claim,!needsReplacement,client)) throw new Error('Reconciliation completion lost its claim');
     await client.query('COMMIT');
-    return { closed, needsReplacement };
+    return { closed, needsReplacement, replacementRequest };
   } catch(error) { await client.query('ROLLBACK').catch(()=>undefined); throw error; }
   finally { client.release(); }
 }
