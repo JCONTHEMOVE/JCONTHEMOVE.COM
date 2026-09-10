@@ -1,5 +1,15 @@
 # Replit production recovery gate
 
+## Completed Railway-only database cutover — September 10
+
+The owner explicitly approved the temporary Railway outage. Replit was confirmed paused, Railway's old deployment was removed, and a fresh read-only source snapshot was exported at **2026-09-10 16:05:31.054 UTC**. The final copy contains **202 tables, 47,690 rows, 520 public constraints, 534 public indexes and 63 sequences**. Every table count/content digest and sequence value matched, and a fresh source comparison confirmed no intervening changes. Final archive SHA-256: `4a170e761097652e5b455a91313c076e180a8a1b647580688fb9762d26f20fb0`.
+
+An idle connection terminated the initial combined restore/check process. Its target comparison failed, so the target was not promoted. A standalone, single-transaction restore of the preserved final archive committed successfully; independent verification passed at 16:20:42 UTC. Real pooled application storage reads also passed without writes. Private evidence remains outside Git.
+
+Railway deployment `2a0cd086-195c-4109-842d-6f7675d8b761` is Active on the new Neon database. Runtime logs identify the expected pooled target host and database `jconthemove`. Public `/api/health` returned 200, database connected and boot ready at **16:27:20 UTC**. The application commit remains `25b985e4a8369bed94144421a8e2908fa15abd97`; PR #10 has not been promoted. The live booking page loads with Matt referral attribution. Local `.env` now uses the new target; its original is saved privately.
+
+Keep Replit paused and retain the original database and both backup archives. Never run the old target-refresh scripts against this now-live database. Returning to the old source after new writes requires reconciliation. Free six-hour history remains the chosen target protection. This completes the database cutover, not the separate feature release, provider/payment tests or authenticated owner acceptance. Earlier pending-cutover notes below are historical.
+
 ## Approved Neon migration copy — September 10
 
 The owner approved an isolated test database followed by transfer from the old database to the new one. Created `JCONTHEMOVE recovery migration` (project `fragrant-art-08929708`) in the owner's console-managed organization, AWS us-west-2, PostgreSQL 16, matching the source major version and region. The default `migration` branch contains database `jconthemove`. This is the only additional database created for this work; existing unrelated Neon projects were unchanged.
