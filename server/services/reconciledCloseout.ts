@@ -1,6 +1,6 @@
 import { pool } from '../db';
 import { JOB_PAYMENT_TOTALS_SQL } from './jobPaymentLedger';
-import { reserveCanonicalReplacement, type CanonicalReplacementRequest } from './canonicalInvoiceReplacement';
+import { authorizeReplacementAttachment, reserveCanonicalReplacement, type CanonicalReplacementRequest } from './canonicalInvoiceReplacement';
 import { enqueueJobReward } from './jobRewardQueue';
 import { queuePaidCloseoutNotice, queueFinalInvoiceNotice } from './jobFinancialNotifications';
 import { finishJobInvoiceReconciliation, invoiceReconciliationWorkerEnabled, type InvoiceReconciliationClaim } from './jobInvoiceReconciliationQueue';
@@ -97,6 +97,7 @@ export async function finishReconciledCloseout(claim: InvoiceReconciliationClaim
  * Never attach its stale balance over the worker's paid result. */
 export async function attachCanonicalFinalInvoice(input: {
   leadId: string; closeoutId: string; quoteId: string; invoiceId: string; invoiceUrl: string; balanceDue: number;
+  replacementRequestKey?: string;
 }) {
   if (process.env.JOB_PAYMENT_LEDGER_ENABLED!=='true') throw new Error('Canonical payment ledger is disabled');
   const client=await pool.connect();
@@ -114,8 +115,13 @@ export async function attachCanonicalFinalInvoice(input: {
         || quote?.id!==input.quoteId || quote.currency!=='USD'
         || !Number.isSafeInteger(Math.round(Number(quote.customer_total)*100)) || Number(quote.customer_total)<=0
         || Math.round(Number(closeout.calculated_final_total)*100)!==Math.round(Number(quote.customer_total)*100)
-        || Math.round(Number(quote.customer_total)*100)!==Math.round(Number(job.total_price)*100)
-        || (closeout.square_invoice_id && closeout.square_invoice_id!==input.invoiceId)) throw new Error('Final invoice attachment requires reconciliation');
+        || Math.round(Number(quote.customer_total)*100)!==Math.round(Number(job.total_price)*100)) throw new Error('Final invoice attachment requires reconciliation');
+    if (input.replacementRequestKey) await authorizeReplacementAttachment(client,{
+      requestKey:input.replacementRequestKey,leadId:input.leadId,closeoutId:input.closeoutId,quoteId:input.quoteId,
+      invoiceId:input.invoiceId,orderId:invoice.square_order_id,amountCents:Math.round(input.balanceDue*100),
+      currentInvoiceId:closeout.square_invoice_id || null,
+    });
+    else if (closeout.square_invoice_id && closeout.square_invoice_id!==input.invoiceId) throw new Error('Final invoice attachment requires reconciliation');
     if (closeout.status==='paid') {
       const sums=(await client.query(JOB_PAYMENT_TOTALS_SQL,[input.leadId])).rows[0];
       if (Number(sums.paid)!==Math.round(Number(job.total_price)*100) || Number(sums.refund_count)!==0) throw new Error('Paid closeout requires reconciliation');
@@ -142,6 +148,8 @@ export async function attachCanonicalFinalInvoice(input: {
     await client.query("UPDATE leads SET closeout_status='balance_due',financial_status='balance_due',final_invoice_url=$2,final_balance_amount=$3 WHERE id=$1",
       [input.leadId,input.invoiceUrl,input.balanceDue]);
     await queueFinalInvoiceNotice(client,{...input,amountCents:Math.round(input.balanceDue*100)});
+    if (input.replacementRequestKey) await client.query(`UPDATE job_invoice_replacements
+      SET attached_invoice_id=$2,attached_at=COALESCE(attached_at,NOW()) WHERE request_key=$1`,[input.replacementRequestKey,input.invoiceId]);
     await client.query('COMMIT');
     return { status:'balance_due' as const };
   } catch(error) { await client.query('ROLLBACK').catch(()=>undefined); throw error; }

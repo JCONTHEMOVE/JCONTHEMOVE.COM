@@ -61,7 +61,7 @@ try {
     await database.exec(`DELETE FROM job_invoice_replacements; DELETE FROM job_financial_notifications; DELETE FROM job_confirmed_refunds; DELETE FROM job_confirmed_payments;
       DELETE FROM job_invoice_reconciliation_queue; UPDATE leads SET payment_paid_at=NULL,closeout_status='balance_due',
         financial_status='balance_due',final_balance_amount=90,final_invoice_url='https://example.invalid/invoice';
-      UPDATE job_closeouts SET status='approved',balance_due=90;
+      UPDATE job_closeouts SET status='approved',balance_due=90,square_invoice_id='invoice';
       DELETE FROM square_invoices WHERE square_invoice_id<>'invoice'; UPDATE square_invoices SET status='sent';`);
     status='UNPAID'; cancels=0; inspectHook=undefined; cancelHook=undefined;
     await pay('deposit',3000);
@@ -175,6 +175,35 @@ try {
   assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry');
   assert.deepEqual((await database.query('SELECT * FROM job_invoice_replacements')).rows,reserved,'changed funding cannot allocate a second replacement for the same predecessors');
   assert.equal(Number((await database.query('SELECT balance_due FROM job_closeouts')).rows[0].balance_due),60,'conflicting replacement leaves balance transaction unchanged');
+  await database.exec("DELETE FROM job_confirmed_payments WHERE provider_payment_id='after-replacement-reservation'");
+  await database.exec(`INSERT INTO square_invoices(square_invoice_id,lead_id,square_order_id,amount,currency,
+    quote_revision_id,closeout_id,status,purpose) VALUES('replacement-invoice','job','replacement-order',60,'USD','quote','closeout','sent','final_balance')`);
+  const replacementAttachment={...attachment,invoiceId:'replacement-invoice',balanceDue:60,invoiceUrl:'https://example.invalid/replacement'};
+  await assert.rejects(attachCanonicalFinalInvoice(replacementAttachment),/attachment requires reconciliation/);
+  const authorizedAttachment={...replacementAttachment,replacementRequestKey:reserved[0].request_key};
+  await assert.rejects(attachCanonicalFinalInvoice(authorizedAttachment),/identity requires reconciliation/);
+  await database.query(`INSERT INTO square_invoice_intents(request_key,lead_id,request_payload) VALUES($1,'job',$2::jsonb)`,
+    [reserved[0].request_key,JSON.stringify({quoteRevisionId:'quote',closeoutId:'closeout',amountCents:6000,dueDate:'2026-09-24'})]);
+  await assert.rejects(attachCanonicalFinalInvoice(authorizedAttachment),/provider phases require reconciliation/);
+  await database.query(`INSERT INTO square_invoice_intent_phases(request_key,phase,result) VALUES
+    ($1,'order','{"id":"replacement-order"}'),($1,'invoice','{"id":"replacement-invoice","version":0}')`,[reserved[0].request_key]);
+  await database.exec("UPDATE square_invoices SET status='sent' WHERE square_invoice_id='invoice'");
+  await assert.rejects(attachCanonicalFinalInvoice(authorizedAttachment),/predecessor invoices require reconciliation/);
+  await database.exec("UPDATE square_invoices SET status='canceled' WHERE square_invoice_id='invoice'");
+  failNotification=true;
+  await assert.rejects(attachCanonicalFinalInvoice(authorizedAttachment),/notification persistence failure/);
+  failNotification=false;
+  assert.equal((await database.query('SELECT square_invoice_id FROM job_closeouts')).rows[0].square_invoice_id,'invoice');
+  assert.equal((await database.query('SELECT attached_invoice_id FROM job_invoice_replacements')).rows[0].attached_invoice_id,null);
+  assert.equal((await attachCanonicalFinalInvoice(authorizedAttachment)).status,'balance_due');
+  assert.equal((await database.query('SELECT square_invoice_id FROM job_closeouts')).rows[0].square_invoice_id,'replacement-invoice');
+  assert.equal((await database.query("SELECT status FROM square_invoices WHERE square_invoice_id='invoice'")).rows[0].status,'canceled');
+  const attachedAudit=(await database.query('SELECT attached_invoice_id,attached_at FROM job_invoice_replacements')).rows[0];
+  assert.equal(attachedAudit.attached_invoice_id,'replacement-invoice');assert.ok(attachedAudit.attached_at);
+  assert.equal((await attachCanonicalFinalInvoice(authorizedAttachment)).status,'balance_due');
+  assert.deepEqual((await database.query('SELECT attached_invoice_id,attached_at FROM job_invoice_replacements')).rows[0],attachedAudit);
+  assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,1);
+  console.log('PASS: replacement attachment requires saved provider phases and closed predecessors; link, notice and attachment audit commit together and replay once');
   console.log('PASS: canceled partial invoice preserves its audit binding, corrects the remainder atomically and retains replacement work');
   await reset(); inspectHook=async () => { await pay('during-inspection',9000); };
   assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry'); assert.equal(cancels,0);
