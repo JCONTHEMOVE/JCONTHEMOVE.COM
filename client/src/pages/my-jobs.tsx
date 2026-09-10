@@ -233,7 +233,7 @@ function getStatus(status: string): StatusInfo {
         banner: {
           bg: "bg-green-500/10", border: "border-green-500/20", iconColor: "text-green-400",
           headline: "Job Complete!",
-          body: "Your job is finished. Tokens will be credited to your wallet shortly. Thank you for choosing JC on the Move!",
+          body: "Your job is finished. Review your final payment status below. Eligible rewards are processed after payment and completion are verified.",
         },
       };
     case "paid":
