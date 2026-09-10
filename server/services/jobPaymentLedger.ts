@@ -3,6 +3,7 @@ import type { PoolClient } from "@neondatabase/serverless";
 import { JOB_REWARD_QUEUE_SCHEMA, enqueueJobReward } from "./jobRewardQueue";
 import { JOB_INVOICE_RECONCILIATION_QUEUE_SCHEMA, enqueueJobInvoiceReconciliation } from './jobInvoiceReconciliationQueue';
 import { JOB_FINANCIAL_NOTIFICATIONS_SCHEMA } from './jobFinancialNotifications';
+import { SQUARE_INVOICE_INTENT_SCHEMA } from './squareInvoiceIntent';
 import { validateConfirmedJobPayment, reconcileJobPaymentTotals, type ConfirmedJobPayment } from "./jobPaymentLedgerPolicy";
 
 // Additive and deliberately not registered in boot or provider routes yet.
@@ -44,6 +45,7 @@ export const JOB_PAYMENT_LEDGER_SCHEMA = `
   ${JOB_REWARD_QUEUE_SCHEMA}
   ${JOB_INVOICE_RECONCILIATION_QUEUE_SCHEMA}
   ${JOB_FINANCIAL_NOTIFICATIONS_SCHEMA}
+  ${SQUARE_INVOICE_INTENT_SCHEMA}
 `;
 
 export const JOB_PAYMENT_TOTALS_SQL = `

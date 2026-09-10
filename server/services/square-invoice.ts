@@ -7,6 +7,7 @@ import { squareInvoiceRequestKeys, persistSquareInvoiceOnce } from './squareInvo
 import { recordSquareInvoicePublication } from './squareInvoicePublication';
 import { assertCanonicalFinalInvoicePublication } from './canonicalInvoicePublication';
 import { cancelSquareInvoiceWithRecovery, recordSquareInvoiceCancellation } from './squareInvoiceCancellation';
+import { reserveSquareInvoiceIntent } from './squareInvoiceIntent';
 
 export type InvoiceDeliveryMethod = "email" | "sms" | "both" | "none";
 
@@ -199,14 +200,30 @@ export class SquareInvoiceService {
     deliveryMethod: InvoiceDeliveryMethod = "email",
     options: LeadInvoiceOptions = {},
   ): Promise<{ invoiceId: string; invoiceUrl: string; squareInvoiceId: string }> {
+    const canonicalFinal = process.env.JOB_PAYMENT_LEDGER_ENABLED === 'true' && options.purpose === 'final_balance';
+    lead = { ...lead };
+    options = { ...options };
+    let intentLocation: string | undefined;
+    const invoiceDueDate = dueDate || this.getDefaultDueDate();
+    if (canonicalFinal) {
+      const configuredLocation=(this.dependencies.getLocationId || getSquareLocationId)();
+      if (!options.idempotencyKey || !options.quoteRevisionId || !options.closeoutId || !dueDate || !configuredLocation
+        || !Number.isSafeInteger(Math.round(amount*100)) || amount<=0 || amount!==Math.round(amount*100)/100) throw new Error('Canonical invoice intent requires stable financial inputs');
+      intentLocation=configuredLocation;
+      await reserveSquareInvoiceIntent(options.idempotencyKey,lead.id,{
+        version:1,environment:getSquareEnvironment(),locationId:configuredLocation,
+        quoteRevisionId:options.quoteRevisionId,closeoutId:options.closeoutId,amountCents:Math.round(amount*100),
+        dueDate:invoiceDueDate,deliveryMethod,firstName:lead.firstName || '',lastName:lead.lastName || '',
+        email:lead.email || null,phone:lead.phone || null,serviceType:lead.serviceType || null,description:description || null,
+      });
+    }
     const client = await (this.dependencies.getClient || getSquareClient)();
-    const locationId = await this.getLocationId();
+    const locationId = intentLocation || await this.getLocationId();
     const customerName = `${lead.firstName} ${lead.lastName}`;
     const requestKeys = squareInvoiceRequestKeys(options.idempotencyKey);
     const customerId = await this.createOrGetCustomer(lead.email, customerName, lead.phone || undefined, requestKeys.customer);
 
     const amountInCents = BigInt(Math.round(amount * 100));
-    const invoiceDueDate = dueDate || this.getDefaultDueDate();
 
     const orderResponse = await client.orders.create({
       idempotencyKey: requestKeys.order,
