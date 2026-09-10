@@ -4,7 +4,8 @@ export type JobAlertChannel = "in_app" | "push" | "email" | "sms" | "webhook";
 export type JobAlertStatus = "sent" | "failed" | "skipped";
 
 /**
- * A durable, append-only audit of operational alert delivery.  This is kept
+ * A durable, per-channel audit of operational alert delivery. Preserve confirmed
+ * success across later failed or skipped attempts. This is kept
  * separate from the in-app notification itself so a missing push subscription
  * or a provider outage is visible rather than looking like a sent alert.
  */
@@ -23,9 +24,9 @@ export async function recordJobAlertDelivery(input: {
      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
      ON CONFLICT (event_id, recipient_user_id, channel)
      DO UPDATE SET
-       status = EXCLUDED.status,
-       error_message = EXCLUDED.error_message,
-       metadata = EXCLUDED.metadata,
+       status = CASE WHEN job_alert_deliveries.status='sent' THEN 'sent' ELSE EXCLUDED.status END,
+       error_message = CASE WHEN job_alert_deliveries.status='sent' THEN job_alert_deliveries.error_message ELSE EXCLUDED.error_message END,
+       metadata = CASE WHEN job_alert_deliveries.status='sent' THEN job_alert_deliveries.metadata ELSE EXCLUDED.metadata END,
        attempts = job_alert_deliveries.attempts + 1,
        updated_at = NOW()`,
     [

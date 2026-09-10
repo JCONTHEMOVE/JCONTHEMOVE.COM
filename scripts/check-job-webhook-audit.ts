@@ -32,4 +32,15 @@ try {
   assert.equal(await hasJobAlertDelivery('personal-event','second'),false,'a failed recipient cannot block an unattempted recipient');
   assert.equal(await hasJobAlertDelivery('another-event','first'),false);
   console.log('PASS: personal alert attempt lookup isolates recipients and events');
+  const personal={eventId:'personal-event',recipientUserId:'third',channel:'push' as const};
+  await recordJobAlertDelivery({...personal,status:'sent',metadata:{receipt:'confirmed'}});
+  await recordJobAlertDelivery({...personal,status:'failed',errorMessage:'Late failure',metadata:{receipt:'failed'}});
+  await recordJobAlertDelivery({...personal,status:'skipped',errorMessage:'Subscription removed',metadata:{receipt:'skipped'}});
+  const personalRow=(await database.query("SELECT * FROM job_alert_deliveries WHERE recipient_user_id='third' AND channel='push'")).rows[0];
+  assert.equal(personalRow.status,'sent');assert.equal(personalRow.error_message,null);
+  assert.deepEqual(personalRow.metadata,{receipt:'confirmed'});assert.equal(personalRow.attempts,4);
+  await recordJobAlertDelivery({...personal,channel:'email',status:'failed',errorMessage:'Email unavailable'});
+  const emailRow=(await database.query("SELECT * FROM job_alert_deliveries WHERE recipient_user_id='third' AND channel='email'")).rows[0];
+  assert.equal(emailRow.status,'failed');assert.equal(emailRow.error_message,'Email unavailable');assert.equal(emailRow.attempts,1);
+  console.log('PASS: personal alert audit preserves successful channel evidence after late failure/skip, accumulates attempts and isolates channels');
 } finally {pool.query=priorQuery;await database.close();}
