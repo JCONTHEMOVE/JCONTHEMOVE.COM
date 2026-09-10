@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import express from 'express';
 import { pool } from '../server/db';
 import { JOB_PAYMENT_LEDGER_SCHEMA } from '../server/services/jobPaymentLedger';
 import { processCanonicalSquareWebhook } from '../server/services/canonicalSquareWebhook';
 import { createDisposableLedgerDatabase } from './disposable-ledger-database';
+import { createSquareWebhookHandler } from '../server/squareWebhook';
 
 // Real adapter, SDK decoding and SQL; every provider request is intercepted.
 const database = await createDisposableLedgerDatabase(process.argv[2]);
@@ -11,10 +14,15 @@ const settings = {
   JOB_PAYMENT_LEDGER_ENABLED: 'true', SQUARE_JOB_PAYMENT_LEDGER_ENABLED: 'true',
   SQUARE_ENVIRONMENT: 'production', SQUARE_PRODUCTION_ACCESS_TOKEN: 'synthetic-adapter-token',
   SQUARE_PRODUCTION_LOCATION_ID: 'location', NODE_ENV: 'production',
+  SQUARE_WEBHOOK_SIGNATURE_KEY: 'synthetic-signature-key', SQUARE_WEBHOOK_URL: 'https://example.invalid/api/webhooks/square',
 };
 const previous = new Map(Object.keys(settings).map(key => [key, process.env[key]]));
 Object.assign(process.env, settings);
-pool.query = ((sql: string, args?: unknown[]) => database.query(sql, args)) as typeof pool.query;
+pool.query = ((sql: string, args?: unknown[]) => {
+  // Unrelated startup schema installation is excluded; event claims use real SQL below.
+  if (sql.includes('CREATE TABLE IF NOT EXISTS quote_revisions') || sql.includes('service_area_capabilities')) return Promise.resolve({ rows: [] });
+  return database.query(sql, args);
+}) as typeof pool.query;
 pool.connect = (async () => ({ query: pool.query, release() {} })) as typeof pool.connect;
 let location = 'location', order = 'order', amount = 3000;
 let refundAmount = 1000;
@@ -90,6 +98,58 @@ try {
   await assert.rejects(processCanonicalSquareWebhook('refund.updated', 'refund'), /conflict/i);
   assert.deepEqual(await state(), refunded);
   console.log('PASS: actual Square SDK routing to SQL payment/refund records, replay, conflict rollback and reconciliation queue');
+  await database.exec(`CREATE TABLE square_webhook_events(event_id text PRIMARY KEY,event_type text NOT NULL,
+    square_object_id text,payload_hash text NOT NULL,status text NOT NULL,claim_token uuid,
+    received_at timestamptz NOT NULL DEFAULT NOW(),processed_at timestamptz,last_error text);`);
+  await database.exec('DELETE FROM job_confirmed_refunds; DELETE FROM job_confirmed_payments; DELETE FROM job_invoice_reconciliation_queue;');
+  const unexpectedEffect = async (): Promise<never> => { throw new Error('Unexpected legacy effect'); };
+  const app = express();
+  app.post('/api/webhooks/square', express.raw({ type: 'application/json' }), createSquareWebhookHandler({
+    writeLeadHistory: unexpectedEffect, sendCompletedJobReviewRequest: unexpectedEffect,
+    recordRevenueSplit: unexpectedEffect, creditJcMovesUsd: unexpectedEffect,
+    creditJcMovesUsdFromPrepaid: unexpectedEffect, awardPrepaidCreditBonusTokens: unexpectedEffect,
+  }));
+  const listener = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => listener.once('listening', resolve));
+  const address = listener.address();
+  if (!address || typeof address === 'string') throw new Error('Missing test listener');
+  const send = (body: string, signature?: string) => originalFetch(`http://127.0.0.1:${address.port}/api/webhooks/square`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json',
+      'x-square-hmacsha256-signature': signature ?? crypto.createHmac('sha256', settings.SQUARE_WEBHOOK_SIGNATURE_KEY)
+        .update(settings.SQUARE_WEBHOOK_URL + body).digest('base64') }, body,
+  });
+  // Spoofed event status/amount/order cannot replace provider retrieval and stored bindings.
+  const event = JSON.stringify({ event_id: 'signed-event', type: 'payment.updated',
+    data: { object: { payment: { id: 'payment', status: 'PENDING', order_id: 'spoofed', amount_money: { amount: 999999 } } } } });
+  try {
+    const before = requests.length;
+    assert.equal((await send(event, 'invalid')).status, 401);
+    assert.equal(requests.length, before);
+    assert.equal((await database.query('SELECT * FROM square_webhook_events')).rows.length, 0);
+    assert.equal((await send(event)).status, 200);
+    assert.equal(requests.length, before + 2, 'signed event must retrieve routing and verified payment records');
+    const signedPayment = await state();
+    assert.equal(signedPayment.payments.length, 1);
+    assert.equal(Number(signedPayment.payments[0].amount_cents), 3000, 'provider amount wins over webhook amount');
+    assert.equal(signedPayment.queue[0].generation, '1');
+    assert.equal(signedPayment.lead.payment_paid_at, null);
+    const duplicate = await send(event);
+    assert.equal(duplicate.status, 200); assert.equal((await duplicate.json()).duplicate, true);
+    assert.equal(requests.length, before + 2);
+    assert.equal((await send(event.replace('999999', '999998'))).status, 500);
+    assert.equal((await database.query("SELECT status FROM square_webhook_events WHERE event_id='signed-event'")).rows[0].status, 'processed');
+    const retryEvent = event.replace('signed-event', 'retry-event');
+    order = 'unknown';
+    assert.equal((await send(retryEvent)).status, 500);
+    assert.equal((await database.query("SELECT status FROM square_webhook_events WHERE event_id='retry-event'")).rows[0].status, 'failed');
+    order = 'order';
+    assert.equal((await send(retryEvent)).status, 200);
+    assert.equal((await database.query("SELECT status FROM square_webhook_events WHERE event_id='retry-event'")).rows[0].status, 'processed');
+    assert.deepEqual(await state(), signedPayment);
+    console.log('PASS: production signed HTTP handler rejects invalid signatures, verifies provider data, deduplicates and reclaims failed events');
+  } finally {
+    await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
+  }
 } finally {
   pool.query = originalQuery; pool.connect = originalConnect; globalThis.fetch = originalFetch;
   for (const [key, value] of previous) {
