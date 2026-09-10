@@ -12,6 +12,7 @@ type Closeout = {
   id: string;
   lead_id: string;
   status: string;
+  canRetryInvoice?: boolean;
   first_name: string;
   last_name: string;
   service_type: string;
@@ -53,7 +54,10 @@ export default function JobCloseoutPage() {
       setResult(data);
       toast({ title: data.invoiceUrl ? "Final amount approved" : "Job financially complete" });
     },
-    onError: (error: Error) => toast({ title: "Could not approve", description: error.message, variant: "destructive" }),
+    onError: (error: Error) => {
+      void query.refetch();
+      toast({ title: "Could not finish the invoice request", description: error.message, variant: "destructive" });
+    },
   });
   const reject = useMutation({
     mutationFn: async () => {
@@ -89,6 +93,10 @@ export default function JobCloseoutPage() {
           </div>
           {closeout.change_orders?.length > 0 && <div><h2 className="font-bold">Approved changes</h2><div className="mt-2 space-y-2">{closeout.change_orders.map((change) => <div key={change.id} className="flex justify-between rounded-lg border border-slate-700 p-3 text-sm"><span>{change.description} × {Number(change.quantity)}</span><strong>{money(change.total)}</strong></div>)}</div></div>}
           {closeout.proof_photos?.length > 0 && <div><h2 className="font-bold">Completion proof</h2><div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">{closeout.proof_photos.map((photo, index) => <a key={`${photo.url}-${index}`} href={photo.url} target="_blank" rel="noreferrer"><img src={photo.url} alt={photo.description || `${photo.type} proof`} className="h-28 w-full rounded-lg object-cover" /></a>)}</div></div>}
+          {closeout.status === 'approved' && closeout.canRetryInvoice === true && <div className="space-y-3">
+            <p className="text-sm text-slate-300">Your approval is saved. Retry to finish preparing your final invoice.</p>
+            <Button className="min-h-11 h-auto w-full whitespace-normal bg-emerald-600 py-3" disabled={approve.isPending || query.isFetching} onClick={() => approve.mutate()}>{approve.isPending ? 'Preparing final invoice…' : 'Retry final invoice'}</Button>
+          </div>}
           {closeout.status === "awaiting_customer" ? <><Button className="w-full bg-emerald-600 hover:bg-emerald-500" disabled={approve.isPending} onClick={() => approve.mutate()}>{approve.isPending ? "Creating final invoice…" : `Approve ${money(closeout.calculated_final_total)} final total`}</Button><div className="rounded-xl border border-slate-700 p-4"><p className="text-sm font-semibold">Something needs correction?</p><Textarea className="mt-2" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Explain the hours, item, damage, or charge that needs review" /><Button variant="outline" className="mt-3" disabled={!note.trim() || reject.isPending} onClick={() => reject.mutate()}>Send to owner review</Button></div></> : <p className="rounded-lg bg-amber-500/10 p-4 text-amber-100">This closeout is currently {closeout.status.replace(/_/g, " ")}.</p>}
         </CardContent>
       </Card>

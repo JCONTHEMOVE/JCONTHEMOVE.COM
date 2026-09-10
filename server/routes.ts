@@ -10312,12 +10312,13 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       const closeoutRows = leadIds.length
         ? await pool.query(
             `SELECT id, lead_id, status, actual_hours, calculated_final_total,
-                    deposit_applied, balance_due, square_invoice_id, updated_at
+                    deposit_applied, balance_due, square_invoice_id, customer_approved_at, updated_at
                FROM job_closeouts WHERE lead_id = ANY($1::varchar[])`,
             [leadIds],
           ).then((result) => result.rows).catch(() => [])
         : [];
-      const closeoutByLead = new Map(closeoutRows.map((row) => [row.lead_id, row]));
+      const { canRetryCloseoutInvoice } = await import('./services/closeoutRecoveryAvailability');
+      const closeoutByLead = new Map(closeoutRows.map((row) => [row.lead_id, { ...row, canRetryInvoice:canRetryCloseoutInvoice(row) }]));
       const crewIds = Array.from(new Set(customerLeads.flatMap((lead) => Array.isArray(lead.crewMembers) ? lead.crewMembers : [])));
       const crewRows = crewIds.length
         ? await pool.query<{ id: string; first_name: string | null; last_name: string | null }>(

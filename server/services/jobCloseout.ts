@@ -7,6 +7,7 @@ import { getActivePricingSnapshot, getPricingSnapshotByCode } from "./pricingVer
 import { emitCustomerLifecycleEvent } from "./customerLifecycle";
 import { storage } from "../storage";
 import { squareInvoiceService } from "./square-invoice";
+import { canRetryCloseoutInvoice } from './closeoutRecoveryAvailability';
 
 type CloseoutLead = {
   id: string;
@@ -219,7 +220,7 @@ async function loadCloseoutByToken(token: string) {
        FROM job_change_orders WHERE closeout_id=$1 ORDER BY created_at`,
     [rows[0].id],
   );
-  return { ...rows[0], change_orders: changes.rows };
+  return { ...rows[0], canRetryInvoice:canRetryCloseoutInvoice(rows[0]), change_orders: changes.rows };
 }
 
 export async function getCustomerCloseout(token: string) {

@@ -4,6 +4,8 @@ Updated September 9, 2026. This register distinguishes checked code from live se
 
 ## Current release and service
 
+- Customer invoice retry controls are implemented on the closeout-link page and My Jobs. A server presentation hint exposes the action only for a recorded approved closeout while canonical payments are enabled; the transactional endpoint still revalidates funding and quote. Both pages refresh state after an invoice error, retain pending/disabled behavior and label the action Retry final invoice. The availability test passes. Rendered browser/device and full endpoint/provider acceptance remain open; no customer action was submitted.
+
 - Canonical invoice errors now preserve customer approval instead of clearing it after an ambiguous provider response. The authorized closeout endpoint can resume an approved request; the transactional approval service rechecks current funding and quote, requires the original approval evidence/due date and reuses the original request identity without rewriting approval. Disposable SQL tests cover unchanged retry, retained timestamp and rejection of missing approval or changed payments. Full endpoint/provider failure recovery and automatic replacement issuance still require acceptance.
 
 - Partial-payment recovery correction: canceled/noncollectible final invoices now leave the verified remainder on the lead and closeout, remove the obsolete payment link and keep reconciliation pending. The old invoice binding is retained for audit. Disposable worker tests cover the $120 job/$60 paid/$90 canceled invoice case, transaction rollback and late attachment. Creating the corrected replacement invoice remains open; no live invoice or notice was produced.

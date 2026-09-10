@@ -85,6 +85,7 @@ interface CustomerJob {
   closeout?: {
     id: string;
     status: string;
+    canRetryInvoice?: boolean;
     actual_hours: string;
     calculated_final_total: string;
     deposit_applied: string;
@@ -509,7 +510,10 @@ function JobSheet({ job, open, onClose, onNewJob }: {
       toast({ title: data.invoiceUrl ? "Final amount approved" : "Job financially complete" });
       if (data.invoiceUrl) window.open(data.invoiceUrl, "_blank", "noopener,noreferrer");
     },
-    onError: (error: Error) => toast({ title: "Could not approve", description: error.message, variant: "destructive" }),
+    onError: (error: Error) => {
+      void refreshCustomerJobs();
+      toast({ title: "Could not finish the invoice request", description: error.message, variant: "destructive" });
+    },
   });
   const rejectCloseout = useMutation({
     mutationFn: async () => {
@@ -628,6 +632,10 @@ function JobSheet({ job, open, onClose, onNewJob }: {
               <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-blue-300">Completion closeout</p><p className="mt-1 text-sm text-zinc-300">{Number(job.closeout.actual_hours || 0).toFixed(2)} actual hours</p></div><p className="text-2xl font-black text-white">${Number(job.closeout.calculated_final_total || 0).toFixed(2)}</p></div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div className="rounded-lg bg-zinc-950/60 p-2"><p className="text-zinc-500">Deposit applied</p><p className="font-bold text-emerald-300">− ${Number(job.closeout.deposit_applied || 0).toFixed(2)}</p></div><div className="rounded-lg bg-zinc-950/60 p-2"><p className="text-zinc-500">Balance</p><p className="font-bold text-orange-300">${Number(job.closeout.balance_due || 0).toFixed(2)}</p></div></div>
               {job.closeout.status === "awaiting_customer" && <div className="mt-4 space-y-2"><Button className="w-full bg-emerald-600 hover:bg-emerald-500" disabled={approveCloseout.isPending} onClick={() => approveCloseout.mutate()}>{approveCloseout.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Approve final amount"}</Button><Textarea value={closeoutNote} onChange={(event) => setCloseoutNote(event.target.value)} placeholder="Explain any hours, damage, or charge that needs correction" className="border-zinc-700 bg-zinc-950" /><Button className="w-full" variant="outline" disabled={!closeoutNote.trim() || rejectCloseout.isPending} onClick={() => rejectCloseout.mutate()}>Request owner review</Button></div>}
+              {job.closeout.status === 'approved' && job.closeout.canRetryInvoice === true && <div className="mt-4 space-y-3">
+                <p className="text-sm text-zinc-300">Your approval is saved. Retry to finish preparing your final invoice.</p>
+                <Button className="min-h-11 h-auto w-full whitespace-normal bg-emerald-600 py-3" disabled={approveCloseout.isPending} onClick={() => approveCloseout.mutate()}>{approveCloseout.isPending ? 'Preparing final invoice…' : 'Retry final invoice'}</Button>
+              </div>}
               {job.finalInvoiceUrl && <Button className="mt-4 w-full bg-orange-500 hover:bg-orange-400" asChild><a href={job.finalInvoiceUrl} target="_blank" rel="noreferrer">Pay final balance with Square <ExternalLink className="ml-2 h-4 w-4" /></a></Button>}
             </div>
           )}
