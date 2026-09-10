@@ -18,6 +18,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { customerJobProgress } from "@shared/customerJobProgress";
 
 // Task #130: shape returned by GET /api/customer/bookings — parent bookings
 // from the new multi-service `bookings` table with their child service items.
@@ -95,33 +96,22 @@ interface CustomerJob {
 // ── Status Tracker ────────────────────────────────────────────────────────────
 const STATUS_STEPS = [
   { key: "submitted", label: "Submitted", icon: FileText },
-  { key: "under_review", label: "Under Review", icon: Clock },
-  { key: "quote_sent", label: "Quote Sent", icon: DollarSign },
-  { key: "paid", label: "Paid", icon: CheckCircle },
-  { key: "dispatched", label: "Dispatched", icon: Zap },
+  { key: "under_review", label: "Review", icon: Clock },
+  { key: "quote_sent", label: "Quote", icon: DollarSign },
+  { key: "service", label: "Service", icon: Truck },
 ];
-
-function getStepIndex(status: string): number {
-  if (["chatbot_pending", "quote_requested", "new", "deposit_pending"].includes(status)) return 0;
-  if (["quoted", "under_review"].includes(status)) return 1;
-  if (["quote_sent", "invoice_sent"].includes(status)) return 2;
-  if (["paid", "completed"].includes(status)) return 3;
-  if (["awaiting_customer", "owner_review", "customer_rejected", "refund_review", "balance_due"].includes(status)) return 3;
-  if (["dispatched", "available", "confirmed", "in_progress", "accepted"].includes(status)) return 4;
-  if (status === "cancelled") return -1;
-  return 0;
-}
 
 function customerDisplayStatus(job: CustomerJob) {
   return job.closeoutStatus || job.operationalStatus || job.status;
 }
 
-function StatusTracker({ status }: { status: string }) {
-  const stepIdx = getStepIndex(status);
-  if (status === "cancelled") return null;
+function StatusTracker({ job }: { job: CustomerJob }) {
+  const progress = customerJobProgress(job);
+  if (!progress) return null;
+  const stepIdx = progress.index;
 
   return (
-    <div className="flex items-center gap-0 mb-3">
+    <div role="group" aria-label="Service progress" className="flex items-center gap-0 mb-3">
       {STATUS_STEPS.map((step, i) => {
         const Icon = step.icon;
         const isComplete = i < stepIdx;
@@ -136,7 +126,7 @@ function StatusTracker({ status }: { status: string }) {
               </div>
               <p className={`text-[9px] font-medium mt-0.5 text-center leading-tight ${
                 isComplete ? "text-teal-400" : isActive ? "text-orange-400" : "text-zinc-600"
-              }`}>{step.label}</p>
+              }`}>{step.key === 'service' ? progress.serviceLabel : step.label}</p>
             </div>
             {i < STATUS_STEPS.length - 1 && (
               <div className={`h-0.5 flex-1 mx-0.5 mb-3.5 ${i < stepIdx ? "bg-teal-500" : "bg-zinc-800"}`} />
@@ -467,7 +457,7 @@ function JobSheet({ job, open, onClose, onNewJob }: {
         <div className="space-y-3">
 
           {/* Visual Status Tracker */}
-          <StatusTracker status={displayStatus} />
+          <StatusTracker job={job} />
           <BookingMenuIntelligenceCard
             quoteSnapshot={job.quoteSnapshot}
             fallbackServiceLabel={marketplaceServiceLabel}
