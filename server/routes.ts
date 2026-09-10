@@ -70,6 +70,7 @@ import { jupiterSwapService, SUPPORTED_TOKENS } from "./services/jupiter-swap";
 import { ensureMomsAccount } from "./services/generosityFund";
 import { classifyJobInvoicePayment } from "./services/jobPaymentClassification";
 import { createPaymentReconciliationHandler } from "./services/paymentReconciliationHandler";
+import { createFinancialNoticeReviewHandler } from "./services/financialNoticeReviewHandler";
 import { grantLotteryTicketsForActivity } from "./services/disburse-job-tokens";
 import { getDepositInfo, extractZip } from "@shared/depositRules";
 import { MIN_REDEMPTION_TOKENS, REDEMPTION_INCREMENT, roundToIncrement, validateRedemption, tokensToDollars } from "@shared/tokenRedemptionRules";
@@ -27599,6 +27600,8 @@ Thank you for your business!
   });
 
   app.get("/api/admin/payments/reconciliation/:leadId", isAuthenticated, requireAdmin, createPaymentReconciliationHandler());
+  app.get("/api/admin/payments/notices/:leadId", isAuthenticated, requireAdmin, createFinancialNoticeReviewHandler());
+  app.post("/api/admin/payments/notices/:leadId/review", isAuthenticated, requireAdmin, createFinancialNoticeReviewHandler());
 
   app.get("/api/admin/btc-payments", isAuthenticated, requireBusinessOwner, async (_req, res) => {
     try {

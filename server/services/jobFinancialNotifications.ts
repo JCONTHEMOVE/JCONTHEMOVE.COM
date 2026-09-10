@@ -26,6 +26,14 @@ export const JOB_FINANCIAL_NOTIFICATIONS_SCHEMA = `
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY(event_key,channel)
   );
+  CREATE TABLE IF NOT EXISTS job_financial_notice_reviews (
+    request_id UUID PRIMARY KEY,
+    event_key TEXT NOT NULL REFERENCES job_financial_notifications(event_key),
+    actor_id VARCHAR NOT NULL,
+    request_payload JSONB NOT NULL,
+    resulting_status TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
 `;
 
 async function queue(client: PoolClient, input: {

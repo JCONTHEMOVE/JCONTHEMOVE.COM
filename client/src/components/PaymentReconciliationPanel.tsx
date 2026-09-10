@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
+import { FinancialNoticeReviewPanel } from './FinancialNoticeReviewPanel';
 import type { getJobPaymentReconciliation } from "../../../server/services/jobPaymentReconciliation";
 
 type Report = NonNullable<Awaited<ReturnType<typeof getJobPaymentReconciliation>>>;
@@ -77,6 +78,7 @@ export function PaymentReconciliationPanel({ leadId }: { leadId: string }) {
       <Button variant="ghost" className="min-h-11" disabled={query.isFetching} onClick={() => void query.refetch()}>Refresh payments</Button>
       {query.isPending ? <p role="status" className="text-sm">Loading payment records…</p> : query.isError ?
         <p role="alert" className="text-sm text-destructive">Payment records could not be loaded. Refresh to retry.</p> : query.data ? <PaymentReconciliationView report={query.data} /> : null}
+      <FinancialNoticeReviewPanel leadId={leadId} />
     </div> : null}
   </section>;
 }
