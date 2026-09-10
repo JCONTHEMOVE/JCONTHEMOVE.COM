@@ -18,6 +18,7 @@ import { formatOrderNumber } from "@shared/schema";
 import { useAuth } from "@/hooks/useAuth";
 import { CrewSuggestionsDialog } from "@/components/crew-suggestions-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AdminJobPaymentShortcut } from "@/components/AdminJobPaymentShortcut";
 import { JobOrderTicket } from "@/components/job-order-ticket";
 import { JobSetupWorkspace } from "@/components/job-setup-workspace";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1530,6 +1531,7 @@ export default function LeadDetailPage() {
           </div>
           
           <div className="flex items-center gap-3 flex-wrap">
+            {hasAdminAccess && <AdminJobPaymentShortcut key={lead.id} leadId={lead.id} />}
             <h1 className="text-2xl font-bold text-foreground">
               {lead.workerVisibility?.customerIdentity === false
                 ? "Customer details protected"
