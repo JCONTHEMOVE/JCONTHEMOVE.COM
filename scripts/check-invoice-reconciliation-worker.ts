@@ -38,7 +38,8 @@ try {
     INSERT INTO quote_revisions VALUES('quote','job',1,'approved',NOW(),120,'USD');
     INSERT INTO job_closeouts VALUES('closeout','job','approved',NOW(),'{"finalQuoteRevisionId":"quote","invoiceDueDate":"2026-09-24"}');
     INSERT INTO square_invoices VALUES('invoice','job','final-order',90,'USD','quote','closeout','sent','final_balance',NOW());
-    ALTER TABLE square_invoices ADD COLUMN id varchar DEFAULT 'local',ADD COLUMN invoice_url text;
+    ALTER TABLE square_invoices ADD COLUMN id varchar DEFAULT 'local',ADD COLUMN invoice_url text,
+      ADD COLUMN square_invoice_number text,ADD COLUMN sent_at timestamptz;
     ALTER TABLE leads ADD COLUMN closeout_status text DEFAULT 'balance_due',ADD COLUMN financial_status text DEFAULT 'balance_due',
       ADD COLUMN final_balance_amount numeric DEFAULT 90,ADD COLUMN final_invoice_url text DEFAULT 'https://example.invalid/invoice';
     ALTER TABLE job_closeouts ADD COLUMN calculated_final_total numeric DEFAULT 120,ADD COLUMN balance_due numeric DEFAULT 90,
@@ -218,11 +219,13 @@ try {
       await database.exec("UPDATE square_invoices SET status='sent',invoice_url='https://example.invalid/replacement' WHERE square_invoice_id='replacement-invoice'");
       return {invoiceId:'local-replacement',squareInvoiceId:'replacement-invoice',invoiceUrl:'https://example.invalid/replacement'};
     }) as typeof squareInvoiceService.createInvoiceForLead;
+    let lostPublication=false;
     const replacementProvider:InvoiceReconciliationProvider={
       inspect:async(id,orderId)=>{
         const invoice=(await database.query('SELECT status,amount FROM square_invoices WHERE square_invoice_id=$1',[id])).rows[0];
         return {id,orderId,currency:'USD',amountCents:Math.round(Number(invoice.amount)*100),
-          status:invoice.status==='canceled'?'CANCELED':invoice.status==='draft'?'DRAFT':'UNPAID'};
+          status:invoice.status==='canceled'?'CANCELED':invoice.status==='draft'&&!lostPublication?'DRAFT':'UNPAID',
+          publicUrl:lostPublication&&id==='replacement-invoice'?'https://example.invalid/replacement':undefined};
       },cancel:async()=>{throw new Error('Replacement retry should not cancel');},
     };
     try {
@@ -253,6 +256,20 @@ try {
       assert.equal('replacementIssued' in recovered && recovered.replacementIssued,true);
       assert.equal(calls.length,2,'known publication recovers attachment without provider re-entry');
       assert.equal((await database.query('SELECT square_invoice_id FROM job_closeouts')).rows[0].square_invoice_id,'replacement-invoice');
+      assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,1);
+      await database.exec(`UPDATE job_invoice_replacements SET attached_invoice_id=NULL,attached_at=NULL;
+        UPDATE job_closeouts SET square_invoice_id='invoice';
+        UPDATE square_invoices SET status='draft',invoice_url=NULL WHERE square_invoice_id='replacement-invoice';
+        UPDATE job_invoice_reconciliation_queue SET status='pending',next_attempt_at=NOW();`);
+      lostPublication=true;
+      const acknowledged=await processOneJobInvoiceReconciliation(replacementProvider);
+      assert.equal('publicationRecovered' in acknowledged && acknowledged.publicationRecovered,true);
+      assert.equal(calls.length,2,'provider inspection recovers publication without replay');
+      assert.equal((await database.query("SELECT status FROM square_invoices WHERE square_invoice_id='replacement-invoice'")).rows[0].status,'sent');
+      assert.equal((await database.query('SELECT status FROM job_invoice_reconciliation_queue')).rows[0].status,'pending');
+      const reattached=await processOneJobInvoiceReconciliation(replacementProvider);
+      assert.equal('replacementIssued' in reattached && reattached.replacementIssued,true);
+      assert.equal(calls.length,2);
       assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,1);
     } finally {
       storage.getLead=priorLead;squareInvoiceService.createInvoiceForLead=priorCreate;
@@ -300,6 +317,7 @@ try {
   process.env.SQUARE_PRODUCTION_ACCESS_TOKEN='synthetic-worker-token';
   process.env.SQUARE_PRODUCTION_LOCATION_ID='location'; process.env.NODE_ENV='production';
   let remoteStatus='UNPAID', remoteLocation='location';
+  let remoteUrl: string | undefined;
   let requests: string[]=[];
   globalThis.fetch=async (input,init) => {
     const url=input instanceof Request ? input.url : String(input);
@@ -309,7 +327,7 @@ try {
     requests.push(`${method} ${url}`);
     let body: unknown;
     if(method==='GET' && url==='https://connect.squareup.com/v2/invoices/invoice') {
-      body={invoice:{id:'invoice',order_id:'final-order',location_id:remoteLocation,status:remoteStatus,version:1}};
+      body={invoice:{id:'invoice',order_id:'final-order',location_id:remoteLocation,status:remoteStatus,version:1,public_url:remoteUrl}};
     } else if(method==='GET' && url==='https://connect.squareup.com/v2/orders/final-order') {
       body={order:{id:'final-order',location_id:'location',total_money:{amount:9000,currency:'USD'},total_tip_money:{amount:0,currency:'USD'}}};
     } else if(method==='POST' && url==='https://connect.squareup.com/v2/invoices/invoice/cancel') {
@@ -325,6 +343,15 @@ try {
   await reset(); await pay('sdk-wrong-location',9000); remoteStatus='UNPAID'; remoteLocation='other-location'; requests=[];
   assert.equal((await processOneJobInvoiceReconciliation()).status,'retry');
   assert.ok(requests.every(request=>request.startsWith('GET ')));
+  await reset();remoteStatus='UNPAID';remoteLocation='location';remoteUrl='https://example.invalid/sdk-published';requests=[];
+  await database.exec("UPDATE square_invoices SET status='draft',invoice_url=NULL");
+  const sdkAcknowledged=await processOneJobInvoiceReconciliation();
+  assert.equal('publicationRecovered' in sdkAcknowledged && sdkAcknowledged.publicationRecovered,true);
+  const localPublication=(await database.query('SELECT status,invoice_url,sent_at FROM square_invoices')).rows[0];
+  assert.equal(localPublication.status,'sent');assert.equal(localPublication.invoice_url,remoteUrl);assert.ok(localPublication.sent_at);
+  assert.equal(requests.length,2);assert.ok(requests.every(request=>request.startsWith('GET ')));
+  assert.equal((await database.query('SELECT status FROM job_invoice_reconciliation_queue')).rows[0].status,'pending');
+  console.log('PASS: actual SDK inspection recovers a lost publication acknowledgement with two GETs and no publication request');
   console.log('PASS: default worker uses the actual Square SDK with intercepted invoice/order/cancel HTTP and rejects another location');
   process.env.JOB_INVOICE_RECONCILIATION_ENABLED='false';
   assert.equal((await processOneJobInvoiceReconciliation(api)).status,'disabled');

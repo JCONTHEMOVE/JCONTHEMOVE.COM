@@ -4,7 +4,7 @@ import { claimJobInvoiceReconciliation, finishJobInvoiceReconciliation, invoiceR
   type InvoiceReconciliationClaim } from './jobInvoiceReconciliationQueue';
 import { finishReconciledCloseout, type ReconciledInvoiceEvidence } from './reconciledCloseout';
 
-type ProviderInvoice = { id: string; orderId: string; status: string; amountCents: number; currency: string };
+type ProviderInvoice = { id: string; orderId: string; status: string; amountCents: number; currency: string; publicUrl?: string };
 type Invoice = { square_invoice_id: string; square_order_id: string; amount: string; currency: string;
   quote_revision_id: string; closeout_id: string; status: string; order_paid: string; quote_valid: boolean };
 export type InvoiceReconciliationProvider = {
@@ -26,7 +26,7 @@ async function provider(): Promise<InvoiceReconciliationProvider> {
           || (order.totalTipMoney && order.totalTipMoney.currency !== 'USD')) throw new Error('Provider binding mismatch');
       const total = Number(order.totalMoney.amount), tip = Number(order.totalTipMoney?.amount ?? 0);
       if (!Number.isSafeInteger(total) || !Number.isSafeInteger(tip) || tip < 0 || total <= tip) throw new Error('Invalid provider amount');
-      return { id: invoiceId, orderId, status: invoice.status || '', amountCents: total - tip, currency: 'USD' };
+      return { id: invoiceId, orderId, status: invoice.status || '', amountCents: total - tip, currency: 'USD',publicUrl:invoice.publicUrl || undefined };
     },
     cancel: id => service.cancelInvoice(id),
   };
@@ -106,6 +106,17 @@ export async function processOneJobInvoiceReconciliation(injectedProvider?: Invo
       if (remote.status === 'FAILED') continue;
       if (remote.status === 'PAID') { if (ownPaid !== amount) complete = false; continue; }
       if (!['UNPAID','SCHEDULED','PARTIALLY_PAID'].includes(remote.status)) { complete = false; continue; }
+      // A publish response may have been lost while the provider invoice is
+      // already collectible. Persist its verified URL/status instead of
+      // relying on another publication request to recover acknowledgement.
+      if (invoice.status==='draft' && remote.publicUrl) {
+        const {recordSquareInvoicePublication}=await import('./squareInvoicePublication');
+        await recordSquareInvoicePublication({squareInvoiceId:invoice.square_invoice_id,invoiceUrl:remote.publicUrl});
+        // Publication advances the queue generation. Stop this claim and let
+        // a fresh one recheck the new local state before attachment/cancel.
+        await finishJobInvoiceReconciliation(claim,false);
+        return {status:'retry' as const,canceled,publicationRecovered:true};
+      }
       const availableForInvoice = Math.max(0, basis.total - (basis.paid - ownPaid));
       if (amount > availableForInvoice || invoice.quote_revision_id !== basis.quoteId) {
         await api!.cancel(invoice.square_invoice_id);
