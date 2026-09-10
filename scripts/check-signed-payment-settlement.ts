@@ -3,6 +3,7 @@ import { storage } from '../server/storage';
 import { processOneJobReward } from '../server/services/jobRewardWorker';
 import { disburseJobTokens } from '../server/services/disburse-job-tokens';
 import { pool } from '../server/db';
+import { processOneJobInvoiceReconciliation } from '../server/services/jobInvoiceReconciliationWorker';
 
 /** Financial SQL and default issuance are real; storage facade uses fixture SQL.
  * Recipient notifications are disabled and provider HTTP stays intercepted. */
@@ -12,7 +13,7 @@ export async function checkSignedPaymentSettlement(database: {
 }, sendPayment: () => Promise<Response>) {
   const original = { getLead: storage.getLead, getUser: storage.getUser, updateLeadQuote: storage.updateLeadQuote };
   const originalQuery = pool.query;
-  const settings = { JOB_PAYMENT_REWARDS_ENABLED: 'true', JC_JOB_EVENT_WEBHOOK_URLS: '', JOB_EVENT_WEBHOOK_URLS: '',
+  const settings = { JOB_PAYMENT_REWARDS_ENABLED: 'true', JOB_INVOICE_RECONCILIATION_ENABLED: 'true', JC_JOB_EVENT_WEBHOOK_URLS: '', JOB_EVENT_WEBHOOK_URLS: '',
     DISCORD_JOB_WEBHOOK_URL: '', DISCORD_WEBHOOK_URL: '' };
   const previous = new Map(Object.keys(settings).map(key => [key, process.env[key]]));
   Object.assign(process.env, settings);
@@ -20,11 +21,17 @@ export async function checkSignedPaymentSettlement(database: {
     await database.exec(`DELETE FROM job_confirmed_refunds; DELETE FROM job_confirmed_payments;
       DELETE FROM job_invoice_reconciliation_queue; DELETE FROM job_reward_queue;
       ALTER TABLE leads ADD COLUMN crew_members text[], ADD COLUMN assigned_to_user_id varchar,
-        ADD COLUMN jcmoves_reward_base numeric;
+        ADD COLUMN jcmoves_reward_base numeric,ADD COLUMN closeout_status text,ADD COLUMN financial_status text,
+        ADD COLUMN final_balance_amount numeric,ADD COLUMN final_invoice_url text;
       UPDATE leads SET status='completed',payment_paid_at=NULL,tokens_disbursed_at=NULL,completion_rewarded_at=NULL,
         crew_members=ARRAY['crew'],assigned_to_user_id='crew';
-      CREATE TABLE job_closeouts(lead_id varchar PRIMARY KEY,status text,customer_approved_at timestamptz,pricing_snapshot jsonb);
-      INSERT INTO job_closeouts VALUES('job','paid',NOW(),'{"finalQuoteRevisionId":"quote"}');
+      CREATE TABLE job_closeouts(lead_id varchar PRIMARY KEY,status text,customer_approved_at timestamptz,pricing_snapshot jsonb,
+        id varchar,calculated_final_total numeric,balance_due numeric,updated_at timestamptz);
+      INSERT INTO job_closeouts VALUES('job','approved',NOW(),'{"finalQuoteRevisionId":"quote"}','closeout',100,100,NOW());
+      ALTER TABLE square_invoices ADD COLUMN square_invoice_id text,ADD COLUMN amount numeric,ADD COLUMN currency text,
+        ADD COLUMN closeout_id varchar,ADD COLUMN purpose text,ADD COLUMN status text;
+      UPDATE square_invoices SET square_invoice_id='settlement-invoice',amount=100,currency='USD',closeout_id='closeout',
+        purpose='final_balance',status='sent';
       CREATE TABLE spin_config(setting_key text,setting_value text);
       CREATE TABLE reward_settings(setting_key text,token_amount numeric,is_active boolean);
       INSERT INTO reward_settings VALUES('earn_rate_per_dollar',10,true);
@@ -59,6 +66,15 @@ export async function checkSignedPaymentSettlement(database: {
     const issue = async (id: string) => {
       try { return await disburseJobTokens(id); } catch (error) { console.error(error); throw error; }
     };
+    assert.equal((await processOneJobReward(issue)).status, 'retry', 'approved closeout must reconcile before wallet credit');
+    assert.equal((await database.query('SELECT * FROM wallet_accounts')).rows.length, 0);
+    const reconciled = await processOneJobInvoiceReconciliation();
+    assert.equal(reconciled.status, 'done');
+    assert.equal('closeoutPaid' in reconciled && reconciled.closeoutPaid, true);
+    const closeout = (await database.query('SELECT status,balance_due::text AS balance FROM job_closeouts')).rows[0];
+    assert.deepEqual(closeout, { status: 'paid', balance: '0' });
+    assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length, 1);
+    await database.exec("UPDATE job_reward_queue SET next_attempt_at=NOW()-INTERVAL '1 second'");
     pool.query = (async (query: any, args?: any[]) => {
       const text = typeof query === 'string' ? query : query.text;
       if (text.includes('UPDATE wallet_accounts') && args?.[0] === 'crew') throw new Error('Injected crew wallet failure');
@@ -79,6 +95,8 @@ export async function checkSignedPaymentSettlement(database: {
     assert.equal((await database.query('SELECT * FROM job_jcmoves_ledger')).rows.length, 2);
     assert.equal((await sendPayment()).status, 200);
     assert.equal((await processOneJobReward(issue)).status, 'idle');
+    assert.equal((await processOneJobInvoiceReconciliation()).status, 'idle');
+    assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length, 1);
     assert.deepEqual(await balances(), settled);
     assert.equal((await database.query('SELECT status FROM job_reward_queue')).rows[0].status, 'done');
     console.log('PASS: signed payment through real issuance, interrupted crew wallet recovery, durable completion and duplicate suppression');

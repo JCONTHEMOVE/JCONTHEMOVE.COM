@@ -49,6 +49,11 @@ globalThis.fetch = async (input, init) => {
   } else if (url === 'https://connect.squareup.com/v2/refunds/refund') {
     body = { refund: { id: 'refund', status: 'COMPLETED', payment_id: 'payment', location_id: location,
       amount_money: { amount: refundAmount, currency: 'USD' }, updated_at: '2026-09-09T13:00:00Z' } };
+  } else if (url === 'https://connect.squareup.com/v2/invoices/settlement-invoice') {
+    body = { invoice: { id: 'settlement-invoice', order_id: 'order', location_id: 'location', status: 'PAID', version: 1 } };
+  } else if (url === 'https://connect.squareup.com/v2/orders/order') {
+    body = { order: { id: 'order', location_id: 'location', total_money: { amount: 10000, currency: 'USD' },
+      total_tip_money: { amount: 0, currency: 'USD' } } };
   } else throw new Error('Unexpected SDK request');
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 };
