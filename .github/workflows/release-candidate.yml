@@ -56,6 +56,7 @@ jobs:
           node --import tsx scripts/check-square-invoice-publication.ts --postgres
           node --import tsx scripts/check-square-invoice-intent.ts --postgres
           node --import tsx scripts/check-canonical-invoice.ts --postgres
+          node --import tsx scripts/check-square-ledger-adapter.ts --postgres
           node --import tsx scripts/check-invoice-reconciliation-worker.ts --postgres
           node --import tsx scripts/check-financial-notice-delivery.ts --postgres
           node --import tsx scripts/check-financial-notice-worker.ts --postgres
