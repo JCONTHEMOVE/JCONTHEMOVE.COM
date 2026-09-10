@@ -6,6 +6,7 @@ import { JOB_PAYMENT_LEDGER_SCHEMA } from '../server/services/jobPaymentLedger';
 import { processCanonicalSquareWebhook } from '../server/services/canonicalSquareWebhook';
 import { createDisposableLedgerDatabase } from './disposable-ledger-database';
 import { createSquareWebhookHandler } from '../server/squareWebhook';
+import { checkSignedPaymentSettlement } from './check-signed-payment-settlement';
 
 // Real adapter, SDK decoding and SQL; every provider request is intercepted.
 const database = await createDisposableLedgerDatabase(process.argv[2]);
@@ -18,10 +19,15 @@ const settings = {
 };
 const previous = new Map(Object.keys(settings).map(key => [key, process.env[key]]));
 Object.assign(process.env, settings);
-pool.query = ((sql: string, args?: unknown[]) => {
+pool.query = (async (query: string | { text: string; rowMode?: string }, args?: unknown[]) => {
+  const sql = typeof query === 'string' ? query : query.text;
   // Unrelated startup schema installation is excluded; event claims use real SQL below.
   if (sql.includes('CREATE TABLE IF NOT EXISTS quote_revisions') || sql.includes('service_area_capabilities')) return Promise.resolve({ rows: [] });
-  return database.query(sql, args);
+  const result = await database.query(sql, args);
+  if (typeof query !== 'string' && query.rowMode === 'array') {
+    return { ...result, rows: result.rows.map((row: Record<string, unknown>) => result.fields.map((field: { name: string }) => row[field.name])) };
+  }
+  return result;
 }) as typeof pool.query;
 pool.connect = (async () => ({ query: pool.query, release() {} })) as typeof pool.connect;
 let location = 'location', order = 'order', amount = 3000;
@@ -180,6 +186,8 @@ try {
     assert.equal((await database.query("SELECT status FROM square_webhook_events WHERE event_id='conflicting-refund'")).rows[0].status, 'failed');
     assert.deepEqual((await database.query('SELECT tokens_disbursed_at,completion_rewarded_at FROM leads')).rows, rewardMarkers);
     console.log('PASS: signed refund-first delivery, provider amount, event/refund replay and conflict rollback without paid or reward handoff');
+    amount = 10000;
+    await checkSignedPaymentSettlement(database, () => send(event.replace('signed-event', 'settlement-event')));
   } finally {
     await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
   }
