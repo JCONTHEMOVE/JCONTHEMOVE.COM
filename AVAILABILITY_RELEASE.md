@@ -19,4 +19,4 @@ Automatic workflows do not run concurrently, but GitHub does not guarantee pendi
 
 Run `node --test scripts/__tests__/production-alert.test.mjs scripts/__tests__/public-entrypoints.test.mjs`. Tests use fake HTTP responses for reporting and entrypoint scenarios; they do not send a live alert.
 
-The database recovery requirements from PR #8 remain separate. Replit has scheduled daily backups and seven-day PITR; first-backup success and an isolated restore still need evidence.
+The database recovery requirements from PR #8 remain separate. Replit has seven-day PITR and a provider-listed scheduled backup verified for September 10, 2026 at midnight America/Chicago, retained seven days. An isolated restore and data-integrity comparison remain unverified. `DATABASE_RECOVERY_RELEASE.md` proposes a one-hour RPO and four-hour RTO for owner review; neither has been demonstrated or accepted. Availability alert receipts, acknowledgement and escalation timing must be measured because responder delay consumes the recovery-time budget.

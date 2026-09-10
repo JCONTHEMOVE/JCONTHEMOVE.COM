@@ -10,6 +10,20 @@ Replit's current [data recovery documentation](https://docs.replit.com/features/
 
 The same documentation says restoring a scheduled backup switches the connected database to that data. The inspected restore control is not proof of an isolated destination and must not be used for the recovery drill. Replit documents production access from PostgreSQL-compatible clients in [Connection details](https://docs.replit.com/features/data-and-storage/connection-details), but that does not establish a separate restore target. The isolated destination and same-point baseline gates below remain open. A newly remixed development database is also not proof that production data was restored.
 
+## Proposed recovery objectives
+
+The owner requested measurement of current protection before a recommendation. Based on the verified seven-day PITR setting and first daily backup, propose these initial operating targets for owner review. They are planning targets, not provider guarantees, approved objectives or measured recovery performance.
+
+| Measure | Proposed target | Evidence still needed |
+| --- | --- | --- |
+| Recovery point objective (RPO): maximum lost data | At most one hour using PITR | Restore a known point and compare the newest recovered committed records with the incident time. Seven-day retention describes how far back recovery is available; it does not prove a one-hour RPO. |
+| Recovery time objective (RTO): essential service restored | Within four hours of incident detection | Time the complete recovery: responder engagement, target preparation, database restoration, compatible application configuration, integrity checks and essential booking/dispatch read-path validation. Database restore duration alone is insufficient. |
+| Daily-backup fallback | Plan for approximately 24 hours of lost changes when daily backups succeed | Calculate actual loss from the selected backup timestamp. Delayed or failed backups can exceed 24 hours. This fallback does not meet the proposed one-hour target. |
+
+These are initial targets because booking and dispatch need recent operational records, while recovery must leave time to verify financial state before resuming writes. The four-hour target is a planning allowance, not an estimate derived from the 103.95 MB database size. Payment-provider records and post-recovery reconciliation remain necessary for changes after the chosen restore point; do not assume replay is safe or that these records eliminate data loss.
+
+Keep the verified seven-day retention for now. Replit's [data recovery documentation](https://docs.replit.com/features/data-and-storage/data-recovery) distinguishes database restoration from code rollback, so the drill must record the compatible application version as well as database evidence. First establish an isolated Replit destination; consider an additional Neon database only if a suitable Replit destination cannot be established. No extra database, retention increase or subscription is required by this recommendation. Record achieved RPO/RTO and any gap before seeking owner acceptance of the objectives and recovery procedure.
+
 ## Evidence needed to close recovery
 
 ### Production schema baseline, September 10
