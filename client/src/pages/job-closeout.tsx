@@ -76,7 +76,7 @@ export default function JobCloseoutPage() {
 
   const closeout = query.data.closeout;
   if (result) {
-    return <div className="grid min-h-screen place-items-center bg-slate-950 p-5 text-white"><Card className="w-full max-w-lg border-emerald-500/30 bg-slate-900"><CardContent className="p-7 text-center"><CheckCircle2 className="mx-auto h-12 w-12 text-emerald-300" /><h1 className="mt-4 text-2xl font-black">Thank you</h1><p className="mt-2 text-slate-300">{result.status === "customer_rejected" ? "The owner will review your requested correction before billing." : "Your final job amount is approved."}</p>{result.invoiceUrl && <Button className="mt-5 w-full bg-emerald-600" asChild><a href={result.invoiceUrl}>Pay final balance with Square <ExternalLink className="ml-2 h-4 w-4" /></a></Button>}</CardContent></Card></div>;
+    return <div className="grid min-h-screen place-items-center bg-slate-950 p-5 text-white"><Card className="min-w-0 w-full max-w-lg border-emerald-500/30 bg-slate-900"><CardContent className="p-7 text-center"><CheckCircle2 className="mx-auto h-12 w-12 text-emerald-300" /><h1 className="mt-4 text-2xl font-black">Thank you</h1><p className="mt-2 text-slate-300">{result.status === "customer_rejected" ? "The owner will review your requested correction before billing." : "Your final job amount is approved."}</p>{result.invoiceUrl && <Button className="mt-5 min-h-11 h-auto w-full whitespace-normal bg-emerald-600 py-3" asChild><a href={result.invoiceUrl}>Pay final balance with Square <ExternalLink className="ml-2 h-4 w-4" /></a></Button>}</CardContent></Card></div>;
   }
 
   return (
