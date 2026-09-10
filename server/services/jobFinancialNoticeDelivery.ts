@@ -60,7 +60,7 @@ export async function reserveFinancialNoticeAttempt(client: PoolClient, claim: F
   const normalized = destination.trim().toLowerCase();
   if (!normalized) throw new Error('Financial notice destination is missing');
   const active = (await client.query(`SELECT event_key FROM job_financial_notifications
-    WHERE event_key=$1 AND status='processing' AND lease_token=$2 AND lease_expires_at>NOW()
+    WHERE event_key=$1 AND status='processing' AND lease_token=$2 AND lease_expires_at>clock_timestamp()
     FOR UPDATE`, [claim.event_key, claim.lease_token])).rows.length === 1;
   if (!active) return null;
   const token = randomUUID();

@@ -621,6 +621,26 @@ server.listen(port, '0.0.0.0', () => {
       setInterval(invoiceTick, 60_000);
     }
 
+    // Canonical customer notices require explicit activation after acceptance.
+    if (process.env.JOB_PAYMENT_LEDGER_ENABLED === 'true'
+        && process.env.JOB_FINANCIAL_NOTIFICATIONS_ENABLED === 'true') {
+      let noticeTickRunning = false;
+      const noticeTick = async () => {
+        if (noticeTickRunning) return;
+        noticeTickRunning = true;
+        try {
+          const { processOneFinancialNotice } = await import('./services/jobFinancialNoticeWorker');
+          for (let count = 0; count < 10; count++) {
+            const result = await processOneFinancialNotice();
+            if (result.status === 'idle' || result.status === 'disabled') break;
+          }
+        } catch { console.error('[financial-notices] sweep failed; durable attempts retained'); }
+        finally { noticeTickRunning = false; }
+      };
+      setTimeout(noticeTick, 15_000);
+      setInterval(noticeTick, 60_000);
+    }
+
     // Lead-response safety net. The sweep is idempotent and guarded by a
     // Postgres advisory lock, so multiple Railway instances cannot deliver
     // the same 24-hour reminder or 48-hour red flag twice.
