@@ -12857,7 +12857,11 @@ Thank you for your business!
       const { getJobRateCard } = await import("./services/jobRateCard");
       const rateCard = await getJobRateCard();
       const rewardEligibleTotal = Number(paymentRows[0]?.jcmoves_reward_base || lead.totalPrice || lead.basePrice || 0);
+      res.setHeader("Cache-Control", "no-store");
       res.json({
+        // This shortcut supports the existing receipt/award endpoints only.
+        // A future canonical release must explicitly integrate its own workflow.
+        paymentWorkflow: process.env.JOB_PAYMENT_LEDGER_ENABLED === "true" ? "canonical" : "legacy",
         state,
         paidInFull,
         completed: lead.status === "completed",
