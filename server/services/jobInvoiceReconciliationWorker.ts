@@ -71,8 +71,9 @@ async function readBasis(claim: InvoiceReconciliationClaim) {
   finally { client.release(); }
 }
 
-/** Reconcile collection and already-approved financial closeout. It does not
- * issue refunds, send messages or settle rewards. No HTTP runs under a DB lock. */
+/** Reconcile collection and already-approved financial closeout. Replacement
+ * issuance has an additional opt-in gate. No HTTP runs under a DB lock; this
+ * worker does not issue refunds, deliver notices or settle rewards. */
 export async function processOneJobInvoiceReconciliation(injectedProvider?: InvoiceReconciliationProvider) {
   if (!invoiceReconciliationWorkerEnabled()) return { status: 'disabled' as const };
   const claim = await claimJobInvoiceReconciliation();
@@ -121,10 +122,17 @@ export async function processOneJobInvoiceReconciliation(injectedProvider?: Invo
     if (collectible > 1 || initial.paid > initial.total) complete = false;
     if (!complete) {
       await finishJobInvoiceReconciliation(claim,false);
+      const {resumePendingReplacement}=await import('./canonicalReplacementIssuance');
+      if (await resumePendingReplacement(claim.lead_id)) return {status:'retry' as const,canceled,replacementIssued:true};
       return { status:'retry' as const,canceled };
     }
     const result = await finishReconciledCloseout(claim,{quoteId:initial.quoteId,totalCents:initial.total,invoices:evidence});
+    if (!result.closed && result.pendingReplacement) {
+      const {resumePendingReplacement}=await import('./canonicalReplacementIssuance');
+      if (await resumePendingReplacement(claim.lead_id)) return {status:'retry' as const,canceled,replacementIssued:true};
+    }
     if (result.needsReplacement) return { status:'retry' as const,canceled,needsReplacement:true };
+    if (result.pendingReplacement) return {status:'retry' as const,canceled};
     return { status:'done' as const,canceled,closeoutPaid:result.closed };
   } catch {
     await finishJobInvoiceReconciliation(claim, false);

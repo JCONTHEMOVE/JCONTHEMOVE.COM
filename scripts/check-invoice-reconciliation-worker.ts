@@ -11,6 +11,7 @@ import { processOneJobInvoiceReconciliation, type InvoiceReconciliationProvider 
 const database = await createDisposableLedgerDatabase(process.argv[2]);
 const priorQuery = pool.query, priorConnect = pool.connect;
 const flags = ['JOB_PAYMENT_LEDGER_ENABLED','JOB_INVOICE_RECONCILIATION_ENABLED','JOB_PAYMENT_REWARDS_ENABLED',
+  'JOB_INVOICE_REPLACEMENT_ENABLED',
   'SQUARE_JOB_PAYMENT_LEDGER_ENABLED','SQUARE_ENVIRONMENT','SQUARE_PRODUCTION_ACCESS_TOKEN','SQUARE_PRODUCTION_LOCATION_ID','NODE_ENV'] as const;
 const previous = flags.map(flag => process.env[flag]);
 let failFinalization = false;
@@ -24,6 +25,7 @@ pool.connect = (async () => ({ query: pool.query, release() {} })) as typeof poo
 process.env.JOB_PAYMENT_LEDGER_ENABLED = 'true';
 process.env.JOB_INVOICE_RECONCILIATION_ENABLED = 'true';
 process.env.JOB_PAYMENT_REWARDS_ENABLED = 'false';
+process.env.JOB_INVOICE_REPLACEMENT_ENABLED = 'false';
 const previousFetch = globalThis.fetch;
 globalThis.fetch = async () => { throw new Error('Worker test must not contact a provider'); };
 try {
@@ -36,7 +38,7 @@ try {
     INSERT INTO quote_revisions VALUES('quote','job',1,'approved',NOW(),120,'USD');
     INSERT INTO job_closeouts VALUES('closeout','job','approved',NOW(),'{"finalQuoteRevisionId":"quote","invoiceDueDate":"2026-09-24"}');
     INSERT INTO square_invoices VALUES('invoice','job','final-order',90,'USD','quote','closeout','sent','final_balance',NOW());
-    ALTER TABLE square_invoices ADD COLUMN id varchar DEFAULT 'local';
+    ALTER TABLE square_invoices ADD COLUMN id varchar DEFAULT 'local',ADD COLUMN invoice_url text;
     ALTER TABLE leads ADD COLUMN closeout_status text DEFAULT 'balance_due',ADD COLUMN financial_status text DEFAULT 'balance_due',
       ADD COLUMN final_balance_amount numeric DEFAULT 90,ADD COLUMN final_invoice_url text DEFAULT 'https://example.invalid/invoice';
     ALTER TABLE job_closeouts ADD COLUMN calculated_final_total numeric DEFAULT 120,ADD COLUMN balance_due numeric DEFAULT 90,
@@ -203,6 +205,63 @@ try {
   assert.equal((await attachCanonicalFinalInvoice(authorizedAttachment)).status,'balance_due');
   assert.deepEqual((await database.query('SELECT attached_invoice_id,attached_at FROM job_invoice_replacements')).rows[0],attachedAudit);
   assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,1);
+  {
+    const {storage}=await import('../server/storage');
+    const {squareInvoiceService}=await import('../server/services/square-invoice');
+    const priorLead=storage.getLead,priorCreate=squareInvoiceService.createInvoiceForLead;
+    const priorAdapter=process.env.SQUARE_JOB_PAYMENT_LEDGER_ENABLED;
+    const calls:unknown[][]=[];
+    storage.getLead=(async()=>({id:'job',firstName:'Synthetic',lastName:'Customer',email:'synthetic@example.invalid'})) as typeof storage.getLead;
+    squareInvoiceService.createInvoiceForLead=(async(...args:unknown[])=>{
+      calls.push(args);
+      if(calls.length===1)throw new Error('Synthetic interrupted replacement issuance');
+      await database.exec("UPDATE square_invoices SET status='sent',invoice_url='https://example.invalid/replacement' WHERE square_invoice_id='replacement-invoice'");
+      return {invoiceId:'local-replacement',squareInvoiceId:'replacement-invoice',invoiceUrl:'https://example.invalid/replacement'};
+    }) as typeof squareInvoiceService.createInvoiceForLead;
+    const replacementProvider:InvoiceReconciliationProvider={
+      inspect:async(id,orderId)=>{
+        const invoice=(await database.query('SELECT status,amount FROM square_invoices WHERE square_invoice_id=$1',[id])).rows[0];
+        return {id,orderId,currency:'USD',amountCents:Math.round(Number(invoice.amount)*100),
+          status:invoice.status==='canceled'?'CANCELED':invoice.status==='draft'?'DRAFT':'UNPAID'};
+      },cancel:async()=>{throw new Error('Replacement retry should not cancel');},
+    };
+    try {
+      process.env.JOB_INVOICE_REPLACEMENT_ENABLED='true';
+      process.env.SQUARE_JOB_PAYMENT_LEDGER_ENABLED='true';
+      await database.exec(`UPDATE job_invoice_replacements SET attached_invoice_id=NULL,attached_at=NULL;
+        UPDATE job_closeouts SET square_invoice_id='invoice';
+        UPDATE square_invoices SET status='draft',invoice_url=NULL WHERE square_invoice_id='replacement-invoice';
+        UPDATE job_invoice_reconciliation_queue SET status='pending',next_attempt_at=NOW();`);
+      await database.exec("UPDATE job_closeouts SET square_invoice_id=NULL");
+      assert.equal((await processOneJobInvoiceReconciliation(replacementProvider)).status,'retry');
+      assert.equal(calls.length,0,'changed previous binding must stop before provider entry');
+      await database.exec("UPDATE job_closeouts SET square_invoice_id='invoice'; UPDATE job_invoice_reconciliation_queue SET next_attempt_at=NOW()-INTERVAL '1 minute'");
+      assert.equal((await processOneJobInvoiceReconciliation(replacementProvider)).status,'retry');
+      assert.equal(calls.length,1);
+      assert.equal((await database.query('SELECT square_invoice_id FROM job_closeouts')).rows[0].square_invoice_id,'invoice');
+      assert.equal((await database.query('SELECT attached_invoice_id FROM job_invoice_replacements')).rows[0].attached_invoice_id,null);
+      await database.exec("UPDATE job_invoice_reconciliation_queue SET next_attempt_at=NOW()-INTERVAL '1 minute'");
+      const issued=await processOneJobInvoiceReconciliation(replacementProvider);
+      assert.equal('replacementIssued' in issued && issued.replacementIssued,true);
+      assert.equal(calls.length,2);assert.deepEqual(calls[0],calls[1]);
+      assert.equal(calls[1][1],60);assert.equal(calls[1][3],'2026-09-24');assert.equal(calls[1][4],'none');
+      assert.equal((calls[1][5] as {idempotencyKey:string}).idempotencyKey,reserved[0].request_key);
+      await database.exec(`UPDATE job_invoice_replacements SET attached_invoice_id=NULL,attached_at=NULL;
+        UPDATE job_closeouts SET square_invoice_id='invoice';
+        UPDATE job_invoice_reconciliation_queue SET status='pending',next_attempt_at=NOW();`);
+      const recovered=await processOneJobInvoiceReconciliation(replacementProvider);
+      assert.equal('replacementIssued' in recovered && recovered.replacementIssued,true);
+      assert.equal(calls.length,2,'known publication recovers attachment without provider re-entry');
+      assert.equal((await database.query('SELECT square_invoice_id FROM job_closeouts')).rows[0].square_invoice_id,'replacement-invoice');
+      assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,1);
+    } finally {
+      storage.getLead=priorLead;squareInvoiceService.createInvoiceForLead=priorCreate;
+      process.env.JOB_INVOICE_REPLACEMENT_ENABLED='false';
+      if(priorAdapter===undefined)delete process.env.SQUARE_JOB_PAYMENT_LEDGER_ENABLED;
+      else process.env.SQUARE_JOB_PAYMENT_LEDGER_ENABLED=priorAdapter;
+    }
+    console.log('PASS: actual worker resumes interrupted draft issuance with identical inputs and recovers published replacement attachment without provider re-entry');
+  }
   console.log('PASS: replacement attachment requires saved provider phases and closed predecessors; link, notice and attachment audit commit together and replay once');
   console.log('PASS: canceled partial invoice preserves its audit binding, corrects the remainder atomically and retains replacement work');
   await reset(); inspectHook=async () => { await pay('during-inspection',9000); };

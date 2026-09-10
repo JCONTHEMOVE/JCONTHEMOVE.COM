@@ -86,9 +86,10 @@ export async function finishReconciledCloseout(claim: InvoiceReconciliationClaim
       await queuePaidCloseoutNotice(client,{leadId:claim.lead_id,closeoutId:closeout.id,quoteId:quote.id,totalCents:total});
       closed = true;
     }
-    if (!await finishJobInvoiceReconciliation(claim,!needsReplacement,client)) throw new Error('Reconciliation completion lost its claim');
+    const pendingReplacement=!closed && (await client.query('SELECT request_key FROM job_invoice_replacements WHERE lead_id=$1 AND attached_invoice_id IS NULL LIMIT 1',[claim.lead_id])).rows.length>0;
+    if (!await finishJobInvoiceReconciliation(claim,!needsReplacement && !pendingReplacement,client)) throw new Error('Reconciliation completion lost its claim');
     await client.query('COMMIT');
-    return { closed, needsReplacement, replacementRequest };
+    return { closed, needsReplacement, replacementRequest, pendingReplacement };
   } catch(error) { await client.query('ROLLBACK').catch(()=>undefined); throw error; }
   finally { client.release(); }
 }
