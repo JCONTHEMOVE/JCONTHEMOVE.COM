@@ -4,6 +4,8 @@ Updated September 9, 2026. This register distinguishes checked code from live se
 
 ## Current release and service
 
+- Canonical customer approval now rejects overpayment instead of clamping its negative remainder to zero and treating it as reconciled. A one-cent-overpayment disposable SQL regression verifies no closeout, reward-queue or financial-notice change; the existing exactly funded approval remains covered. The guard also requires a zero refund count. This does not implement refund or issued-reward reversal policy, and no live payment was made.
+
 - Recovery now discovers customer-approved closeouts even when no local invoice exists. An underfunded approved closeout stays in reconciliation retry, clears any obsolete lead payment URL and retains approved status so the customer's existing request can resume. The scan preserves active/pending work and retry backoff. A disposable SQL worker test covers discovery, retained approval, retry state and absence of notices. Issuing corrected replacement invoices and resolving unknown provider outcomes remain open; no provider operation was performed for this check.
 
 - Final-invoice attachment now rechecks canonical funding while holding the job lock. Another-order payment or any refund prevents an obsolete balance link and notice from being attached; partial payments on the same invoice count toward that invoice's collection capacity. Disposable SQL tests cover both paths and rejected refunds without notices. Corrected replacement issuance remains open; this closes an attachment race prerequisite, not the complete replacement workflow. No production payment or message was sent.

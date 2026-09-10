@@ -25,8 +25,8 @@ export async function approveCanonicalCloseout(closeoutId: string) {
     }
     const sums = (await client.query(JOB_PAYMENT_TOTALS_SQL, [job.id])).rows[0];
     const paid = Number(sums.paid);
-    if (!Number.isSafeInteger(paid) || paid < 0 || Number(sums.refund_count) > 0
-        || Math.max(0, finalCents - paid) !== expectedBalance) throw new Error('Closeout payment coverage requires reconciliation');
+    if (!Number.isSafeInteger(paid) || paid < 0 || paid > finalCents || Number(sums.refund_count) !== 0
+        || finalCents - paid !== expectedBalance) throw new Error('Closeout payment coverage requires reconciliation');
     const quotes = await client.query(`SELECT * FROM quote_revisions WHERE lead_id=$1
       AND status IN ('approved','sent') AND approved_at IS NOT NULL ORDER BY revision DESC LIMIT 1 FOR UPDATE`, [job.id]);
     const source = quotes.rows[0];

@@ -145,6 +145,16 @@ try {
   }
   await confirmJobPayment({ ...deposit, providerPaymentId: 'closeout-balance', quoteRevisionId: approvedCloseout.quoteRevisionId, amountCents: 9000 });
   await database.exec("UPDATE job_closeouts SET status='awaiting_customer',balance_due=0 WHERE id='closeout'");
+  await confirmJobPayment({ ...deposit, providerPaymentId:'closeout-overpayment',
+    quoteRevisionId:approvedCloseout.quoteRevisionId,amountCents:1 }, {deferSettlement:true});
+  const beforeOverpaymentApproval=(await database.query("SELECT * FROM job_closeouts WHERE id='closeout'")).rows[0];
+  const beforeRewardQueue=(await database.query("SELECT * FROM job_reward_queue WHERE lead_id='closeout-job'")).rows;
+  await assert.rejects(approveCanonicalCloseout('closeout'),/payment coverage requires reconciliation/);
+  assert.deepEqual((await database.query("SELECT * FROM job_closeouts WHERE id='closeout'")).rows[0],beforeOverpaymentApproval);
+  assert.deepEqual((await database.query("SELECT * FROM job_reward_queue WHERE lead_id='closeout-job'")).rows,beforeRewardQueue);
+  assert.equal((await database.query("SELECT * FROM job_financial_notifications WHERE lead_id='closeout-job'")).rows.length,0);
+  await database.exec("DELETE FROM job_confirmed_payments WHERE provider_payment_id='closeout-overpayment'");
+  console.log('PASS: customer approval rejects even a one-cent overpayment without changing closeout, reward queue or notices');
   failNoticeWrite=true;
   await assert.rejects(approveCanonicalCloseout('closeout'),/injected notice write failure/);
   failNoticeWrite=false;
