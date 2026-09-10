@@ -132,7 +132,22 @@ try {
   await reset(); await pay('own-partial',2000,'final-order'); status='PARTIALLY_PAID';
   assert.equal((await processOneJobInvoiceReconciliation(api)).status,'done'); assert.equal(cancels,0);
   await pay('other-partial',1000);
-  assert.equal((await processOneJobInvoiceReconciliation(api)).status,'done'); assert.equal(cancels,1);
+  failFinalization=true;
+  assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry'); assert.equal(cancels,1);
+  failFinalization=false;
+  assert.equal(Number((await database.query('SELECT balance_due FROM job_closeouts')).rows[0].balance_due),90,'partial closeout update rolls back with lead failure');
+  await database.exec("UPDATE job_invoice_reconciliation_queue SET next_attempt_at=NOW()-INTERVAL '1 minute'");
+  const replacement=await processOneJobInvoiceReconciliation(api);
+  assert.equal(replacement.status,'retry'); assert.equal('needsReplacement' in replacement && replacement.needsReplacement,true);
+  assert.equal(cancels,1,'replacement recovery does not cancel twice');
+  const remaining=(await database.query('SELECT final_balance_amount,final_invoice_url,payment_paid_at FROM leads')).rows[0];
+  assert.equal(Number(remaining.final_balance_amount),60); assert.equal(remaining.final_invoice_url,null); assert.equal(remaining.payment_paid_at,null);
+  const partialCloseout=(await database.query('SELECT status,balance_due,square_invoice_id FROM job_closeouts')).rows[0];
+  assert.equal(partialCloseout.status,'balance_due'); assert.equal(Number(partialCloseout.balance_due),60); assert.equal(partialCloseout.square_invoice_id,'invoice');
+  assert.equal((await database.query('SELECT status FROM job_invoice_reconciliation_queue')).rows[0].status,'retry');
+  assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,0,'no replacement or paid message before a replacement exists');
+  await assert.rejects(attachCanonicalFinalInvoice(attachment),/balance requires reconciliation/);
+  console.log('PASS: canceled partial invoice preserves its audit binding, corrects the remainder atomically and retains replacement work');
   await reset(); inspectHook=async () => { await pay('during-inspection',9000); };
   assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry'); assert.equal(cancels,0);
   assert.equal((await processOneJobInvoiceReconciliation(api)).status,'done'); assert.equal(cancels,1);
@@ -143,7 +158,7 @@ try {
     amountCents:100,giftFundedCents:0,currency:'USD',refundedAt:'2026-09-09T13:00:00Z'});
   assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry'); assert.equal(cancels,0);
   await reset(); status='CANCELED';
-  assert.equal((await processOneJobInvoiceReconciliation(api)).status,'done');
+  assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry');
   assert.equal((await database.query('SELECT status FROM square_invoices')).rows[0].status,'canceled');
   // Run the default provider adapter and actual installed SDK with intercepted
   // HTTP, including identity/location checks and the real cancellation helper.

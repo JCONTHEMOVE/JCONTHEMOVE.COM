@@ -45,6 +45,22 @@ export async function finishReconciledCloseout(claim: InvoiceReconciliationClaim
     const paid = Number(sums.paid);
     if (!Number.isSafeInteger(paid) || paid < 0 || paid > total || Number(sums.refund_count)!==0) throw new Error('Payment coverage requires review');
     let closed = false;
+    let needsReplacement = false;
+    if (paid < total && closeout && input.invoices.length > 0
+        && input.invoices.every(invoice=>['PAID','CANCELED','FAILED'].includes(invoice.status))) {
+      if (job.status !== 'completed' || !closeout.customer_approved_at || !['approved','balance_due'].includes(closeout.status)
+          || closeout.pricing_snapshot?.finalQuoteRevisionId !== quote.id
+          || Math.round(Number(closeout.calculated_final_total)*100)!==total) {
+        throw new Error('Replacement invoice basis requires review');
+      }
+      const balance = (total-paid)/100;
+      // Retain the old invoice binding for audit/replacement coordination, but
+      // never present its canceled payment link as a way to pay this remainder.
+      await client.query("UPDATE job_closeouts SET status='balance_due',balance_due=$2,updated_at=NOW() WHERE id=$1",[closeout.id,balance]);
+      await client.query(`UPDATE leads SET closeout_status='balance_due',financial_status='balance_due',
+        final_balance_amount=$2,final_invoice_url=NULL WHERE id=$1`,[claim.lead_id,balance]);
+      needsReplacement = true;
+    }
     if (paid === total && closeout) {
       if (job.status !== 'completed' || !closeout.customer_approved_at || !['approved','balance_due','paid'].includes(closeout.status)
           || closeout.pricing_snapshot?.finalQuoteRevisionId !== quote.id
@@ -59,9 +75,9 @@ export async function finishReconciledCloseout(claim: InvoiceReconciliationClaim
       await queuePaidCloseoutNotice(client,{leadId:claim.lead_id,closeoutId:closeout.id,quoteId:quote.id,totalCents:total});
       closed = true;
     }
-    if (!await finishJobInvoiceReconciliation(claim,true,client)) throw new Error('Reconciliation completion lost its claim');
+    if (!await finishJobInvoiceReconciliation(claim,!needsReplacement,client)) throw new Error('Reconciliation completion lost its claim');
     await client.query('COMMIT');
-    return { closed };
+    return { closed, needsReplacement };
   } catch(error) { await client.query('ROLLBACK').catch(()=>undefined); throw error; }
   finally { client.release(); }
 }

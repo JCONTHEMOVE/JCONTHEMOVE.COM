@@ -124,6 +124,7 @@ export async function processOneJobInvoiceReconciliation(injectedProvider?: Invo
       return { status:'retry' as const,canceled };
     }
     const result = await finishReconciledCloseout(claim,{quoteId:initial.quoteId,totalCents:initial.total,invoices:evidence});
+    if (result.needsReplacement) return { status:'retry' as const,canceled,needsReplacement:true };
     return { status:'done' as const,canceled,closeoutPaid:result.closed };
   } catch {
     await finishJobInvoiceReconciliation(claim, false);
