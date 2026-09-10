@@ -7,6 +7,7 @@ import { processCanonicalSquareWebhook } from '../server/services/canonicalSquar
 import { createDisposableLedgerDatabase } from './disposable-ledger-database';
 import { createSquareWebhookHandler } from '../server/squareWebhook';
 import { checkSignedPaymentSettlement } from './check-signed-payment-settlement';
+import { checkSignedInvoiceCheckout } from './check-signed-invoice-checkout';
 
 // Real adapter, SDK decoding and SQL; every provider request is intercepted.
 const database = await createDisposableLedgerDatabase(process.argv[2]);
@@ -231,6 +232,9 @@ try {
       assert.deepEqual((await database.query('SELECT * FROM commerce_checkout_intents')).rows, checkout);
     }
     console.log('PASS: completed signed payload preserves ordinary checkout with either ledger flag off and replays without duplicate funding or wallet effects');
+    const beforeInvoiceRequests = requests.length;
+    await checkSignedInvoiceCheckout(database, send);
+    assert.equal(requests.length, beforeInvoiceRequests, 'standalone invoice checkout must not call the provider');
   } finally {
     await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
   }
