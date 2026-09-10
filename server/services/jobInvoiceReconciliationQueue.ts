@@ -42,6 +42,9 @@ export async function enqueueInvoiceReconciliationBacklog() {
   const result = await pool.query(`INSERT INTO job_invoice_reconciliation_queue(lead_id)
     SELECT DISTINCT lead_id FROM square_invoices WHERE lead_id IS NOT NULL
       AND purpose='final_balance' AND status IN ('draft','sent')
+    UNION
+    SELECT lead_id FROM job_closeouts WHERE lead_id IS NOT NULL
+      AND customer_approved_at IS NOT NULL AND status IN ('approved','balance_due')
     ON CONFLICT(lead_id) DO UPDATE SET generation=job_invoice_reconciliation_queue.generation+1,
       status='pending',next_attempt_at=NOW(),completed_at=NULL,last_failure_code=NULL,updated_at=NOW()
     WHERE job_invoice_reconciliation_queue.status='done' RETURNING lead_id`);

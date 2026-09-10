@@ -46,7 +46,8 @@ export async function finishReconciledCloseout(claim: InvoiceReconciliationClaim
     if (!Number.isSafeInteger(paid) || paid < 0 || paid > total || Number(sums.refund_count)!==0) throw new Error('Payment coverage requires review');
     let closed = false;
     let needsReplacement = false;
-    if (paid < total && closeout && input.invoices.length > 0
+    if (paid < total && closeout
+        && (input.invoices.length > 0 || closeout.customer_approved_at || ['approved','balance_due'].includes(closeout.status))
         && input.invoices.every(invoice=>['PAID','CANCELED','FAILED'].includes(invoice.status))) {
       if (job.status !== 'completed' || !closeout.customer_approved_at || !['approved','balance_due'].includes(closeout.status)
           || closeout.pricing_snapshot?.finalQuoteRevisionId !== quote.id
@@ -56,7 +57,10 @@ export async function finishReconciledCloseout(claim: InvoiceReconciliationClaim
       const balance = (total-paid)/100;
       // Retain the old invoice binding for audit/replacement coordination, but
       // never present its canceled payment link as a way to pay this remainder.
-      await client.query("UPDATE job_closeouts SET status='balance_due',balance_due=$2,updated_at=NOW() WHERE id=$1",[closeout.id,balance]);
+      // Without a local invoice, preserve approved status so the authorized
+      // customer retry can resume its existing provider request identity.
+      await client.query("UPDATE job_closeouts SET status=$3,balance_due=$2,updated_at=NOW() WHERE id=$1",
+        [closeout.id,balance,input.invoices.length ? 'balance_due' : closeout.status]);
       await client.query(`UPDATE leads SET closeout_status='balance_due',financial_status='balance_due',
         final_balance_amount=$2,final_invoice_url=NULL WHERE id=$1`,[claim.lead_id,balance]);
       needsReplacement = true;

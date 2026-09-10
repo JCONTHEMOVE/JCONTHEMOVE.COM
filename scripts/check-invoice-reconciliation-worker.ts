@@ -174,6 +174,24 @@ try {
   await reset(); status='CANCELED';
   assert.equal((await processOneJobInvoiceReconciliation(api)).status,'retry');
   assert.equal((await database.query('SELECT status FROM square_invoices')).rows[0].status,'canceled');
+  await reset();
+  const savedInvoice=(await database.query('SELECT * FROM square_invoices')).rows[0];
+  await database.exec('DELETE FROM square_invoices; DELETE FROM job_invoice_reconciliation_queue');
+  assert.equal(await enqueueInvoiceReconciliationBacklog(),1,'approved closeout without an invoice must be discovered');
+  assert.equal(await enqueueInvoiceReconciliationBacklog(),0,'pending recovery must retain its generation');
+  const missingInvoice=await processOneJobInvoiceReconciliation({
+    inspect:async()=>{throw new Error('No invoice should be inspected');},
+    cancel:async()=>{throw new Error('No invoice should be canceled');},
+  });
+  assert.equal(missingInvoice.status,'retry');
+  assert.equal('needsReplacement' in missingInvoice && missingInvoice.needsReplacement,true);
+  assert.equal((await database.query('SELECT status FROM job_closeouts')).rows[0].status,'approved','preserve customer retry');
+  assert.equal((await database.query('SELECT final_invoice_url FROM leads')).rows[0].final_invoice_url,null);
+  assert.equal((await database.query('SELECT status FROM job_invoice_reconciliation_queue')).rows[0].status,'retry');
+  assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,0);
+  assert.equal(await enqueueInvoiceReconciliationBacklog(),0,'scan must not bypass retry backoff');
+  await database.query('INSERT INTO square_invoices SELECT * FROM jsonb_populate_record(NULL::square_invoices,$1::jsonb)',[JSON.stringify(savedInvoice)]);
+  console.log('PASS: invoice-free approved closeouts are discovered and remain queued without losing customer retry or sending notices');
   // Run the default provider adapter and actual installed SDK with intercepted
   // HTTP, including identity/location checks and the real cancellation helper.
   process.env.SQUARE_JOB_PAYMENT_LEDGER_ENABLED='true'; process.env.SQUARE_ENVIRONMENT='production';
