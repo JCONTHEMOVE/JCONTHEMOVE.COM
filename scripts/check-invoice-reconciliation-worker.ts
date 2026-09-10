@@ -68,6 +68,20 @@ try {
   };
   await reset();
   const attachment={leadId:'job',closeoutId:'closeout',quoteId:'quote',invoiceId:'invoice',invoiceUrl:'https://example.invalid/invoice',balanceDue:90};
+  await pay('before-attachment',1000);
+  await assert.rejects(attachCanonicalFinalInvoice(attachment),/funding requires reconciliation/);
+  assert.equal((await database.query('SELECT status FROM job_closeouts')).rows[0].status,'approved');
+  assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,0);
+  await reset();
+  await pay('same-invoice-partial',2000,'final-order');
+  assert.equal((await attachCanonicalFinalInvoice(attachment)).status,'balance_due');
+  await reset();
+  await recordConfirmedJobRefund({provider:'square:production',providerPaymentId:'deposit',providerRefundId:'attachment-refund',
+    amountCents:100,giftFundedCents:0,currency:'USD',refundedAt:'2026-09-09T13:00:00Z'});
+  await assert.rejects(attachCanonicalFinalInvoice(attachment),/funding requires reconciliation/);
+  assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length,0);
+  await reset();
+  console.log('PASS: attachment rechecks current funding, permits own-invoice partial payments and rejects other payments/refunds without notices');
   failFinalization=true;
   await assert.rejects(attachCanonicalFinalInvoice(attachment),/Injected financial closeout failure/);
   failFinalization=false;

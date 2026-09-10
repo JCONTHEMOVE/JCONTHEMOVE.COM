@@ -18,7 +18,7 @@ export async function checkCloseoutRequestRecovery(executeSql:(sql:string)=>Prom
     CREATE TABLE job_change_orders(id text,code text,description text,quantity numeric,unit_price numeric,total numeric,
       catalog_backed boolean,customer_acknowledged_at timestamptz,closeout_id text,created_at timestamptz);
     CREATE TABLE square_invoices(square_invoice_id text PRIMARY KEY,lead_id text,closeout_id text,quote_revision_id text,
-      amount numeric,currency text,status text);`);
+      amount numeric,currency text,status text,square_order_id text);`);
   const token='synthetic-closeout-recovery';
   await pool.query("UPDATE job_closeouts SET customer_token_hash=$1,customer_token_expires_at=NOW()+INTERVAL '1 hour' WHERE id='closeout'",[crypto.createHash('sha256').update(token).digest('hex')]);
   const original=(await pool.query("SELECT customer_approved_at,pricing_snapshot FROM job_closeouts WHERE id='closeout'")).rows[0];
@@ -29,7 +29,7 @@ export async function checkCloseoutRequestRecovery(executeSql:(sql:string)=>Prom
     requests.push(args);
     if(requests.length===1)throw new Error('Synthetic lost invoice response');
     const options=args[5] as {quoteRevisionId:string};
-    await pool.query(`INSERT INTO square_invoices VALUES('recovery-invoice','closeout-job','closeout',$1,90,'USD','sent')`,[options.quoteRevisionId]);
+    await pool.query(`INSERT INTO square_invoices VALUES('recovery-invoice','closeout-job','closeout',$1,90,'USD','sent','recovery-order')`,[options.quoteRevisionId]);
     return {squareInvoiceId:'recovery-invoice',invoiceUrl:'https://example.invalid/recovery'};
   }) as typeof squareInvoiceService.createInvoiceForLead;
   const app=express();app.use(express.json());app.use('/api',router);

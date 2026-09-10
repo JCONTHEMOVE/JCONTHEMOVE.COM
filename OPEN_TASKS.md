@@ -4,6 +4,8 @@ Updated September 9, 2026. This register distinguishes checked code from live se
 
 ## Current release and service
 
+- Final-invoice attachment now rechecks canonical funding while holding the job lock. Another-order payment or any refund prevents an obsolete balance link and notice from being attached; partial payments on the same invoice count toward that invoice's collection capacity. Disposable SQL tests cover both paths and rejected refunds without notices. Corrected replacement issuance remains open; this closes an attachment race prerequisite, not the complete replacement workflow. No production payment or message was sent.
+
 - September 10 production metadata inspection confirmed a read-only transaction against the verified Replit hostname: 201 public tables and 2,713 columns. Existing booking/closeout/invoice and alert tables are present, with the expected per-recipient/channel and per-webhook unique constraints. Quick Book sessions and the canonical payment, refund, reward queue, reconciliation, financial notice and invoice-intent tables are absent. Keep their release flags disabled. Raw metadata remains private; no customer rows, migrations, restore or new database were involved. This does not prove a successful backup or isolated recovery. See `DATABASE_RECOVERY_RELEASE.md`.
 
 - Latest application validation: `469af79dc975c315c3209fc227ac6aad447ab3a7` passed every Release Candidate Validation step in [run 34430456839](https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/34430456839). Older candidate references below are historical. Production deployment and owner/provider acceptance remain outstanding.

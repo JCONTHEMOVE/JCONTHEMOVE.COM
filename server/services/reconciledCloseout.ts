@@ -95,7 +95,7 @@ export async function attachCanonicalFinalInvoice(input: {
     const closeout=(await client.query('SELECT * FROM job_closeouts WHERE id=$1 AND lead_id=$2 FOR UPDATE',[input.closeoutId,input.leadId])).rows[0];
     const quote=(await client.query(`SELECT id,customer_total,currency FROM quote_revisions WHERE lead_id=$1
       AND approved_at IS NOT NULL AND status IN ('approved','sent') ORDER BY revision DESC LIMIT 1 FOR SHARE`,[input.leadId])).rows[0];
-    const invoice=(await client.query(`SELECT amount,currency,status FROM square_invoices WHERE square_invoice_id=$1
+    const invoice=(await client.query(`SELECT amount,currency,status,square_order_id FROM square_invoices WHERE square_invoice_id=$1
       AND lead_id=$2 AND closeout_id=$3 AND quote_revision_id=$4 FOR SHARE`,
     [input.invoiceId,input.leadId,input.closeoutId,input.quoteId])).rows[0];
     if (!job || !closeout?.customer_approved_at || closeout.pricing_snapshot?.finalQuoteRevisionId!==input.quoteId
@@ -114,6 +114,19 @@ export async function attachCanonicalFinalInvoice(input: {
     if (!['approved','balance_due'].includes(closeout.status)) throw new Error('Closeout approval changed');
     if (!['draft','sent'].includes(invoice.status) || !Number.isFinite(input.balanceDue) || input.balanceDue<=0
         || Math.round(Number(closeout.balance_due)*100)!==Math.round(input.balanceDue*100)) throw new Error('Final invoice balance requires reconciliation');
+    // Provider publication and this request can finish after another payment.
+    // Payments on this invoice reduce its outstanding amount, whereas payments
+    // on other orders reduce how much this invoice may collect in total.
+    const sums=(await client.query(JOB_PAYMENT_TOTALS_SQL,[input.leadId])).rows[0];
+    const own=(await client.query(`SELECT COALESCE(SUM(amount_cents),0)::text AS paid FROM job_confirmed_payments
+      WHERE lead_id=$1 AND metadata->>'squareOrderId'=$2 AND provider IN ('square:production','square:sandbox')`,
+    [input.leadId,invoice.square_order_id])).rows[0];
+    const paid=Number(sums.paid), ownPaid=Number(own.paid), amount=Math.round(input.balanceDue*100);
+    if (!invoice.square_order_id || !Number.isSafeInteger(paid) || paid<0 || !Number.isSafeInteger(ownPaid)
+        || ownPaid<0 || ownPaid>=amount || ownPaid>paid || Number(sums.refund_count)!==0
+        || Math.round(Number(quote.customer_total)*100)-paid+ownPaid!==amount) {
+      throw new Error('Final invoice funding requires reconciliation');
+    }
     await client.query("UPDATE job_closeouts SET status='balance_due',square_invoice_id=$2,updated_at=NOW() WHERE id=$1",[input.closeoutId,input.invoiceId]);
     await client.query("UPDATE leads SET closeout_status='balance_due',financial_status='balance_due',final_invoice_url=$2,final_balance_amount=$3 WHERE id=$1",
       [input.leadId,input.invoiceUrl,input.balanceDue]);
