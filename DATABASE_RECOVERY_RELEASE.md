@@ -12,6 +12,14 @@ The same documentation says restoring a scheduled backup switches the connected 
 
 ## Evidence needed to close recovery
 
+### Production schema baseline, September 10
+
+A metadata-only PostgreSQL inspection on September 10, 2026 connected to the previously verified Replit production hostname. The transaction used repeatable-read isolation, confirmed `transaction_read_only = on`, bounded statement and lock waits, and rolled back. It inspected public-schema columns, constraints and indexes without reading customer rows or running migrations. Raw evidence stays private outside the repository.
+
+The inventory contains 201 public tables and 2,713 columns. Existing `leads`, `quote_revisions`, `job_closeouts`, `square_invoices`, `square_webhook_events`, `job_alert_deliveries` and `job_webhook_deliveries` are present. Alert constraints include unique `(event_id, recipient_user_id, channel)` and webhook unique `(event_id, webhook_url_hash)`.
+
+The candidate's `quick_booking_sessions`, `job_confirmed_payments`, `job_confirmed_refunds`, `job_reward_queue`, `job_invoice_reconciliation_queue`, `job_financial_notifications` and `square_invoice_intents` are absent. Keep their release flags disabled pending migration and acceptance gates. This inventory establishes a current schema baseline only: it is not a same-recovery-point baseline, full migration compatibility check, successful backup or isolated restore.
+
 1. Record the successful backup/recovery point, its time and the provider's retention window.
 2. Prove the restore target is isolated from both production and the existing development database. Record project, endpoint and database identity privately, without credentials. Obtain specific approval for the restore operation and any added recurring cost.
 3. Restore to that target without starting the application, enabling jobs or webhooks, or running migrations. Record start/end times and provider outcome.
