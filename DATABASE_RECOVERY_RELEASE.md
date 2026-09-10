@@ -1,8 +1,14 @@
 # Replit production recovery gate
 
-The production database is owned through the original Replit project. September 9 inspection confirms Active, 103.88 MB of 100 GB, seven-day point-in-time recovery and daily backups retained seven days. This is configuration evidence. A successful scheduled backup and isolated restore have not been verified. The restore dialog exposes a timestamp and Restore action, without an isolated destination selector; it was canceled.
+The production database is owned through the original Replit project. A fresh inspection at approximately September 10, 2026 00:51 UTC (September 9 evening in America/Chicago) confirms Active, 103.9 MB of 100 GB, seven-day point-in-time recovery and daily backups retained seven days. Expanding Scheduled backups still shows `No backups yet`. This is configuration evidence, not a successful backup or isolated restore. No restore, credential change, schedule change or database creation occurred during this recheck.
 
 Use Replit first. Additional Neon databases are optional only after identifying a suitable recovery destination. Do not use the unrelated connected Neon projects as evidence for this database.
+
+## First scheduled backup timing and isolation
+
+Replit's current [data recovery documentation](https://docs.replit.com/features/data-and-storage/data-recovery) says scheduled backups create one daily restore point near midnight in the browser time zone used when the schedule is enabled or updated. Therefore, an empty list before the first scheduled midnight does not establish a backup failure. The next useful backup-history check is after that scheduled time; do not repeatedly reset the schedule. A successful entry, recovery-point time and retention still need to be recorded.
+
+The same documentation says restoring a scheduled backup switches the connected database to that data. The inspected restore control is not proof of an isolated destination and must not be used for the recovery drill. Replit documents production access from PostgreSQL-compatible clients in [Connection details](https://docs.replit.com/features/data-and-storage/connection-details), but that does not establish a separate restore target. The isolated destination and same-point baseline gates below remain open. A newly remixed development database is also not proof that production data was restored.
 
 ## Evidence needed to close recovery
 
