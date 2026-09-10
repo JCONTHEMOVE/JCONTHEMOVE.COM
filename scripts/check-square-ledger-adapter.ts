@@ -192,7 +192,7 @@ try {
     assert.deepEqual((await database.query('SELECT tokens_disbursed_at,completion_rewarded_at FROM leads')).rows, rewardMarkers);
     console.log('PASS: signed refund-first delivery, provider amount, event/refund replay and conflict rollback without paid or reward handoff');
     amount = 10000;
-    await checkSignedPaymentSettlement(database, () => send(event.replace('signed-event', 'settlement-event')));
+    await checkSignedPaymentSettlement(database, (identity = 'settlement-event') => send(event.replace('signed-event', identity)));
   } finally {
     await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
   }

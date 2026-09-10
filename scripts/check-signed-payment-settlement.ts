@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { storage } from '../server/storage';
-import { processOneJobReward } from '../server/services/jobRewardWorker';
+import { processOneJobReward, enqueueCompletedPaidJobs } from '../server/services/jobRewardWorker';
 import { disburseJobTokens } from '../server/services/disburse-job-tokens';
 import { pool } from '../server/db';
 import { processOneJobInvoiceReconciliation } from '../server/services/jobInvoiceReconciliationWorker';
@@ -10,7 +10,7 @@ import { processOneJobInvoiceReconciliation } from '../server/services/jobInvoic
 export async function checkSignedPaymentSettlement(database: {
   exec(sql: string): Promise<unknown>;
   query(sql: string, args?: unknown[]): Promise<{ rows: any[] }>;
-}, sendPayment: () => Promise<Response>) {
+}, sendPayment: (identity?: string) => Promise<Response>) {
   const original = { getLead: storage.getLead, getUser: storage.getUser, updateLeadQuote: storage.updateLeadQuote };
   const originalQuery = pool.query;
   const settings = { JOB_PAYMENT_REWARDS_ENABLED: 'true', JOB_INVOICE_RECONCILIATION_ENABLED: 'true', JC_JOB_EVENT_WEBHOOK_URLS: '', JOB_EVENT_WEBHOOK_URLS: '',
@@ -100,6 +100,37 @@ export async function checkSignedPaymentSettlement(database: {
     assert.deepEqual(await balances(), settled);
     assert.equal((await database.query('SELECT status FROM job_reward_queue')).rows[0].status, 'done');
     console.log('PASS: signed payment through real issuance, interrupted crew wallet recovery, durable completion and duplicate suppression');
+    // Independent fixture lifecycle: retain event audit but reset this synthetic job's effects.
+    await database.exec(`DELETE FROM job_financial_notifications; DELETE FROM job_reward_queue;
+      DELETE FROM job_invoice_reconciliation_queue; DELETE FROM rewards; DELETE FROM wallet_accounts;
+      DELETE FROM job_jcmoves_ledger; DELETE FROM job_confirmed_payments;
+      UPDATE leads SET status='new',payment_paid_at=NULL,tokens_disbursed_at=NULL,completion_rewarded_at=NULL,
+        closeout_status=NULL,financial_status=NULL,final_balance_amount=NULL;
+      UPDATE job_closeouts SET status='approved',balance_due=100;`);
+    assert.equal((await sendPayment('payment-before-completion')).status, 200);
+    assert.ok((await database.query('SELECT payment_paid_at FROM leads')).rows[0].payment_paid_at);
+    assert.equal((await database.query('SELECT * FROM job_reward_queue')).rows.length, 0);
+    assert.equal(await enqueueCompletedPaidJobs(), 0);
+    assert.equal((await processOneJobReward(issue)).status, 'idle');
+    assert.equal((await processOneJobInvoiceReconciliation()).status, 'retry');
+    assert.equal((await database.query('SELECT status FROM job_closeouts')).rows[0].status, 'approved');
+    assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length, 0);
+    assert.deepEqual(await balances(), []);
+    // Models the persisted completion boundary; the authenticated completion route is separate acceptance.
+    await database.exec("UPDATE leads SET status='completed'");
+    assert.equal(await enqueueCompletedPaidJobs(), 1);
+    assert.equal(await enqueueCompletedPaidJobs(), 0);
+    await database.exec("UPDATE job_invoice_reconciliation_queue SET next_attempt_at=NOW()-INTERVAL '1 second'");
+    assert.equal((await processOneJobInvoiceReconciliation()).status, 'done');
+    assert.equal((await processOneJobReward(issue)).status, 'done');
+    assert.deepEqual(await balances(), settled);
+    assert.equal((await database.query('SELECT * FROM rewards')).rows.length, 2);
+    assert.equal((await database.query('SELECT * FROM job_financial_notifications')).rows.length, 1);
+    assert.equal((await sendPayment('payment-before-completion')).status, 200);
+    assert.equal(await enqueueCompletedPaidJobs(), 0);
+    assert.equal((await processOneJobReward(issue)).status, 'idle');
+    assert.deepEqual(await balances(), settled);
+    console.log('PASS: signed payment before completion stays unawarded, completion sweep reconciles and settles once');
   } finally {
     Object.assign(storage, original);
     pool.query = originalQuery;
