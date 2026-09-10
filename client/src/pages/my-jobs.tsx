@@ -10,16 +10,10 @@ import {
   Pause, SkipForward, RotateCw
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import MarketplaceActionMatrix from "@/components/MarketplaceActionMatrix";
 import MarketplaceShapeBadge from "@/components/MarketplaceShapeBadge";
-import MarketplaceShapeContext from "@/components/MarketplaceShapeContext";
-import MarketplaceProcessGuide from "@/components/MarketplaceProcessGuide";
-import MarketplaceSourceFlowStrip from "@/components/MarketplaceSourceFlowStrip";
-import SmartBookingGuidanceCard from "@/components/SmartBookingGuidanceCard";
 import { BookingMenuIntelligenceCard } from "@/components/BookingMenuIntelligenceCard";
-import { extractBookingMenuIntelligence, extractSmartBookingAnswersFromQuoteSnapshot } from "@/lib/booking-menu-intelligence";
+import { extractBookingMenuIntelligence } from "@/lib/booking-menu-intelligence";
 import type { LucideIcon } from "lucide-react";
-import type { SmartBookingAnswers } from "@shared/smartBookingEngine";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -116,15 +110,6 @@ function getStepIndex(status: string): number {
   if (["dispatched", "available", "confirmed", "in_progress", "accepted"].includes(status)) return 4;
   if (status === "cancelled") return -1;
   return 0;
-}
-
-function customerActionPhaseForJob(job: CustomerJob): "start" | "progress" | "finish" {
-  const status = String(job.closeoutStatus || job.operationalStatus || job.status || "").toLowerCase();
-  if (["completed", "paid"].includes(status)) return "finish";
-  if (["quoted", "quote_sent", "invoice_sent", "available", "confirmed", "accepted", "in_progress", "dispatched"].includes(status)) {
-    return "progress";
-  }
-  return "start";
 }
 
 function customerDisplayStatus(job: CustomerJob) {
@@ -362,74 +347,6 @@ function formatAddress(addr: string) {
   return addr;
 }
 
-function extractZipFromText(value: string | null | undefined): string | undefined {
-  const match = value?.match(/\b\d{5}(?:-\d{4})?\b/);
-  return match?.[0];
-}
-
-function readChatbotAnswers(raw: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed?._source !== "chatbot" || typeof parsed.answers !== "object" || Array.isArray(parsed.answers)) {
-      return null;
-    }
-    return parsed.answers;
-  } catch {
-    return null;
-  }
-}
-
-function inferCustomerLoadType(value: string | null | undefined): string | undefined {
-  const raw = (value || "").toLowerCase();
-  if (!raw) return undefined;
-  if (/\b(load\s*(?:and|\+|\/)\s*unload|unload\s*(?:and|\+|\/)\s*load|both)\b/.test(raw)) return "Load + unload";
-  if (/\bunload(ing)?\b/.test(raw)) return "Unload only";
-  if (/\bload(ing)?\b/.test(raw)) return "Load only";
-  if (/\bdeliver(y)?|drop[-\s]?off|pickup|pick up|transport\b/.test(raw)) return "Delivery";
-  return undefined;
-}
-
-function inferCustomerTruckContext(value: string | null | undefined): string | undefined {
-  const raw = (value || "").toLowerCase();
-  if (!raw) return undefined;
-  if (/\bu-?haul|customer truck|my truck|rental truck|truck|trailer|pods?|u-?box|container\b/.test(raw)) return value || undefined;
-  if (/\bstairs?|elevator|garage|driveway|parking|basement|storage|long carry\b/.test(raw)) return value || undefined;
-  return undefined;
-}
-
-function smartBookingAnswersForCustomerJob(job: CustomerJob): SmartBookingAnswers {
-  const rawNotes = [job.details, job.notes].filter(Boolean).join("\n");
-  const chatbotAnswers = readChatbotAnswers(job.details || "") || readChatbotAnswers(job.notes || "") || {};
-  const snapshotAnswers = extractSmartBookingAnswersFromQuoteSnapshot(job.quoteSnapshot);
-  const chatbotFromZip = typeof chatbotAnswers.fromZip === "string" ? chatbotAnswers.fromZip : undefined;
-  const parsedCrew = typeof chatbotAnswers.selectedMovingRecCrew === "string" ? Number(chatbotAnswers.selectedMovingRecCrew) : null;
-  const crewSize = job.crewSize || (Number.isFinite(parsedCrew) && parsedCrew ? parsedCrew : undefined);
-
-  return {
-    ...snapshotAnswers,
-    ...chatbotAnswers,
-    serviceType: job.serviceType,
-    serviceCode: job.serviceType,
-    serviceLabel: getSvcConfig(job.serviceType).label,
-    fromAddress: job.pickupAddress,
-    pickupAddress: job.pickupAddress,
-    serviceAddress: job.pickupAddress || chatbotFromZip,
-    fromZip: extractZipFromText(job.pickupAddress) || chatbotFromZip,
-    toAddress: job.dropoffAddress,
-    dropoffAddress: job.dropoffAddress,
-    moveDate: job.moveDate || chatbotAnswers.moveDate,
-    requestedDate: job.moveDate || chatbotAnswers.moveDate,
-    crewSize,
-    phone: job.phone,
-    email: job.email,
-    fullName: job.fullName,
-    notes: rawNotes,
-    loadType: chatbotAnswers.loadType || inferCustomerLoadType(rawNotes),
-    truckSituation: chatbotAnswers.truckSituation || inferCustomerTruckContext(rawNotes),
-    truckSize: chatbotAnswers.truckSize || inferCustomerTruckContext(rawNotes),
-  };
-}
-
 // Strip leading emoji chars (like "🔥 ", "✅ ") from chatbot answer text
 function stripEmoji(str: string): string {
   return str.replace(/^[\p{Emoji}\s]+/u, "").trim();
@@ -495,9 +412,7 @@ function JobSheet({ job, open, onClose, onNewJob }: {
   const isQuoted = job.status === "quoted";
   const isActive = ["available", "confirmed", "in_progress", "accepted"].includes(job.status);
   const isDone = job.paymentStatus === "paid" || ["paid"].includes(displayStatus);
-  const guidanceAnswers = smartBookingAnswersForCustomerJob(job);
   const menuIntelligence = extractBookingMenuIntelligence(job.quoteSnapshot, svc.label);
-  const marketplaceSourceContext = menuIntelligence?.sourceSignal || null;
   const marketplaceServiceLabel = menuIntelligence?.serviceLabel || svc.label;
   const refreshCustomerJobs = () => queryClient.invalidateQueries({ queryKey: ["/api/customer/my-leads"] });
   const approveCloseout = useMutation({
@@ -553,40 +468,6 @@ function JobSheet({ job, open, onClose, onNewJob }: {
 
           {/* Visual Status Tracker */}
           <StatusTracker status={displayStatus} />
-          <SmartBookingGuidanceCard
-            answers={guidanceAnswers}
-            serviceLabel={svc.label}
-            compact
-          />
-          <MarketplaceProcessGuide
-            source={marketplaceSourceContext}
-            serviceCode={job.serviceType}
-            serviceLabel={marketplaceServiceLabel}
-            audience="customer"
-            compact
-          />
-          <MarketplaceActionMatrix
-            rail="customer"
-            phase={customerActionPhaseForJob(job)}
-            source={marketplaceSourceContext}
-            serviceCode={job.serviceType}
-            serviceLabel={marketplaceServiceLabel}
-            compact
-            limit={2}
-          />
-          <MarketplaceSourceFlowStrip
-            source={marketplaceSourceContext}
-            serviceCode={job.serviceType}
-            serviceLabel={marketplaceServiceLabel}
-            audience="customer"
-            phase={customerActionPhaseForJob(job)}
-          />
-          <MarketplaceShapeContext
-            serviceCode={job.serviceType}
-            source={marketplaceSourceContext}
-            audience="customer"
-            maxIdeas={2}
-          />
           <BookingMenuIntelligenceCard
             quoteSnapshot={job.quoteSnapshot}
             fallbackServiceLabel={marketplaceServiceLabel}
@@ -636,7 +517,7 @@ function JobSheet({ job, open, onClose, onNewJob }: {
                 <p className="text-sm text-zinc-300">Your approval is saved. Retry to finish preparing your final invoice.</p>
                 <Button className="min-h-11 h-auto w-full whitespace-normal bg-emerald-600 py-3" disabled={approveCloseout.isPending} onClick={() => approveCloseout.mutate()}>{approveCloseout.isPending ? 'Preparing final invoice…' : 'Retry final invoice'}</Button>
               </div>}
-              {job.finalInvoiceUrl && <Button className="mt-4 w-full bg-orange-500 hover:bg-orange-400" asChild><a href={job.finalInvoiceUrl} target="_blank" rel="noreferrer">Pay final balance with Square <ExternalLink className="ml-2 h-4 w-4" /></a></Button>}
+              {job.finalInvoiceUrl && <Button className="mt-4 min-h-11 h-auto w-full whitespace-normal bg-orange-500 py-3 hover:bg-orange-400" asChild><a href={job.finalInvoiceUrl} target="_blank" rel="noreferrer">Pay final balance with Square <ExternalLink className="ml-2 h-4 w-4 shrink-0" /></a></Button>}
             </div>
           )}
 
