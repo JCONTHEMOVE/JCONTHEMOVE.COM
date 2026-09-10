@@ -84,18 +84,26 @@ try {
   assert.equal(Number((await database.query("SELECT total_price FROM leads WHERE id='closeout-job'")).rows[0].total_price), 120);
   assert.equal((await getLatestApprovedQuote('closeout-job'))?.id, approvedCloseout.quoteRevisionId);
   assert.equal((await getLatestApprovedQuote('closeout-job'))?.customerTotal, 120);
-  // A failed invoice request resets approval; retry must reuse the final quote.
-  await database.exec("UPDATE job_closeouts SET status='awaiting_customer',pricing_snapshot=pricing_snapshot || '{\"invoiceDueDate\":\"2030-01-01\"}'::jsonb WHERE id='closeout'");
+  // Retry the durable approval directly, without clearing its timestamp or
+  // asking the customer to approve again after an ambiguous provider response.
+  const approvalBefore=(await database.query("SELECT customer_approved_at FROM job_closeouts WHERE id='closeout'")).rows[0].customer_approved_at;
+  failLeadWrite=true; failCloseoutWrite=true;
   const retriedCloseout = await approveCanonicalCloseout('closeout');
+  failLeadWrite=false; failCloseoutWrite=false;
   assert.equal(retriedCloseout.quoteRevisionId, approvedCloseout.quoteRevisionId);
-  assert.equal(retriedCloseout.invoiceDueDate, '2030-01-01', 'retry retains the persisted due date instead of recalculating it');
+  assert.equal(retriedCloseout.invoiceDueDate, approvedCloseout.invoiceDueDate, 'retry retains the persisted due date instead of recalculating it');
   assert.equal(retriedCloseout.invoiceRequestKey, approvedCloseout.invoiceRequestKey);
+  assert.deepEqual((await database.query("SELECT customer_approved_at FROM job_closeouts WHERE id='closeout'")).rows[0].customer_approved_at,approvalBefore);
+  await database.exec("UPDATE job_closeouts SET customer_approved_at=NULL WHERE id='closeout'");
+  await assert.rejects(approveCanonicalCloseout('closeout'),/Recorded closeout approval requires reconciliation/);
+  await database.query("UPDATE job_closeouts SET customer_approved_at=$1 WHERE id='closeout'",[approvalBefore]);
   const publication = { leadId: 'closeout-job', closeoutId: 'closeout',
     quoteRevisionId: approvedCloseout.quoteRevisionId, amount: 90 };
   await assertCanonicalFinalInvoicePublication(publication);
   await confirmJobPayment({ ...deposit, providerPaymentId: 'publication-partial',
     quoteRevisionId: approvedCloseout.quoteRevisionId, amountCents: 1000 });
   await assert.rejects(assertCanonicalFinalInvoicePublication(publication), /coverage changed/);
+  await assert.rejects(approveCanonicalCloseout('closeout'), /payment coverage requires reconciliation/);
   await database.exec("DELETE FROM job_confirmed_payments WHERE provider_payment_id='publication-partial'");
   await assert.rejects(assertCanonicalFinalInvoicePublication({ ...publication, amount: 0 }), /positive amount/);
   await assert.rejects(assertCanonicalFinalInvoicePublication({ ...publication, closeoutId: 'wrong-job-closeout' }), /approval changed/);

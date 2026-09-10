@@ -16,7 +16,8 @@ export async function approveCanonicalCloseout(closeoutId: string) {
     if (!job) throw new Error('Closeout job not found');
     const closeouts = await client.query('SELECT * FROM job_closeouts WHERE id=$1 FOR UPDATE', [closeoutId]);
     const closeout = closeouts.rows[0];
-    if (closeout?.lead_id !== job.id || closeout.status !== 'awaiting_customer') throw new Error('Closeout is not awaiting customer approval');
+    const resuming = closeout?.status === 'approved';
+    if (closeout?.lead_id !== job.id || !['awaiting_customer','approved'].includes(closeout.status)) throw new Error('Closeout is not awaiting customer approval');
     const cents = (value: unknown) => Math.round(Number(value) * 100);
     const finalCents = cents(closeout.calculated_final_total), expectedBalance = cents(closeout.balance_due);
     if (!Number.isSafeInteger(finalCents) || finalCents <= 0 || !Number.isSafeInteger(expectedBalance) || expectedBalance < 0) {
@@ -37,6 +38,19 @@ export async function approveCanonicalCloseout(closeoutId: string) {
     }
     const newer = await client.query("SELECT id FROM quote_revisions WHERE lead_id=$1 AND revision>$2 AND status='draft' LIMIT 1", [job.id, source.revision]);
     if (newer.rows.length) throw new Error('Closeout has a newer quote awaiting review');
+    if (resuming) {
+      if (!closeout.customer_approved_at || snapshot.finalQuoteRevisionId !== source.id
+          || cents(source.customer_total) !== finalCents || cents(job.total_price) !== finalCents
+          || expectedBalance <= 0 || typeof snapshot.invoiceDueDate !== 'string'
+          || !/^\d{4}-\d{2}-\d{2}$/.test(snapshot.invoiceDueDate)) {
+        throw new Error('Recorded closeout approval requires reconciliation');
+      }
+      // A timeout after approval or provider submission does not authorize a
+      // new approval, quote, due date or provider request identity.
+      await client.query('COMMIT');
+      return { quoteRevisionId:source.id as string,balanceDue:expectedBalance/100,
+        invoiceDueDate:snapshot.invoiceDueDate,invoiceRequestKey:`closeout:${closeoutId}:${source.id}` };
+    }
     let quoteRevisionId = source.id as string;
     if (cents(source.customer_total) !== finalCents) {
       quoteRevisionId = randomUUID();

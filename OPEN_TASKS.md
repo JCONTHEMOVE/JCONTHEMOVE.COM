@@ -4,6 +4,8 @@ Updated September 9, 2026. This register distinguishes checked code from live se
 
 ## Current release and service
 
+- Canonical invoice errors now preserve customer approval instead of clearing it after an ambiguous provider response. The authorized closeout endpoint can resume an approved request; the transactional approval service rechecks current funding and quote, requires the original approval evidence/due date and reuses the original request identity without rewriting approval. Disposable SQL tests cover unchanged retry, retained timestamp and rejection of missing approval or changed payments. Full endpoint/provider failure recovery and automatic replacement issuance still require acceptance.
+
 - Partial-payment recovery correction: canceled/noncollectible final invoices now leave the verified remainder on the lead and closeout, remove the obsolete payment link and keep reconciliation pending. The old invoice binding is retained for audit. Disposable worker tests cover the $120 job/$60 paid/$90 canceled invoice case, transaction rollback and late attachment. Creating the corrected replacement invoice remains open; no live invoice or notice was produced.
 
 - Current application evidence: `0ac63b3dce7d95db7328bc63d4be3cd5c8744f72` passed every Release Candidate Validation step in [run 34424405420](https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/34424405420). Earlier commit/run references below are historical evidence, not the current candidate. Production remains at the last inspected `25b985e4`; passing candidate CI does not establish deployment or owner acceptance.

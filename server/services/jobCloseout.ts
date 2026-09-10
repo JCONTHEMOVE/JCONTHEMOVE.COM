@@ -270,7 +270,8 @@ export async function rejectCustomerCloseout(token: string, note: string) {
 
 export async function approveCustomerCloseout(token: string) {
   const closeout = await loadCloseoutByToken(token);
-  if (closeout.status !== "awaiting_customer") {
+  if (closeout.status !== "awaiting_customer"
+      && !(process.env.JOB_PAYMENT_LEDGER_ENABLED === 'true' && closeout.status === 'approved')) {
     throw new Error("This closeout is not ready for customer approval");
   }
   const canonicalApproval = process.env.JOB_PAYMENT_LEDGER_ENABLED === 'true'
@@ -317,7 +318,9 @@ export async function approveCustomerCloseout(token: string) {
         idempotencyKey: canonicalApproval?.invoiceRequestKey },
     );
   } catch (error) {
-    await pool.query(
+    // Canonical approval is durable. A failed response may follow provider
+    // acceptance; preserve approval and let the same request resume safely.
+    if (!canonicalApproval) await pool.query(
       `UPDATE job_closeouts SET status='awaiting_customer', customer_approved_at=NULL, updated_at=NOW()
         WHERE id=$1 AND status='approved' AND square_invoice_id IS NULL`,
       [closeout.id],
