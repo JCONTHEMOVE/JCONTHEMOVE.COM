@@ -4,6 +4,8 @@ Updated September 10, 2026 (UTC). This register distinguishes checked code from 
 
 ## Current release and service
 
+- Actual restored-schema compatibility now also covers the complete financial migration: ten financial tables, two new sequences, required permissions and three executions alongside its prerequisites. Rollback preserved the original 202 table digests, public constraints/indexes and 63 sequence states. Historical financial reconciliation, owner policy and live acceptance remain open; production flags stay off.
+
 - Full CI run 34487745554 passed at `4e9c7652852aeaf8ff86102805c52217f0d02dc4`, including signed invoice checkout recovery/replay in PostgreSQL. Separately, actual quote/regional/Quick Book migration SQL passed three executions on the isolated restored production copy. Privileges and expected indexes/columns passed; rollback preserved all 202 table digests, public constraints/indexes and 63 sequence states. Final cutover, live owner workflows and delivery acceptance remain open.
 
 - Signed invoice checkout acceptance passed locally through the real signed handler, event/invoice claim SQL and checkout update: partial payments stop before effects, missing invoice mappings remain retryable, restored mappings complete checkout, and same/different-event replays preserve one update. Existing job funding and wallet state remain unchanged. Invoice storage is a fixture adapter; job-linked invoice accounting/grants/dispatch and live provider acceptance remain open. The case is wired into the existing PostgreSQL CI harness.
