@@ -193,6 +193,44 @@ try {
     console.log('PASS: signed refund-first delivery, provider amount, event/refund replay and conflict rollback without paid or reward handoff');
     amount = 10000;
     await checkSignedPaymentSettlement(database, (identity = 'settlement-event') => send(event.replace('signed-event', identity)));
+    // Normal completed payloads also traverse the existing checkout/tender path.
+    // The canonical kill switches must leave that path operational.
+    await database.exec(`ALTER TABLE square_invoices ADD COLUMN gift_card_paid_amount numeric,ADD COLUMN updated_at timestamptz;
+      CREATE TABLE commerce_checkout_intents(square_invoice_id text,status text,square_payment_id text,updated_at timestamptz);
+      INSERT INTO commerce_checkout_intents VALUES('settlement-invoice','pending',NULL,NULL);
+      CREATE TABLE prepaid_credit_intents(id int,user_id text,amount_usd numeric,status text,pack_id text,
+        bonus_tokens numeric,bonus_awarded_at timestamptz,square_order_id text);`);
+    const settled = await state();
+    const wallets = (await database.query('SELECT * FROM wallet_accounts ORDER BY user_id')).rows;
+    for (const [ledger, adapter] of [['false', 'true'], ['true', 'false'], ['true', 'true']]) {
+      process.env.JOB_PAYMENT_LEDGER_ENABLED = ledger;
+      process.env.SQUARE_JOB_PAYMENT_LEDGER_ENABLED = adapter;
+      await database.exec("UPDATE commerce_checkout_intents SET status='pending',square_payment_id=NULL,updated_at=NULL");
+      const completedEvent = JSON.stringify({ event_id: `completed-${ledger}-${adapter}`, type: 'payment.updated',
+        data: { object: { payment: { id: 'payment', status: 'COMPLETED', order_id: 'order',
+          amount_money: { amount: 10000, currency: 'USD' } } } } });
+      const requestStart = requests.length;
+      assert.equal((await send(completedEvent)).status, 200);
+      assert.deepEqual((await database.query('SELECT status,square_payment_id FROM commerce_checkout_intents')).rows,
+        [{ status: 'paid', square_payment_id: 'payment' }], 'ordinary checkout must retain its paid transition');
+      assert.equal(Number((await database.query('SELECT gift_card_paid_amount FROM square_invoices')).rows[0].gift_card_paid_amount), 0);
+      if (ledger === 'false' || adapter === 'false') {
+        assert.ok(requests.length > requestStart, 'legacy tender inspection still runs');
+        assert.ok(requests.slice(requestStart).every(url => url.endsWith('/orders/order')),
+          'disabled canonical routing must not retrieve the payment');
+      } else {
+        assert.ok(requests.slice(requestStart).some(url => url.endsWith('/payments/payment')),
+          'enabled canonical routing must still verify the payment');
+      }
+      assert.deepEqual(await state(), settled, 'completed payload replay cannot duplicate canonical funding');
+      assert.deepEqual((await database.query('SELECT * FROM wallet_accounts ORDER BY user_id')).rows, wallets);
+      const checkout = (await database.query('SELECT * FROM commerce_checkout_intents')).rows;
+      const afterCompleted = requests.length;
+      assert.equal((await send(completedEvent)).status, 200);
+      assert.equal(requests.length, afterCompleted);
+      assert.deepEqual((await database.query('SELECT * FROM commerce_checkout_intents')).rows, checkout);
+    }
+    console.log('PASS: completed signed payload preserves ordinary checkout with either ledger flag off and replays without duplicate funding or wallet effects');
   } finally {
     await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
   }
