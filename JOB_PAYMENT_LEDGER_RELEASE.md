@@ -1,6 +1,6 @@
 # Canonical payments and rewards: release status
 
-Updated September 9, 2026. Implementation is a draft candidate, not a deployed service. Square canonical adapters are connected behind disabled flags; the additive payment schema is not registered as a startup migration. Do not enable the production flags yet.
+Updated September 10, 2026 (UTC). Implementation is a draft candidate, not a deployed service. Square canonical adapters are connected behind disabled flags; the additive payment schema is not registered as a startup migration. Do not enable the production flags yet.
 
 ## Implemented
 
@@ -63,7 +63,7 @@ Apply and verify the additive schema before enabling these flags. Existing ledge
 
 ## Remaining release work
 
-Current scope: immutable provider intent and saved customer/order/invoice phases, exact-funded closeout finalization, the financial-notice worker and audited notice review are implemented. Historical descriptions below that call these implementations unfinished are superseded. Their live provider/owner acceptance remains required. Corrected replacement invoices after partial funding, duplicate-invoice review and recovery beyond provider idempotency retention remain implementation/acceptance gaps. Notice review does not resolve duplicate invoices or authorize refunds.
+Current scope: immutable provider intent and saved customer/order/invoice phases, exact-funded closeout finalization, the financial-notice worker and audited notice review are implemented. Corrected replacement reservation, flag-gated issuance, verified attachment and known-publication recovery are also implemented with synthetic/disposable coverage. Historical descriptions below that call these implementations unfinished are superseded. Their full signed-provider and live provider/owner acceptance remains required. Unknown provider identities, duplicate or conflicting invoice-request review, and recovery beyond provider idempotency retention remain gaps. Notice review does not resolve duplicate invoices or authorize refunds.
 
 1. Complete end-to-end acceptance of the newly wired, flag-gated Square path and all legacy side effects. Known unrelated events retain their existing handlers; unmapped events remain failed and retryable for reconciliation.
    A staged resolver now retrieves payment/refund records and classifies stored order associations as job, unrelated, or unmapped. Missing/ambiguous quote associations reject for reconciliation. Focused routing tests passed. The resolver is now called by the webhook. Canonical invoice handling waits for verified payments for its stored order and uses cumulative job coverage. Deposits, early invoice delivery, unrelated orders and refund review passed disposable database tests. Provider/signature-to-effects acceptance and concurrent quote/refund coordination remain open.

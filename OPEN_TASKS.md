@@ -1,8 +1,10 @@
 # JC ON THE MOVE completion register
 
-Updated September 9, 2026. This register distinguishes checked code from live service completion. No item is closed merely because its prior Codex turn ended.
+Updated September 10, 2026 (UTC). This register distinguishes checked code from live service completion. No item is closed merely because its prior Codex turn ended.
 
 ## Current release and service
+
+Current status takes precedence over the chronological notes below: replacement reservation, flag-gated issuance, attachment and known-publication recovery are implemented and tested with synthetic/disposable evidence. My Jobs phone retry acceptance also passed with synthetic data. Full signed-provider and authenticated owner/device acceptance remain open. Unknown provider identities, retention expiry and conflicting-request review remain unresolved. Production application code and feature flags are unchanged. Pricing alignment awaits the owner's choice between the active Replit truck fees and the separate multi-service rental policy; no configured price has changed.
 
 - Read-only Replit pricing inspection on September 10 confirmed active version `2026.08.3`: canonical equipment fees are $250/$600 for 15/26 ft trucks; the separate legacy job-rate settings use $87.50 per mover-hour, $200 truck and $100 stairs/elevator. The MultiBookingFlow helper still uses $500/$1,000 plus mileage, so historical scenario alignment cannot be closed by applying one source to every path. No configured rate changed. The audit found and fixed a concrete rate-card calculation error: it added truckMileageFee again even though truckFee already includes mileage. The shared add-on total now counts that component once, preserves mileage-only legacy input and includes other add-ons. Regression coverage uses the actual truck-fee helper. Raw pricing evidence remains private; no customer records or production writes were involved.
 
@@ -28,7 +30,7 @@ Updated September 9, 2026. This register distinguishes checked code from live se
 
 - September 10 production metadata inspection confirmed a read-only transaction against the verified Replit hostname: 201 public tables and 2,713 columns. Existing booking/closeout/invoice and alert tables are present, with the expected per-recipient/channel and per-webhook unique constraints. Quick Book sessions and the canonical payment, refund, reward queue, reconciliation, financial notice and invoice-intent tables are absent. Keep their release flags disabled. Raw metadata remains private; no customer rows, migrations, restore or new database were involved. This does not prove a successful backup or isolated recovery. See `DATABASE_RECOVERY_RELEASE.md`.
 
-- Latest application validation: `469af79dc975c315c3209fc227ac6aad447ab3a7` passed every Release Candidate Validation step in [run 34430456839](https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/34430456839). Older candidate references below are historical. Production deployment and owner/provider acceptance remain outstanding.
+- Latest application validation: `4a9a51ad3745d96987db27a745c2b63ce3aaba03` passed every Release Candidate Validation step in [run 34437838043](https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/34437838043). Older candidate references below are historical. Production deployment and owner/provider acceptance remain outstanding.
 
 - Personal job-alert retry suppression is now scoped to event plus recipient in both normal job events and standalone quote opportunities. Previously any audit row skipped every personal recipient on replay; now an attempted recipient cannot suppress someone never attempted. Disposable SQL tests cover successful/failed prior recipients and separate events. The existing within-recipient no-repeat rule remains: channel-specific failure/uncertain-outcome recovery is still open, as are live delivery and VAPID/webhook configuration. No external notification was sent.
 
