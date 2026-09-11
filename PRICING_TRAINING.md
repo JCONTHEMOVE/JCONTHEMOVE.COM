@@ -9,3 +9,12 @@ This is an answer-collection tool, not an automatically trained pricing engine. 
 The API lazily creates `pricing_training_answers` and `pricing_training_answer_history` in the application database on first authorized use. A changed scenario fingerprint clears its active answer for fresh review while keeping old revisions in history. This route creates no leads, dispatches, invoices, notifications, or payments.
 
 Generate deterministic scenarios with `node scripts/generate-pricing-training.mjs`. Verify with `npm run check`, `npm run test:server`, and `npm run build`. The focused API test uses an isolated transaction double; it does not connect to the production database. Phone browser verification uses a disposable local preview with synthetic answers.
+
+## Verification on September 10, 2026
+
+- Release is based on production main `5b66e250`; only training-related files and three small integration edits are included.
+- Type check and full client/server build passed.
+- The new test verified all 500 unique scenarios, fingerprints and batches; answer validation; minimum-floor replay; account isolation; conflicting revisions; transaction rollback; scenario-version changes; and export.
+- The full server suite ran 44 test files. Forty-three passed initially. `jobAlertRouteWiring.test.ts` returned a nonzero child-process exit without diagnostics, then passed its focused rerun without code changes. Run normal CI again after publication.
+- At a 390-pixel phone viewport, the browser test verified tap choices, custom $625 entry, notes, save/next, reload/resume, reopening a saved answer, and jumping to batch 25. No horizontal overflow or browser console errors were observed. The preview used disposable synthetic answers; production persistence still needs deployment verification.
+- Publishing is pending explicit user approval: automatic approval review rejected the public GitHub push. No release branch was pushed and no deployment was triggered.
