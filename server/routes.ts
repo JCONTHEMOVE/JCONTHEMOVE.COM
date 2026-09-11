@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { createPricingTrainingRouter } from "./routes/pricingTraining";
 import { createServer, type Server } from "http";
 import { createRequire } from "module";
 import crypto from "crypto";
@@ -32916,6 +32917,7 @@ Thank you for your business!
   // pricing engine, and the catalog/bundle merchandising endpoints used by
   // the upcoming /book page. Mounted at root so paths read /api/bookings,
   // /api/bookings/quote, /api/bundles/featured, /api/service-catalog.
+  app.use("/api/admin/pricing-training", createPricingTrainingRouter(isAuthenticated, requireBusinessOwner, pool));
   app.use("/api", bookingsRouter);
   app.use("/api", quotesRouter);
   app.use("/api", pricingV2Router);
