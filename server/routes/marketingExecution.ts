@@ -9,7 +9,7 @@ import { smsService } from "../services/sms";
 import { getAppUrl } from "../appUrl";
 import { ROUTE_DAY_SCHEDULE } from "@shared/routeDays";
 
-const DISCORD_INVITE_URL = "https://discord.gg/G6dcwFY4E";
+const DISCORD_INVITE_URL = "https://discord.gg/8zVq5dxKQ";
 const QUALIFYING_LEAD_STATUSES = ["booked", "confirmed", "assigned", "available", "in_progress", "completed"];
 const QUALIFYING_BOOKING_STATUSES = ["booked", "in_progress", "completed"];
 
