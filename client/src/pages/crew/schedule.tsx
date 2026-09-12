@@ -615,7 +615,7 @@ export default function CrewSchedulePage() {
                 Discord alerts are posted to the shared crew channel. Join that channel before selecting Discord-only.
               </p>
               <a
-                href={myAvailability?.discordInviteUrl || "https://discord.gg/G6dcwFY4E"}
+                href={myAvailability?.discordInviteUrl || "https://discord.gg/8zVq5dxKQ"}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-300 hover:text-indigo-200"

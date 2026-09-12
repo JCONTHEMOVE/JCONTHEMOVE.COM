@@ -14470,7 +14470,7 @@ Thank you for your business!
         stats,
         acceptedJobTypes,
         notificationPreference,
-        discordInviteUrl: "https://discord.gg/G6dcwFY4E",
+        discordInviteUrl: "https://discord.gg/8zVq5dxKQ",
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -14571,7 +14571,7 @@ Thank you for your business!
       res.json({
         success: true,
         notificationPreference: preference,
-        discordInviteUrl: "https://discord.gg/G6dcwFY4E",
+        discordInviteUrl: "https://discord.gg/8zVq5dxKQ",
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
