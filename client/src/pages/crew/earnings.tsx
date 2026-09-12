@@ -22,6 +22,7 @@ import MarketplaceProcessGuide from "@/components/MarketplaceProcessGuide";
 import { WalletChoiceModal } from "@/components/WalletChoiceModal";
 import { MarketingLaunchCard } from "@/components/MarketingLaunchCard";
 import { MarketingBotRepCard } from "@/components/MarketingBotRepCard";
+import { MARKETING_WEEKLY_NOTE, MARKETING_WEEKLY_THEMES } from "@shared/marketingWeek";
 import {
   ROUTE_DAY_PROMO_PACKAGES,
   ROUTE_DAY_SCHEDULE,
@@ -238,13 +239,13 @@ const ALL_CAPABILITIES: { key: string; label: string; icon: LucideIcon }[] = [
 
 const AD_AREA_OPTIONS = [
   "Ironwood / Hurley",
-  ...ROUTE_DAY_SCHEDULE.map((route) => route.label),
+  ...MARKETING_WEEKLY_THEMES,
   "Wausau",
   "Northwoods",
 ];
-const AD_FOCUS_OPTIONS = ["Moving help", "U-Haul load/unload", "Junk removal", "Delivery help", "PODS / U-Box help", "Last-minute labor"];
+const AD_FOCUS_OPTIONS = ["Moving help", "Crew appreciation", "U-Haul load/unload", "Junk removal", "Delivery help", "PODS / U-Box help", "Last-minute labor"];
 const AD_NOTE_PRESETS = [
-  { label: "Route days", text: "More route days are added as demand grows." },
+  { label: "Weekday focus", text: MARKETING_WEEKLY_NOTE },
   { label: "Openings", text: "A few local openings this week. Send ZIP, date, and photos for a quick quote review." },
   { label: "Last-minute", text: "Last-minute load/unload and delivery help may be available depending on crew timing." },
   { label: "Heavy item", text: "Good fit for couches, appliances, garage items, storage units, and truck unloads." },
