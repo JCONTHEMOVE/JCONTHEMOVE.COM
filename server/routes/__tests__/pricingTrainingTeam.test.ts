@@ -47,6 +47,24 @@ try{
   await pg.query(`INSERT INTO pricing_training_answers(owner_id,scenario_id,fingerprint,answer,status) VALUES('owner',$1,$2,$3::jsonb,'reviewed')`,[cases[0].id,cases[0].fingerprint,JSON.stringify(a)]);
   assert.deepEqual((await (await call()).json()).completed,[cases[0].id]);
   assert.equal((await (await call()).json()).ownerId,'owner','existing answer set takes precedence over the legacy owner email');
+  // The API must withhold answer content, not merely hide it in the page.
+  await pg.query(`INSERT INTO pricing_training_contributions(user_id,scenario_id,fingerprint,answer,status) VALUES('crew2',$1,$2,$3::jsonb,'reviewed')`,[cases[0].id,cases[0].fingerprint,JSON.stringify(a)]);
+  const locked={canCompare:false,responses:[],final:null};
+  assert.deepEqual(await (await call('/scenario/'+cases[0].id)).json(),locked,'no submission hides coworker and owner answers');
+  assert.equal((await call('/'+cases[0].id,'PUT',{...payload(0),status:'draft'})).status,200);
+  assert.deepEqual(await (await call('/scenario/'+cases[0].id)).json(),locked,'draft does not unlock comparisons');
+  const ownerView=await (await call('/scenario/'+cases[0].id,'GET',undefined,'owner')).json();
+  assert.equal(ownerView.responses.length,1,'owner can review before contributing');
+  assert.equal(ownerView.final.answer.price,500);
+  assert.equal((await call('/'+cases[0].id,'PUT',payload(0,1))).status,200);
+  const unlocked=await (await call('/scenario/'+cases[0].id)).json();
+  assert.equal(unlocked.canCompare,true);assert.equal(unlocked.responses.length,2);assert.equal(unlocked.final.answer.price,500);
+  assert.deepEqual(await (await call('/scenario/'+cases[1].id)).json(),locked,'unlock applies only to the submitted scenario');
+  await pg.query("UPDATE pricing_training_answers SET status='draft' WHERE scenario_id=$1",[cases[0].id]);
+  assert.equal((await (await call('/scenario/'+cases[0].id)).json()).final,null,'owner drafts remain private even after submission');
+  await pg.query("UPDATE pricing_training_answers SET status='reviewed' WHERE scenario_id=$1",[cases[0].id]);
+  await pg.query("UPDATE pricing_training_contributions SET fingerprint=$1 WHERE user_id='crew' AND scenario_id=$2",['0'.repeat(64),cases[0].id]);
+  assert.deepEqual(await (await call('/scenario/'+cases[0].id)).json(),locked,'outdated submission does not unlock a revised scenario');
   assert.equal((await call('/final/'+cases[1].id,'PUT',payload(1))).status,403);
   assert.equal((await call('/'+cases[1].id,'PUT',{...payload(1),answer:emptyTrainingAnswer()})).status,400);
   assert.equal((await call('/'+cases[1].id,'PUT',payload(1))).status,200);
@@ -79,9 +97,9 @@ try{
   assert.equal((await pg.query('SELECT * FROM pricing_training_answer_history')).rows.length,2);
   assert.equal((await pg.query('SELECT * FROM pricing_training_final_audit')).rows.length,2);
   assert.equal((await call('/'+cases[2].id,'PUT',payload(2),'owner')).status,200);
-  const self=(await (await call('/scenario/'+cases[2].id)).json()).responses[0];
+  const self=(await (await call('/scenario/'+cases[2].id,'GET',undefined,'owner')).json()).responses[0];
   assert.equal((await call('/review/'+self.id,'POST',{...rating,revision:1},'owner')).status,403);
-  await new Promise(r=>setTimeout(r,50));assert.equal(thanks,3,'one thank-you for each contributor/request, not edits');
+  await new Promise(r=>setTimeout(r,50));assert.equal(thanks,4,'one thank-you for each contributor/request, not edits');
   for(const [i,grade,amount] of [[3,'contribution',100],[4,'correct',200],[5,'rejected',0]] as const){
     assert.equal((await call('/'+cases[i].id,'PUT',payload(i))).status,200);
     const r=(await (await call('/scenario/'+cases[i].id)).json()).responses[0];

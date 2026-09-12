@@ -92,6 +92,12 @@ export function createPricingTrainingTeamRouter(auth:RequestHandler,staff:Reques
   }));
   router.get('/scenario/:id',route(async(req,res)=>{
     const scenario=scenarios.find(s=>s.id===req.params.id);if(!scenario)throw new RequestError(404,'Request not found.');
+    if(!isOwner(req)){
+      const mine=await pool.query('SELECT status,fingerprint FROM pricing_training_contributions WHERE user_id=$1 AND scenario_id=$2',[userId(req),scenario.id]);
+      if(mine.rows[0]?.status!=='reviewed'||mine.rows[0]?.fingerprint!==scenario.fingerprint){
+        return res.json({canCompare:false,responses:[],final:null});
+      }
+    }
     const ownerId=await primaryOwner();
     const [responses,final]=await Promise.all([
       pool.query(`SELECT c.*,COALESCE(NULLIF(u.first_name,''),NULLIF(u.username,''),'Coworker') AS display_name,t.status AS thanks_status
@@ -100,8 +106,9 @@ export function createPricingTrainingTeamRouter(auth:RequestHandler,staff:Reques
       pool.query('SELECT * FROM pricing_training_answers WHERE owner_id=$1 AND scenario_id=$2',[ownerId,scenario.id])
     ]);
     const r=final.rows[0];
-    res.json({responses:responses.rows.map(c=>({id:c.id,userId:c.user_id,displayName:c.display_name,answer:c.answer,revision:c.revision,grade:c.grade,rewardAmount:c.reward_amount,reviewNote:c.review_note,thanksStatus:isOwner(req)?c.thanks_status:undefined})),
-      final:r?{...saved(r),...(r.fingerprint!==scenario.fingerprint?{answer:emptyTrainingAnswer(),status:'draft'}:{})}:null});
+    const visibleFinal=r&&(isOwner(req)||(r.status==='reviewed'&&r.fingerprint===scenario.fingerprint));
+    res.json({canCompare:true,responses:responses.rows.map(c=>({id:c.id,userId:c.user_id,displayName:c.display_name,answer:c.answer,revision:c.revision,grade:c.grade,rewardAmount:c.reward_amount,reviewNote:c.review_note,thanksStatus:isOwner(req)?c.thanks_status:undefined})),
+      final:visibleFinal?{...saved(r),...(r.fingerprint!==scenario.fingerprint?{answer:emptyTrainingAnswer(),status:'draft'}:{})}:null});
   }));
   router.put('/:id',route(async(req,res)=>{
     const parsed=inputSchema.safeParse(req.body);if(!parsed.success)throw new RequestError(400,'Check your answer values.');
