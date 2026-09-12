@@ -11,7 +11,7 @@ import { sql } from 'drizzle-orm';
 // Real PostgreSQL engine, isolated in memory. No production data, tokens or webhooks.
 const pg=new PGlite();
 await pg.exec(`CREATE TABLE users(id text PRIMARY KEY,email text,role text,first_name text,username text);
-  INSERT INTO users VALUES('owner','upmichiganstatemovers@gmail.com','business_owner','Owner','owner'),('crew','crew@example.test','employee','Crew','crew'),('crew2','crew2@example.test','employee','Crew2','crew2');
+  INSERT INTO users VALUES('owner','owner@example.test','business_owner','Owner','owner'),('legacy-owner','upmichiganstatemovers@gmail.com','admin','Legacy','legacy'),('crew','crew@example.test','employee','Crew','crew'),('crew2','crew2@example.test','employee','Crew2','crew2');
   CREATE TABLE wallet_accounts(user_id text PRIMARY KEY,token_balance numeric NOT NULL DEFAULT 0,total_earned numeric DEFAULT 0,last_activity timestamptz);
   CREATE TABLE rewards(user_id text,reward_type text,token_amount numeric,cash_value numeric,status text,reference_id text UNIQUE,metadata jsonb);
   CREATE TABLE test_reserve(amount int);INSERT INTO test_reserve VALUES(10000);`);
@@ -46,6 +46,7 @@ try{
   // Existing owner progress is immediately shared, without data migration.
   await pg.query(`INSERT INTO pricing_training_answers(owner_id,scenario_id,fingerprint,answer,status) VALUES('owner',$1,$2,$3::jsonb,'reviewed')`,[cases[0].id,cases[0].fingerprint,JSON.stringify(a)]);
   assert.deepEqual((await (await call()).json()).completed,[cases[0].id]);
+  assert.equal((await (await call()).json()).ownerId,'owner','existing answer set takes precedence over the legacy owner email');
   assert.equal((await call('/final/'+cases[1].id,'PUT',payload(1))).status,403);
   assert.equal((await call('/'+cases[1].id,'PUT',{...payload(1),answer:emptyTrainingAnswer()})).status,400);
   assert.equal((await call('/'+cases[1].id,'PUT',payload(1))).status,200);

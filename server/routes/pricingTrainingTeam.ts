@@ -46,7 +46,15 @@ export function createPricingTrainingTeamRouter(auth:RequestHandler,staff:Reques
     })().catch(e=>{ready=undefined;throw e;}); await ready;
   }
   async function primaryOwner(){
-    const {rows}=await pool.query(`SELECT id FROM users WHERE lower(email)=$1 AND role IN ('admin','business_owner') LIMIT 1`,['upmichiganstatemovers@gmail.com']);
+    // Continue the owner's established answer set, including owners who sign
+    // in with an account other than the legacy business email.
+    const {rows}=await pool.query(`SELECT u.id FROM users u
+      LEFT JOIN pricing_training_answers a ON a.owner_id=u.id
+      WHERE u.role IN ('admin','business_owner')
+      GROUP BY u.id,u.email,u.role
+      ORDER BY count(a.scenario_id) DESC,
+        (lower(u.email)=$1) DESC, (u.role='business_owner') DESC, u.id
+      LIMIT 1`,['upmichiganstatemovers@gmail.com']);
     if(!rows[0])throw new RequestError(503,'The business owner account must be configured before team training starts.');
     return String(rows[0].id);
   }
