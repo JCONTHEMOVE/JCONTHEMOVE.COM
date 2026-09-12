@@ -8,7 +8,7 @@ import { TRAINING_REWARDS } from '@shared/pricingTrainingTeam';
 type Database = Pick<Pool,'query'|'connect'>;
 type Dependencies = {
   reward: (client: PoolClient, userId: string, amount: number, reference: string, reviewerId: string) => Promise<void>;
-  thank: (displayName: string, scenarioId: string) => Promise<'sent'|'unconfigured'|'failed'|'uncertain'>;
+  thank: (displayName: string, scenarioId: string, verifiedAmount?: number) => Promise<'sent'|'unconfigured'|'failed'|'uncertain'>;
 };
 const inputSchema=z.object({answer:trainingAnswerSchema,status:z.enum(['draft','reviewed']),revision:z.number().int().nonnegative(),fingerprint:z.string().length(64)}).strict();
 const reviewSchema=z.object({revision:z.number().int().positive(),grade:z.enum(['contribution','mostly_correct','correct','rejected']),note:z.string().trim().min(1).max(2000)}).strict();
@@ -32,6 +32,10 @@ export function createPricingTrainingTeamRouter(auth:RequestHandler,staff:Reques
       await pool.query(`CREATE TABLE IF NOT EXISTS pricing_training_thanks (
         contribution_id text PRIMARY KEY REFERENCES pricing_training_contributions(id),
         display_name text NOT NULL, scenario_id text NOT NULL,
+        status text NOT NULL DEFAULT 'pending', updated_at timestamptz NOT NULL DEFAULT now())`);
+      await pool.query(`CREATE TABLE IF NOT EXISTS pricing_training_verified_thanks (
+        contribution_id text PRIMARY KEY REFERENCES pricing_training_contributions(id),
+        display_name text NOT NULL, scenario_id text NOT NULL, reward_amount integer NOT NULL,
         status text NOT NULL DEFAULT 'pending', updated_at timestamptz NOT NULL DEFAULT now())`);
       await pool.query(`CREATE TABLE IF NOT EXISTS pricing_training_final_audit (
         id text PRIMARY KEY DEFAULT gen_random_uuid()::text, owner_id text NOT NULL, scenario_id text NOT NULL,
@@ -63,11 +67,12 @@ export function createPricingTrainingTeamRouter(auth:RequestHandler,staff:Reques
     console.error('[pricing-training-team]',e);res.status(503).json({error:'Could not complete this action. Your previous saved data is unchanged. Please retry.'});
   }};
   async function transaction<T>(fn:(c:PoolClient)=>Promise<T>){const c=await pool.connect();try{await c.query('BEGIN');const result=await fn(c);await c.query('COMMIT');return result;}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}}
-  async function deliverThanks(id:string){
-    const {rows}=await pool.query(`UPDATE pricing_training_thanks SET status='sending',updated_at=now() WHERE contribution_id=$1 AND status IN ('pending','unconfigured') RETURNING *`,[id]);
+  async function deliverThanks(id:string,verified=false){
+    const table=verified?'pricing_training_verified_thanks':'pricing_training_thanks';
+    const {rows}=await pool.query(`UPDATE ${table} SET status='sending',updated_at=now() WHERE contribution_id=$1 AND status IN ('pending','unconfigured') RETURNING *`,[id]);
     if(!rows[0])return;
-    let result='uncertain';try{result=await deps.thank(rows[0].display_name,rows[0].scenario_id);}catch{}
-    await pool.query('UPDATE pricing_training_thanks SET status=$2,updated_at=now() WHERE contribution_id=$1',[id,result]);
+    let result='uncertain';try{result=await deps.thank(rows[0].display_name,rows[0].scenario_id,verified?rows[0].reward_amount:undefined);}catch{}
+    await pool.query(`UPDATE ${table} SET status=$2,updated_at=now() WHERE contribution_id=$1`,[id,result]);
     // Unknown outcomes are never automatically resent: Discord has no idempotency key.
   }
   // Recover submissions committed just before a process restart. A claimed or
@@ -75,6 +80,8 @@ export function createPricingTrainingTeamRouter(auth:RequestHandler,staff:Reques
   const thanksTimer=setInterval(()=>{if(!ready)return;void ready.then(async()=>{
     const {rows}=await pool.query("SELECT contribution_id FROM pricing_training_thanks WHERE status IN ('pending','unconfigured') ORDER BY updated_at LIMIT 5");
     for(const row of rows)await deliverThanks(row.contribution_id);
+    const verified=await pool.query("SELECT contribution_id FROM pricing_training_verified_thanks WHERE status IN ('pending','unconfigured') ORDER BY updated_at LIMIT 5");
+    for(const row of verified.rows)await deliverThanks(row.contribution_id,true);
   }).catch(()=>{});},30000);
   thanksTimer.unref();
   router.use(auth,staff,(_req,res,next)=>{res.setHeader('Cache-Control','no-store');next();});
@@ -92,16 +99,23 @@ export function createPricingTrainingTeamRouter(auth:RequestHandler,staff:Reques
   }));
   router.get('/scenario/:id',route(async(req,res)=>{
     const scenario=scenarios.find(s=>s.id===req.params.id);if(!scenario)throw new RequestError(404,'Request not found.');
+    if(!isOwner(req)){
+      const mine=await pool.query('SELECT status,fingerprint FROM pricing_training_contributions WHERE user_id=$1 AND scenario_id=$2',[userId(req),scenario.id]);
+      if(mine.rows[0]?.status!=='reviewed'||mine.rows[0]?.fingerprint!==scenario.fingerprint){
+        return res.json({canCompare:false,responses:[],final:null});
+      }
+    }
     const ownerId=await primaryOwner();
     const [responses,final]=await Promise.all([
-      pool.query(`SELECT c.*,COALESCE(NULLIF(u.first_name,''),NULLIF(u.username,''),'Coworker') AS display_name,t.status AS thanks_status
-        FROM pricing_training_contributions c JOIN users u ON u.id=c.user_id LEFT JOIN pricing_training_thanks t ON t.contribution_id=c.id
+      pool.query(`SELECT c.*,COALESCE(NULLIF(u.first_name,''),NULLIF(u.username,''),'Coworker') AS display_name,t.status AS thanks_status,v.status AS verified_thanks_status
+        FROM pricing_training_contributions c JOIN users u ON u.id=c.user_id LEFT JOIN pricing_training_thanks t ON t.contribution_id=c.id LEFT JOIN pricing_training_verified_thanks v ON v.contribution_id=c.id
         WHERE c.scenario_id=$1 AND c.status='reviewed' AND c.fingerprint=$2 ORDER BY c.submitted_at,c.id`,[scenario.id,scenario.fingerprint]),
       pool.query('SELECT * FROM pricing_training_answers WHERE owner_id=$1 AND scenario_id=$2',[ownerId,scenario.id])
     ]);
     const r=final.rows[0];
-    res.json({responses:responses.rows.map(c=>({id:c.id,userId:c.user_id,displayName:c.display_name,answer:c.answer,revision:c.revision,grade:c.grade,rewardAmount:c.reward_amount,reviewNote:c.review_note,thanksStatus:isOwner(req)?c.thanks_status:undefined})),
-      final:r?{...saved(r),...(r.fingerprint!==scenario.fingerprint?{answer:emptyTrainingAnswer(),status:'draft'}:{})}:null});
+    const visibleFinal=r&&(isOwner(req)||(r.status==='reviewed'&&r.fingerprint===scenario.fingerprint));
+    res.json({canCompare:true,responses:responses.rows.map(c=>({id:c.id,userId:c.user_id,displayName:c.display_name,answer:c.answer,revision:c.revision,grade:c.grade,rewardAmount:c.reward_amount,reviewNote:c.review_note,thanksStatus:isOwner(req)?(c.grade?c.verified_thanks_status:c.thanks_status):undefined})),
+      final:visibleFinal?{...saved(r),...(r.fingerprint!==scenario.fingerprint?{answer:emptyTrainingAnswer(),status:'draft'}:{})}:null});
   }));
   router.put('/:id',route(async(req,res)=>{
     const parsed=inputSchema.safeParse(req.body);if(!parsed.success)throw new RequestError(400,'Check your answer values.');
@@ -115,6 +129,9 @@ export function createPricingTrainingTeamRouter(auth:RequestHandler,staff:Reques
           submitted_at=CASE WHEN $5='reviewed' THEN COALESCE(submitted_at,now()) ELSE submitted_at END
           WHERE user_id=$1 AND scenario_id=$2 AND revision=$6 AND grade IS NULL RETURNING *`,[userId(req),s.id,s.fingerprint,JSON.stringify(p.answer),p.status,p.revision]);
       if(!rows[0])throw new RequestError(409,'This contribution was updated or reviewed. Reload before continuing.');
+      if(p.status==='reviewed')await c.query(`INSERT INTO notifications(id,user_id,type,title,message,data)
+        VALUES($1,$2,'jcmoves_pending','Answer submitted · JCMOVES pending',$3,$4::jsonb) ON CONFLICT(id) DO NOTHING`,
+        [`training-submit:${rows[0].id}`,userId(req),`${s.id}: your answer is saved. Owner approval can award 100 JCMOVES for contribution, 150 mostly correct, or 200 correct. No credit has been issued yet.`,JSON.stringify({url:`/crew/pricing-training?scenario=${s.id}`,type:'training_submitted',scenarioId:s.id})]);
       if(p.status==='reviewed')await c.query(`INSERT INTO pricing_training_thanks(contribution_id,display_name,scenario_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,[rows[0].id,String((req.currentUser||req.user).firstName||(req.currentUser||req.user).username||'A coworker').slice(0,80),s.id]);
       return rows[0];
     });
@@ -133,12 +150,19 @@ export function createPricingTrainingTeamRouter(auth:RequestHandler,staff:Reques
       const amount=TRAINING_REWARDS[p.grade];
       if(amount)await deps.reward(c,row.user_id,amount,`pricing-training:${row.id}`,userId(req));
       await c.query('UPDATE pricing_training_contributions SET grade=$2,review_note=$3,reviewer_id=$4,reviewed_revision=revision,reward_amount=$5,updated_at=now() WHERE id=$1',[row.id,p.grade,p.note,userId(req),amount]);
+      await c.query(`INSERT INTO notifications(id,user_id,type,title,message,data)
+        VALUES($1,$2,'reward_available',$3,$4,$5::jsonb) ON CONFLICT(id) DO NOTHING`,
+        [`training-review:${row.id}`,row.user_id,amount?`Owner verified · +${amount} JCMOVES`:'Owner review complete',`${row.scenario_id}: ${p.note}${amount?` ${amount} JCMOVES credited (${Math.min(100,amount)} contribution + ${Math.max(0,amount-100)} bonus).`:' No JCMOVES credited.'}`,JSON.stringify({url:`/crew/pricing-training?scenario=${row.scenario_id}`,type:'training_verified',scenarioId:row.scenario_id,amount,grade:p.grade})]);
+      await c.query(`INSERT INTO pricing_training_verified_thanks(contribution_id,display_name,scenario_id,reward_amount)
+        SELECT $1,COALESCE(NULLIF(first_name,''),NULLIF(username,''),'A coworker'),$3,$4 FROM users WHERE id=$2 ON CONFLICT DO NOTHING`,[row.id,row.user_id,row.scenario_id,amount]);
       return {grade:p.grade,rewardAmount:amount};
-    });res.json(result);
+    });void deliverThanks(String(req.params.id),true).catch(()=>{});res.json(result);
   }));
   router.post('/thanks/:id/retry',owner,route(async(req,res)=>{
     await pool.query("UPDATE pricing_training_thanks SET status='pending' WHERE contribution_id=$1 AND status='failed'",[req.params.id]);
     await deliverThanks(String(req.params.id));
+    await pool.query("UPDATE pricing_training_verified_thanks SET status='pending' WHERE contribution_id=$1 AND status='failed'",[req.params.id]);
+    await deliverThanks(String(req.params.id),true);
     res.json({ok:true});
   }));
   router.put('/final/:id',owner,route(async(req,res)=>{

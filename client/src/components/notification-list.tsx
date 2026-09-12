@@ -8,6 +8,7 @@ import { CheckCheck, Briefcase, AlertCircle, MessageSquare, Bell } from "lucide-
 import { formatDistanceToNow } from "date-fns";
 import { apiRequest } from "@/lib/queryClient";
 import type { Notification } from "@shared/schema";
+import { useLocation } from "wouter";
 
 interface NotificationListProps {
   open: boolean;
@@ -16,6 +17,7 @@ interface NotificationListProps {
 
 export function NotificationList({ open, onOpenChange }: NotificationListProps) {
   const queryClient = useQueryClient();
+  const [,navigate] = useLocation();
 
   // Fetch notifications
   const { data: notificationsData, isLoading } = useQuery<{ notifications: Notification[] }>({
@@ -47,6 +49,12 @@ export function NotificationList({ open, onOpenChange }: NotificationListProps) 
   const handleNotificationClick = (notification: Notification) => {
     if (!notification.read) {
       markAsReadMutation.mutate(notification.id);
+    }
+    const training = notification.data as { type?: string; scenarioId?: string } | null;
+    if ((training?.type === 'training_submitted' || training?.type === 'training_verified') && training.scenarioId) {
+      onOpenChange(false);
+      navigate(`/crew/pricing-training?scenario=${encodeURIComponent(training.scenarioId)}`);
+      return;
     }
     
     // Handle navigation based on notification type
