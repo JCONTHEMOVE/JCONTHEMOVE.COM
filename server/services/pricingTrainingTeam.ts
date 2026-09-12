@@ -3,7 +3,9 @@ import { parseJobEventWebhookUrls } from './jobEventBus';
 import { createTrainingReward } from './pricingTrainingReward';
 
 /** All writes use the caller's transaction, including the treasury debit. */
-export const rewardTrainingContribution=createTrainingReward((tx,...args)=>treasuryService.distributeTokensInTransaction(tx as Parameters<typeof treasuryService.distributeTokensInTransaction>[0],...args));
+// The router owns BEGIN/COMMIT on this PoolClient. Drizzle exposes a database
+// wrapper here, but its queries still use that same active SQL transaction.
+export const rewardTrainingContribution=createTrainingReward((tx,...args)=>treasuryService.distributeTokensInTransaction(tx as unknown as Parameters<typeof treasuryService.distributeTokensInTransaction>[0],...args));
 
 export function trainingDiscordUrls(env:NodeJS.ProcessEnv=process.env){
   return parseJobEventWebhookUrls(env).filter(raw=>{try{const u=new URL(raw);return u.protocol==='https:'&&['discord.com','discordapp.com'].includes(u.hostname)&&u.pathname.startsWith('/api/webhooks/');}catch{return false;}});
