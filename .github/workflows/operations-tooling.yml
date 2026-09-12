@@ -1,0 +1,29 @@
+name: Operations Tooling
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/production-availability.yml
+      - .github/workflows/operations-tooling.yml
+      - scripts/report-availability.mjs
+      - scripts/report-availability.test.mjs
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/operations-tooling.yml
+      - scripts/report-availability.mjs
+      - scripts/report-availability.test.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  reporter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --test scripts/report-availability.test.mjs

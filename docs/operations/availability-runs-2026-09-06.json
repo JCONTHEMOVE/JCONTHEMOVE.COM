@@ -1,0 +1,232 @@
+{
+  "observed_date": "2026-09-06",
+  "source_url": "https://api.github.com/repos/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs?per_page=20",
+  "interpretation": "Latest 20 returned scheduled availability runs; gaps describe monitor execution, not site outages. A cron edit is not proof of reliable cadence.",
+  "requested_before": "7,27,47 * * * *",
+  "proposed": "7,17,27,37,47,57 * * * *",
+  "run_count": 20,
+  "minimum_adjacent_gap_minutes": 106.25,
+  "maximum_adjacent_gap_minutes": 297.46666666666664,
+  "runs": [
+    {
+      "id": 34035201876,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-06T13:08:47Z",
+      "run_started_at": "2026-09-06T13:08:47Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/34035201876"
+    },
+    {
+      "id": 34025268168,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-06T09:39:28Z",
+      "run_started_at": "2026-09-06T09:39:28Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/34025268168"
+    },
+    {
+      "id": 34014434802,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-06T05:37:07Z",
+      "run_started_at": "2026-09-06T05:37:07Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/34014434802"
+    },
+    {
+      "id": 34002541534,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-06T00:55:21Z",
+      "run_started_at": "2026-09-06T00:55:21Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/34002541534"
+    },
+    {
+      "id": 33997831345,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-05T23:08:03Z",
+      "run_started_at": "2026-09-05T23:08:03Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33997831345"
+    },
+    {
+      "id": 33992825725,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-05T21:21:48Z",
+      "run_started_at": "2026-09-05T21:21:48Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33992825725"
+    },
+    {
+      "id": 33986658402,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-05T19:17:21Z",
+      "run_started_at": "2026-09-05T19:17:21Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33986658402"
+    },
+    {
+      "id": 33980631747,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-05T17:20:04Z",
+      "run_started_at": "2026-09-05T17:20:04Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33980631747"
+    },
+    {
+      "id": 33973889481,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-05T15:08:35Z",
+      "run_started_at": "2026-09-05T15:08:35Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33973889481"
+    },
+    {
+      "id": 33964927900,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-05T12:02:33Z",
+      "run_started_at": "2026-09-05T12:02:33Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33964927900"
+    },
+    {
+      "id": 33955678498,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-05T08:35:28Z",
+      "run_started_at": "2026-09-05T08:35:28Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33955678498"
+    },
+    {
+      "id": 33945080058,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-05T04:37:55Z",
+      "run_started_at": "2026-09-05T04:37:55Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33945080058"
+    },
+    {
+      "id": 33932071779,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-05T00:10:10Z",
+      "run_started_at": "2026-09-05T00:10:10Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33932071779"
+    },
+    {
+      "id": 33924381141,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-04T22:10:40Z",
+      "run_started_at": "2026-09-04T22:10:40Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33924381141"
+    },
+    {
+      "id": 33913589121,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-04T19:54:57Z",
+      "run_started_at": "2026-09-04T19:54:57Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33913589121"
+    },
+    {
+      "id": 33902360232,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-04T17:46:36Z",
+      "run_started_at": "2026-09-04T17:46:36Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33902360232"
+    },
+    {
+      "id": 33884562363,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-04T14:34:55Z",
+      "run_started_at": "2026-09-04T14:34:55Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33884562363"
+    },
+    {
+      "id": 33864901646,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-04T10:47:39Z",
+      "run_started_at": "2026-09-04T10:47:39Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33864901646"
+    },
+    {
+      "id": 33841973245,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-04T05:50:11Z",
+      "run_started_at": "2026-09-04T05:50:11Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33841973245"
+    },
+    {
+      "id": 33824248968,
+      "event": "schedule",
+      "actor": "JCONTHEMOVE",
+      "head_sha": "25b985e4a8369bed94144421a8e2908fa15abd97",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-09-04T01:03:21Z",
+      "run_started_at": "2026-09-04T01:03:21Z",
+      "url": "https://github.com/JCONTHEMOVE/JCONTHEMOVE.COM/actions/runs/33824248968"
+    }
+  ]
+}
