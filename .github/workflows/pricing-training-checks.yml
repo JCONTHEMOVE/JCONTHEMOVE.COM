@@ -1,0 +1,30 @@
+name: Pricing Training Checks
+on:
+  pull_request:
+    paths:
+      - '**/*pricingTraining*'
+      - '**/*pricing-training*'
+      - 'client/src/layouts/CrewLayout.tsx'
+      - 'client/src/App.tsx'
+      - 'server/routes.ts'
+      - 'package*.json'
+      - '.github/workflows/pricing-training-checks.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pricing-training-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run test:server
+      - run: npm run build

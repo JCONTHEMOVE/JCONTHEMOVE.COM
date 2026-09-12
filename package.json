@@ -143,7 +143,8 @@
     "zod-validation-error": "^3.4.0"
   },
   "devDependencies": {
-    "@capacitor/cli": "^7.4.4"
+    "@capacitor/cli": "^7.4.4",
+    "@electric-sql/pglite": "^0.5.8"
   },
   "overrides": {
     "fast-xml-parser": "5.11.1",

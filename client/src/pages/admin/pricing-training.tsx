@@ -23,8 +23,8 @@ function NumberChoice({label,value,options,onChange,unit=""}:{label:string;value
   </div>;
 }
 
-function ScenarioTest({scenario,saved,ownerId,onSaved,onNavigate,index,count}:{scenario:PricingTrainingScenario;saved?:SavedTrainingAnswer;ownerId:string;onSaved:(answer:SavedTrainingAnswer)=>void;onNavigate:(direction:number)=>void;index:number;count:number}){
-  const storageKey=`jc-pricing-training:${ownerId}:${scenario.id}:${scenario.fingerprint}`;
+export function ScenarioTest({scenario,saved,ownerId,onSaved,onNavigate,index,count,saveEndpoint=endpoint}:{scenario:PricingTrainingScenario;saved?:SavedTrainingAnswer;ownerId:string;onSaved:(answer:SavedTrainingAnswer)=>void;onNavigate:(direction:number)=>void;index:number;count:number;saveEndpoint?:string}){
+  const storageKey=`jc-pricing-training:${ownerId}:${scenario.id}:${scenario.fingerprint}${saveEndpoint===endpoint?'':':'+saveEndpoint}`;
   const [olderDraft,setOlderDraft]=useState<TrainingAnswer|null>(()=>{
     try{const draft=JSON.parse(localStorage.getItem(storageKey)||"null");const parsed=trainingAnswerSchema.safeParse(draft?.answer);if(draft&&draft.revision!==(saved?.revision??0)&&parsed.success)return parsed.data;}catch{}
     return null;
@@ -59,7 +59,7 @@ function ScenarioTest({scenario,saved,ownerId,onSaved,onNavigate,index,count}:{s
     if(problems.length){setError(problems.join(" "));return;}
     setSaving(true);setError("");
     try{
-      const response=await apiRequest("PUT",`${endpoint}/${scenario.id}`,{answer,status,revision:revision.current,fingerprint:scenario.fingerprint});
+      const response=await apiRequest("PUT",`${saveEndpoint}/${scenario.id}`,{answer,status,revision:revision.current,fingerprint:scenario.fingerprint});
       const result=await response.json() as SavedTrainingAnswer;
       revision.current=result.revision;lastSaved.current=JSON.stringify(result.answer);onSaved(result);
       try{localStorage.removeItem(storageKey);}catch{}
@@ -108,7 +108,7 @@ function ScenarioTest({scenario,saved,ownerId,onSaved,onNavigate,index,count}:{s
     </fieldset>
     {error&&<p role="alert" className="rounded-lg bg-red-950 p-3 text-sm text-red-200">{error}</p>}
     <p aria-live="polite" className="text-sm text-slate-300">{saving?"Saving…":message|| (dirty?(storageError?"Not saved. Use Save draft before leaving.":"Draft kept on this phone. Save to sync with your account."):"Choose your answers. There is no prefilled answer key.")}</p>
-    <div className="sticky bottom-0 z-10 space-y-2 border-t border-slate-700 bg-slate-950 py-3 pb-[max(12px,env(safe-area-inset-bottom))]">
+    <div className={`sticky ${saveEndpoint===endpoint?'bottom-0':'bottom-16'} z-10 space-y-2 border-t border-slate-700 bg-slate-950 py-3 pb-[max(12px,env(safe-area-inset-bottom))]`}>
       <div className="grid grid-cols-2 gap-2"><Button variant="outline" disabled={saving||step===0} onClick={()=>setStep(s=>Math.max(0,s-1))} className="min-h-12">Back</Button>{current===stages[stages.length-1]?<Button disabled={saving} onClick={()=>void save("reviewed",index<count-1?1:undefined)} className="min-h-12 bg-blue-600">{index<count-1?"Save answer & next":"Save final answer"}</Button>:<Button disabled={saving} onClick={()=>setStep(s=>Math.min(stages.length-1,s+1))} className="min-h-12 bg-blue-600">Next question</Button>}</div>
       <div className="flex flex-wrap justify-between gap-2"><button disabled={saving||index===0} onClick={()=>void move(-1)} className="min-h-11 text-sm text-slate-300 disabled:opacity-40">Previous request</button><button disabled={saving} onClick={()=>void save("draft")} className="min-h-11 text-sm text-blue-300">Save draft</button><button disabled={saving||index===count-1} onClick={()=>void move(1)} className="min-h-11 text-sm text-slate-300 disabled:opacity-40">Skip for now</button></div>
     </div>
@@ -131,6 +131,7 @@ export default function PricingTrainingPage(){
     try{setExportError("");const response=await apiRequest("GET",`${endpoint}/export/answers`);const blob=await response.blob();const url=URL.createObjectURL(blob);const link=document.createElement("a");link.href=url;link.download="jc-pricing-training-answers.json";link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch{setExportError("Could not export. Please retry.");}
   }
   return <main className="dark mx-auto min-h-screen w-full max-w-2xl space-y-5 bg-slate-950 px-4 py-5 text-white">
+    <a href="/crew/pricing-training" className="block rounded-xl bg-blue-700 p-4 font-semibold">Team training · compare answers, review contributions & reward coworkers →</a>
     <header><h1 className="text-2xl font-black">Teach our job pricing</h1><p className="mt-2 text-sm text-slate-300">500 customer requests. Your choices teach us how you price and staff each job.</p><p className="mt-3 font-semibold">{answered} / 500 answered</p><progress aria-label="Training progress" value={answered} max={500} className="mt-2 h-2 w-full accent-blue-500"/><p className="mt-2 text-xs text-slate-400">Training only. Your answers are saved as examples for review before live pricing or crew rules change.</p></header>
     {answered===500&&<p role="status" className="rounded-xl bg-emerald-950 p-4">All 500 answered. Export your answers for pricing and safety-rule review.</p>}
     <ScenarioTest key={scenario.id} scenario={scenario} saved={data.answers[scenario.id]} ownerId={data.ownerId} index={active} count={data.scenarios.length}
