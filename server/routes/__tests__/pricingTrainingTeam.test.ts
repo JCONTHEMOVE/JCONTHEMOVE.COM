@@ -14,9 +14,10 @@ await pg.exec(`CREATE TABLE users(id text PRIMARY KEY,email text,role text,first
   INSERT INTO users VALUES('owner','owner@example.test','business_owner','Owner','owner'),('legacy-owner','upmichiganstatemovers@gmail.com','admin','Legacy','legacy'),('crew','crew@example.test','employee','Crew','crew'),('crew2','crew2@example.test','employee','Crew2','crew2');
   CREATE TABLE wallet_accounts(user_id text PRIMARY KEY,token_balance numeric NOT NULL DEFAULT 0,total_earned numeric DEFAULT 0,last_activity timestamptz);
   CREATE TABLE rewards(user_id text,reward_type text,token_amount numeric,cash_value numeric,status text,reference_id text UNIQUE,metadata jsonb);
+  CREATE TABLE notifications(id text PRIMARY KEY,user_id text,type text,title text,message text,data jsonb);
   CREATE TABLE test_reserve(amount int);INSERT INTO test_reserve VALUES(10000);`);
 let lock=Promise.resolve();
-let rewardFailure=false,thanks=0;
+let rewardFailure=false,thanks=0,verifiedThanks=0;
 async function query(statement:any,args?:any[]){
   const text=typeof statement==='string'?statement:statement.text;
   if(rewardFailure&&text.startsWith('INSERT INTO rewards'))throw Error('Simulated ledger failure after wallet credit');
@@ -32,7 +33,7 @@ app.use('/team',createPricingTrainingTeamRouter(auth,staff,owner,pool as any,{
   reward:createTrainingReward(async(tx,amount)=>{
     await tx.execute(sql`UPDATE test_reserve SET amount=amount-${amount}`);
     return {cashValue:0,transactionId:'test-transaction'};
-  }),thank:async()=>{thanks++;return 'sent';}
+  }),thank:async(_name,_scenario,amount)=>{if(amount===undefined)thanks++;else verifiedThanks++;return 'sent';}
 }));
 const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
 const base=`http://127.0.0.1:${(server.address() as any).port}/team`;
@@ -52,6 +53,7 @@ try{
   const locked={canCompare:false,responses:[],final:null};
   assert.deepEqual(await (await call('/scenario/'+cases[0].id)).json(),locked,'no submission hides coworker and owner answers');
   assert.equal((await call('/'+cases[0].id,'PUT',{...payload(0),status:'draft'})).status,200);
+  assert.equal((await pg.query('SELECT * FROM notifications')).rows.length,0,'drafts do not send submission notifications');
   assert.deepEqual(await (await call('/scenario/'+cases[0].id)).json(),locked,'draft does not unlock comparisons');
   const ownerView=await (await call('/scenario/'+cases[0].id,'GET',undefined,'owner')).json();
   assert.equal(ownerView.responses.length,1,'owner can review before contributing');
@@ -70,6 +72,7 @@ try{
   assert.equal((await call('/'+cases[1].id,'PUT',payload(1))).status,200);
   assert.equal((await call('/'+cases[1].id,'PUT',payload(1))).status,409);
   assert.equal((await call('/'+cases[1].id,'PUT',payload(1,1))).status,200);
+  assert.equal((await pg.query("SELECT * FROM notifications WHERE id LIKE 'training-submit:%' AND user_id='crew'")).rows.length,2,'one submission notice per request, not per edit');
   assert.equal((await call('/'+cases[1].id,'PUT',payload(1), 'crew2')).status,200);
   let detail=await (await call('/scenario/'+cases[1].id)).json();
   assert.equal(detail.responses.length,2);assert.equal(detail.final,null);
@@ -82,11 +85,16 @@ try{
   assert.equal((await pg.query('SELECT * FROM wallet_accounts')).rows.length,0,'wallet rollback');
   assert.equal((await pg.query<any>('SELECT amount FROM test_reserve')).rows[0].amount,10000,'treasury rollback');
   assert.equal((await pg.query<any>('SELECT grade FROM pricing_training_contributions WHERE id=$1',[c.id])).rows[0].grade,null,'review rollback');
+  assert.equal((await pg.query("SELECT * FROM notifications WHERE id LIKE 'training-review:%'")).rows.length,0,'failed reward transaction emits no verification notice');
+  assert.equal((await pg.query('SELECT * FROM pricing_training_verified_thanks')).rows.length,0,'failed reward transaction queues no Discord verification');
   rewardFailure=false;
   const reviews=await Promise.all([call('/review/'+c.id,'POST',rating,'owner'),call('/review/'+c.id,'POST',rating,'owner')]);
   assert.ok(reviews.every(r=>r.status===200));
   assert.equal(Number((await pg.query<any>('SELECT token_balance FROM wallet_accounts')).rows[0].token_balance),150);
   assert.equal((await pg.query('SELECT * FROM rewards')).rows.length,1,'one ledger entry under retries');
+  const reviewNotices=await pg.query<any>("SELECT * FROM notifications WHERE id LIKE 'training-review:%'");
+  assert.equal(reviewNotices.rows.length,1,'one verification notification under retries');
+  assert.equal(reviewNotices.rows[0].data.amount,150);assert.match(reviewNotices.rows[0].message,/100 contribution \+ 50 bonus/);
   assert.equal((await call('/review/'+c.id,'POST',{...rating,grade:'correct'},'owner')).status,409);
   assert.equal((await call('/'+cases[1].id,'PUT',payload(1,c.revision))).status,409,'reviewed answer locked');
   assert.equal((await call('/final/'+cases[1].id,'PUT',payload(1),'owner')).status,200);
@@ -100,6 +108,7 @@ try{
   const self=(await (await call('/scenario/'+cases[2].id,'GET',undefined,'owner')).json()).responses[0];
   assert.equal((await call('/review/'+self.id,'POST',{...rating,revision:1},'owner')).status,403);
   await new Promise(r=>setTimeout(r,50));assert.equal(thanks,4,'one thank-you for each contributor/request, not edits');
+  assert.equal(verifiedThanks,1,'one additional Discord message on verification, not retries');
   for(const [i,grade,amount] of [[3,'contribution',100],[4,'correct',200],[5,'rejected',0]] as const){
     assert.equal((await call('/'+cases[i].id,'PUT',payload(i))).status,200);
     const r=(await (await call('/scenario/'+cases[i].id)).json()).responses[0];
