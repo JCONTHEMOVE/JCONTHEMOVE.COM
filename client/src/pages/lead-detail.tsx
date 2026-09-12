@@ -538,16 +538,17 @@ export default function LeadDetailPage() {
   const [setupSection, setSetupSection] = useState<JobSetupSection>("");
   const jobSetupRef = useRef<HTMLDivElement>(null);
 
-  const openJobSetup = (targetId = "job-setup") => {
+  const openJobSetup = (section: JobSetupSection = "customer") => {
+    const targetId = section === "schedule" ? "job-setup-schedule" : "job-setup";
     setShowJobSetup(true);
-    setSetupSection(targetId === "job-setup-schedule" ? "schedule" : "customer");
+    setSetupSection(section);
     window.setTimeout(() => {
       const target = document.getElementById(targetId) || jobSetupRef.current;
       target?.scrollIntoView({ behavior: "smooth", block: "start" });
       target?.querySelector<HTMLElement>("button, input, [tabindex='0']")?.focus({ preventScroll: true });
     }, 0);
   };
-  const openJobSetupSchedule = () => openJobSetup("job-setup-schedule");
+  const openJobSetupSchedule = () => openJobSetup("schedule");
 
   const { data: lead, isLoading, isError, error } = useQuery<Lead>({
     queryKey: ["/api/leads", params?.id],
@@ -1379,7 +1380,7 @@ export default function LeadDetailPage() {
         applyPackageDraftMutation.mutate();
         break;
       case "build_quote":
-        openJobSetup();
+        openJobSetup("quote");
         break;
       case "send_quote":
         setShowQuoteDeliveryDialog(true);
@@ -1558,7 +1559,7 @@ export default function LeadDetailPage() {
                 variant="outline"
                 size="sm"
                 className="mt-3 w-full sm:w-auto"
-                onClick={() => openJobSetup()}
+                onClick={() => openJobSetup("quote")}
               >
                 <DollarSign className="h-4 w-4 mr-2" />
                 Adjust Manually Instead
@@ -1880,7 +1881,7 @@ export default function LeadDetailPage() {
                 {/* Quote changes use the unified inline Job Setup workspace. */}
                 {hasAdminAccess && (
                   <div className="pt-1">
-                    <Button variant="outline" className="w-full" onClick={() => openJobSetup()}>
+                    <Button variant="outline" className="w-full" onClick={() => openJobSetup("quote")}>
                       <DollarSign className="h-4 w-4 mr-2" /> Open Job Setup
                     </Button>
                   </div>
@@ -2520,7 +2521,7 @@ export default function LeadDetailPage() {
                     className="mt-3"
                     onClick={() => {
                       setShowOfflineCloseoutDialog(false);
-                      openJobSetup();
+                      openJobSetup("schedule");
                     }}
                   >
                     <Users className="mr-2 h-4 w-4" />Assign Crew in Job Setup
