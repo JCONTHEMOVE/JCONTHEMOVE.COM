@@ -1,5 +1,15 @@
 # Phone pricing training
 
+## Team contributions
+
+Open `/crew/pricing-training` (Crew → Options → Pricing Training). Approved crew can submit their own answers; all staff see response distributions and explanations. The business owner's existing answer records remain the final answer set, so previous progress is preserved. Each current, finalized scenario counts once toward the shared 500 goal, regardless of how many coworkers respond. Admins/owners can start a final answer from a contribution and override it; revisions are conflict-checked and audited. Completing training does not automatically change live pricing rules.
+
+Owner review awards 100 JCMOVES for contribution, 150 for mostly correct, or 200 for correct (total amounts). Spam/invalid input can be rejected without reward. Review notes are required. An owner cannot reward their own input. Each coworker/request has one submission record, and review locks it against edits and duplicate payments. Treasury debit, wallet token credit, reward ledger and review update commit together or roll back together. Existing treasury funding and risk checks apply. These are website JCMOVES credits; cash balances are not credited and this flow does not execute blockchain withdrawals.
+
+On first submission, a persistent thank-you record is queued for the first Discord webhook already configured for website job events. Drafts and edits do not generate additional notices. Notices use a sanitized display name, without automatic mentions or customer data. Pending/unconfigured notices retry after startup; known failed notices have an owner retry button. Ambiguous deliveries are not automatically resent, preventing duplicate thanks after a timeout. Owners can see delivery status in each contribution card.
+
+The PostgreSQL integration test in `server/routes/__tests__/pricingTrainingTeam.test.ts` uses an isolated in-memory database and simulated treasury/Discord dependencies. It never pays real rewards or posts test messages to Discord.
+
 Administrators and business owners can open `/admin/pricing-training`, also linked from Admin → Pricing. The test contains 500 synthetic customer requests in 25 batches of 20. Each request asks for a decision, difficulty, minimum and recommended crew, minimum scheduled and billed hours, expected duration, price, reasons, and optional explanatory notes. Numeric choices allow a custom answer. Missing information, specialist review, and decline are valid answers.
 
 Drafts are retained on the current browser. Save draft or Save answer syncs to the signed-in account; reloading resumes the first unanswered request. Batch navigation saves changed drafts before moving. Answers are scoped to the account, stored transactionally with revision history, and protected from conflicting saves on another device. The export contains saved source scenarios, answers, and an offline replay of owner-supplied minimums.
