@@ -64,6 +64,7 @@ type JobOrderTicketProps = {
   viewer?: "admin" | "crew" | "customer";
   action?: ReactNode;
   compact?: boolean;
+  detailPage?: boolean;
   className?: string;
   onClick?: () => void;
   onScheduleEdit?: () => void;
@@ -112,7 +113,7 @@ function createdTimestamp(value: string | null | undefined) {
   return { exact, relative };
 }
 
-export function JobOrderTicket({ order, viewer = "admin", action, compact = false, className, onClick, onScheduleEdit }: JobOrderTicketProps) {
+export function JobOrderTicket({ order, viewer = "admin", action, compact = false, detailPage = false, className, onClick, onScheduleEdit }: JobOrderTicketProps) {
   const total = Number(order.totalPrice ?? order.basePrice ?? 0) || 0;
   const credits = order.personalEarnings?.jcmoves.amount ?? order.estimatedTokens ?? (total > 0 ? Math.round(total * 15) : null);
   const scheduledDate = order.confirmedDate || order.moveDate;
@@ -141,26 +142,27 @@ export function JobOrderTicket({ order, viewer = "admin", action, compact = fals
       <div className="flex items-center justify-between gap-3 border-b border-slate-700/80 px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
           <span className="h-2 w-2 shrink-0 rounded-full bg-cyan-400" />
-          <span className="truncate text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">JC ON THE MOVE</span>
+          {detailPage ? <button type="button" className="min-h-11 text-sm font-semibold" title="Copy order number" onClick={() => navigator.clipboard.writeText(`JC-${order.orderNumber ?? order.id}`)}>JC-{order.orderNumber ?? order.id}</button> : <span className="truncate text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">JC ON THE MOVE</span>}
         </div>
-        <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-300">{ticketStatus(order)}</span>
+        <span className={cn(detailPage ? "text-right text-xs font-semibold text-cyan-300" : "shrink-0 text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-300")}>{ticketStatus(order)}</span>
       </div>
 
       <div className={cn("p-4", compact ? "space-y-3" : "space-y-4")}>
-        {created ? <div className={cn("flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-[11px]", order.leadSafety?.redFlag ? "border-red-500/50 bg-red-500/10 text-red-100" : order.leadSafety?.reminder ? "border-amber-400/40 bg-amber-400/10 text-amber-100" : "border-slate-700 bg-slate-950/40 text-slate-400")}><span>Created {created.exact}</span><span className="font-bold">{order.leadSafety?.redFlag ? `RED FLAG · ${created.relative}` : order.leadSafety?.reminder ? `Contact reminder · ${created.relative}` : created.relative}</span></div> : null}
+        {created && (!detailPage || order.leadSafety?.reminder || order.leadSafety?.redFlag) ? <div className={cn("flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-[11px]", order.leadSafety?.redFlag ? "border-red-500/50 bg-red-500/10 text-red-100" : order.leadSafety?.reminder ? "border-amber-400/40 bg-amber-400/10 text-amber-100" : "border-slate-700 bg-slate-950/40 text-slate-400")}><span>Created {created.exact}</span><span className="font-bold">{order.leadSafety?.redFlag ? `RED FLAG · ${created.relative}` : order.leadSafety?.reminder ? `Contact reminder · ${created.relative}` : created.relative}</span></div> : null}
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+          {!detailPage && <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
             {order.orderNumber != null ? `Order JC-${order.orderNumber}` : "Job order"}
-          </p>
-          <h2 className={cn("mt-1 font-black tracking-tight text-white", compact ? "text-base" : "text-2xl")}>{displayService(order.serviceType)}</h2>
-          {!compact && order.customerName ? <p className="mt-1 text-sm text-slate-400">{order.customerName}</p> : null}
+          </p>}
+          {detailPage && <h1 className="text-xl font-bold [overflow-wrap:anywhere]">{order.customerName}</h1>}
+          <h2 className={cn("mt-1 font-black tracking-tight text-white", compact || detailPage ? "text-base" : "text-2xl")}>{displayService(order.serviceType)}</h2>
+          {!compact && !detailPage && order.customerName ? <p className="mt-1 text-sm text-slate-400">{order.customerName}</p> : null}
         </div>
 
         <div className={cn("grid gap-2", compact ? "grid-cols-2" : "sm:grid-cols-2")}>
-          <TicketDetail icon={CalendarDays} label="Schedule" value={formatDate(scheduledDate)} onClick={onScheduleEdit} />
-          <TicketDetail icon={Clock3} label="Arrival" value={order.arrivalWindow || (order.confirmedHours ? `${order.confirmedHours} hr booked` : "Time to confirm")} onClick={onScheduleEdit} />
-          {!compact && <TicketDetail icon={Users} label="Crew" value={order.crewSize ? `${order.crewSize} needed` : "Crew to confirm"} />}
-          {!compact && <TicketDetail icon={MapPin} label="Location" value={address || "Location to confirm"} />}
+          <TicketDetail readable={detailPage} icon={CalendarDays} label="Schedule" value={formatDate(scheduledDate)} onClick={onScheduleEdit} />
+          <TicketDetail readable={detailPage} icon={Clock3} label="Arrival" value={order.arrivalWindow || (order.confirmedHours ? `${order.confirmedHours} hr booked` : "Time to confirm")} onClick={onScheduleEdit} />
+          {!compact && <TicketDetail readable={detailPage} icon={Users} label="Crew" value={order.crewSize ? `${order.crewSize} needed` : "Crew to confirm"} />}
+          {!compact && <TicketDetail readable={detailPage} icon={MapPin} label="Location" value={address || "Location to confirm"} href={detailPage && address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}` : undefined} />}
         </div>
 
         {!compact && lines.length > 0 ? (
@@ -215,16 +217,17 @@ function EarningLine({ label, value }: { label: string; value: string }) {
   return <div className="rounded bg-slate-950/60 px-2 py-1.5"><p className="text-[9px] uppercase tracking-wide text-slate-500">{label}</p><p className="font-semibold text-slate-100">{value}</p></div>;
 }
 
-function TicketDetail({ icon: Icon, label, value, onClick }: { icon: LucideIcon; label: string; value: string; onClick?: () => void }) {
+function TicketDetail({ icon: Icon, label, value, onClick, readable, href }: { icon: LucideIcon; label: string; value: string; onClick?: () => void; readable?: boolean; href?: string }) {
   const detail = <>
     <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan-300" />
     <div className="min-w-0 text-left">
       <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-slate-500">{label}</p>
-      <p className="truncate text-xs font-medium text-slate-200">{value}</p>
+      <p className={cn("font-medium text-slate-200", readable ? "text-sm [overflow-wrap:anywhere]" : "truncate text-xs")}>{value}</p>
     </div>
   </>;
+  if (href) return <a href={href} target="_blank" rel="noreferrer" className="flex min-h-11 min-w-0 items-start gap-2 rounded-lg bg-white/[0.035] px-2.5 py-2 hover:underline">{detail}</a>;
   if (onClick) {
-    return <button type="button" onClick={onClick} className="flex min-w-0 items-start gap-2 rounded-lg bg-white/[0.035] px-2.5 py-2 text-left transition hover:bg-cyan-400/10 focus:outline-none focus:ring-2 focus:ring-cyan-400/70" aria-label={`Edit ${label.toLowerCase()}`}>{detail}</button>;
+    return <button type="button" onClick={onClick} className="flex min-h-11 min-w-0 items-start gap-2 rounded-lg bg-white/[0.035] px-2.5 py-2 text-left transition hover:bg-cyan-400/10 focus:outline-none focus:ring-2 focus:ring-cyan-400/70" aria-label={`Edit ${label.toLowerCase()}`}>{detail}</button>;
   }
   return (
     <div className="flex min-w-0 items-start gap-2 rounded-lg bg-white/[0.035] px-2.5 py-2">

@@ -14,13 +14,13 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { extractCustomerMediaLink } from "@/lib/lead-details";
-import { formatOrderNumber } from "@shared/schema";
 import { useAuth } from "@/hooks/useAuth";
 import { CrewSuggestionsDialog } from "@/components/crew-suggestions-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AdminJobPaymentShortcut } from "@/components/AdminJobPaymentShortcut";
 import { JobOrderTicket } from "@/components/job-order-ticket";
-import { JobSetupWorkspace } from "@/components/job-setup-workspace";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { JobSetupWorkspace, type JobSetupSection } from "@/components/job-setup-workspace";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import MarketplaceSourceFlowStrip from "@/components/MarketplaceSourceFlowStrip";
@@ -535,17 +535,20 @@ export default function LeadDetailPage() {
   const [squarePaymentUrl, setSquarePaymentUrl] = useState<string | null>(null);
   const [copiedPaymentLink, setCopiedPaymentLink] = useState(false);
   const [showJobSetup, setShowJobSetup] = useState(true);
+  const [setupSection, setSetupSection] = useState<JobSetupSection>("");
   const jobSetupRef = useRef<HTMLDivElement>(null);
 
-  const openJobSetup = (targetId = "job-setup") => {
+  const openJobSetup = (section: JobSetupSection = "customer") => {
+    const targetId = section === "schedule" ? "job-setup-schedule" : "job-setup";
     setShowJobSetup(true);
+    setSetupSection(section);
     window.setTimeout(() => {
       const target = document.getElementById(targetId) || jobSetupRef.current;
       target?.scrollIntoView({ behavior: "smooth", block: "start" });
       target?.querySelector<HTMLElement>("button, input, [tabindex='0']")?.focus({ preventScroll: true });
     }, 0);
   };
-  const openJobSetupSchedule = () => openJobSetup("job-setup-schedule");
+  const openJobSetupSchedule = () => openJobSetup("schedule");
 
   const { data: lead, isLoading, isError, error } = useQuery<Lead>({
     queryKey: ["/api/leads", params?.id],
@@ -1135,15 +1138,6 @@ export default function LeadDetailPage() {
   const pendingRewards = leadRewards.filter(r => r.status === "pending");
   const creditedRewards = leadRewards.filter(r => r.status === "confirmed");
 
-  const serviceTypeBadge = () => {
-    switch (lead.serviceType) {
-      case "residential": return "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200";
-      case "commercial": return "bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200";
-      case "junk": return "bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200";
-      default: return "bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200";
-    }
-  };
-
   // 4-step workflow system (matches enforced pipeline)
   const workflow = [
     { step: 1, name: "Quote Requested", status: ["quote_requested"] },
@@ -1386,7 +1380,7 @@ export default function LeadDetailPage() {
         applyPackageDraftMutation.mutate();
         break;
       case "build_quote":
-        openJobSetup();
+        openJobSetup("quote");
         break;
       case "send_quote":
         setShowQuoteDeliveryDialog(true);
@@ -1436,16 +1430,6 @@ export default function LeadDetailPage() {
       {nextStep.button}
     </Button>
   ) : null;
-  const savedZonePreview = lead.zoneSnapshot?.preview;
-  const savedZoneEstimate = savedZonePreview?.quote;
-  const hasSavedZoneEstimate = Number.isFinite(Number(savedZoneEstimate?.minEstimate)) && Number.isFinite(Number(savedZoneEstimate?.maxEstimate));
-  const savedZoneEstimateLabel = hasSavedZoneEstimate
-    ? `$${Math.round(Number(savedZoneEstimate?.minEstimate))}–$${Math.round(Number(savedZoneEstimate?.maxEstimate))}`
-    : null;
-  const truckProviderLabel = lead.truckProvider === "jc_on_the_move" ? "JC ON THE MOVE truck"
-    : lead.truckProvider === "rental_uhaul" ? "Rental / U-Haul"
-      : lead.truckProvider === "customer" ? "Customer truck"
-        : lead.truckProvider === "none" ? "No truck needed" : null;
   const latestInvoice = [...leadInvoices]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
   const paymentConfirmed = ["paid", "dispatched", "in_progress", "completed", "customer_approved", "payout_calculated", "payout_sent", "closed"].includes(statusKey)
@@ -1483,7 +1467,7 @@ export default function LeadDetailPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="max-w-4xl mx-auto px-4 py-6">
+      <div className="max-w-4xl mx-auto min-w-0 px-3 py-3 sm:px-6 sm:py-6">
         {/* Header */}
         <div className="mb-5">
           <div className="flex items-center justify-between mb-3">
@@ -1497,66 +1481,16 @@ export default function LeadDetailPage() {
               <ArrowLeft className="h-4 w-4" />
               Back
             </Button>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowCrewSuggestions(true)}
-                data-testid="button-crew-suggestions"
-                className="flex items-center gap-2"
-              >
-                <Sparkles className="h-4 w-4" />
-                Crew Suggestions
-              </Button>
-              {hasAdminAccess && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setRemoveIntent("archive");
-                    setShowArchiveDialog(true);
-                  }}
-                  data-testid="button-remove-lead"
-                  className="text-muted-foreground hover:text-red-300"
-                  title="Remove job request"
-                >
-                  <X className="h-4 w-4" />
-                  <span className="sr-only">Remove job request</span>
-                </Button>
-              )}
-              <Button size="sm" onClick={() => openJobSetup()} data-testid="button-edit">
-                Set up job
-              </Button>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex flex-wrap items-center gap-2">
             {hasAdminAccess && <AdminJobPaymentShortcut key={lead.id} leadId={lead.id} />}
-            <h1 className="text-2xl font-bold text-foreground">
-              {lead.workerVisibility?.customerIdentity === false
-                ? "Customer details protected"
-                : `${lead.firstName || ""} ${lead.lastName || ""}`.trim()}
-            </h1>
-            {lead.orderNumber != null && (
-              <button
-                onClick={() => navigator.clipboard.writeText(formatOrderNumber(lead.orderNumber!))}
-                className="flex items-center gap-1.5 text-sm font-mono font-semibold text-blue-300 border border-blue-500/30 rounded-md px-2 py-1 hover:bg-blue-500/10 transition-colors"
-                title="Click to copy order number"
-              >
-                <Hash className="h-3.5 w-3.5" />
-                {formatOrderNumber(lead.orderNumber)}
-                <Copy className="h-3 w-3 opacity-60" />
-              </button>
-            )}
-            <Badge className={serviceTypeBadge()}>
-              {lead.serviceType === "residential" && "Residential"}
-              {lead.serviceType === "commercial" && "Commercial"}
-              {lead.serviceType === "junk" && "Junk Removal"}
-              {!["residential", "commercial", "junk"].includes(lead.serviceType) && lead.serviceType}
-            </Badge>
-            <Badge className={lead.status === "paid" ? "bg-green-600 text-white" : lead.status === "completed" ? "" : ""} variant={lead.status === "completed" ? "default" : "secondary"}>
-              {lead.status === "paid" ? "Paid (Confirmed)" : lead.status.charAt(0).toUpperCase() + lead.status.slice(1).replace(/_/g, " ")}
-            </Badge>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild><Button variant="outline" className="min-h-11">Actions <ChevronDown className="ml-2 h-4 w-4" /></Button></DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem className="min-h-11" onSelect={() => setShowCrewSuggestions(true)}>Crew suggestions</DropdownMenuItem>
+                {hasAdminAccess && <DropdownMenuItem className="min-h-11 text-red-400" onSelect={() => { setRemoveIntent("archive"); setShowArchiveDialog(true); }}>Archive job request</DropdownMenuItem>}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            </div>
           </div>
 
           {lead.workerVisibility && lead.workerVisibility.locked.length > 0 && (
@@ -1584,7 +1518,8 @@ export default function LeadDetailPage() {
         </div>
 
         <JobOrderTicket
-          order={lead}
+          order={{ ...lead, customerName: lead.workerVisibility?.customerIdentity === false ? "Customer details protected" : `${lead.firstName || ""} ${lead.lastName || ""}`.trim() }}
+          detailPage
           viewer={hasAdminAccess ? "admin" : "crew"}
           action={canClaimJob ? ticketAction : undefined}
           onScheduleEdit={hasAdminAccess ? openJobSetupSchedule : undefined}
@@ -1624,7 +1559,7 @@ export default function LeadDetailPage() {
                 variant="outline"
                 size="sm"
                 className="mt-3 w-full sm:w-auto"
-                onClick={() => openJobSetup()}
+                onClick={() => openJobSetup("quote")}
               >
                 <DollarSign className="h-4 w-4 mr-2" />
                 Adjust Manually Instead
@@ -1640,105 +1575,20 @@ export default function LeadDetailPage() {
               employees={employees}
               canManageSetup={hasAdminAccess}
               onSaved={handleJobSetupSaved}
+              activeSection={setupSection}
+              onSectionChange={setSetupSection}
             />
           </div>
         )}
 
         <details className="group mb-4 rounded-xl border border-border bg-card">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold [&::-webkit-details-marker]:hidden">
-            More job details
+            Payment, rewards & media
             <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
           </summary>
         <Card className="border-0 shadow-none" data-testid="job-brief">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <CardTitle className="text-base">Job Brief</CardTitle>
-                <CardDescription>What the crew needs to act now.</CardDescription>
-              </div>
-              <Badge variant="secondary" className="shrink-0 capitalize">
-                {lead.status.replace(/_/g, " ")}
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="flex min-w-0 items-start gap-3">
-                <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                <div className="min-w-0">
-                  <p className="text-xs text-muted-foreground">Address</p>
-                  {jobBrief.address ? (
-                    <a
-                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(jobBrief.address)}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-start gap-1 text-sm font-medium hover:underline"
-                      data-testid="link-job-brief-map"
-                    >
-                      <span className="break-words">{jobBrief.address}</span>
-                      <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    </a>
-                  ) : (
-                    <p className="text-sm font-medium text-muted-foreground">Address TBD</p>
-                  )}
-                </div>
-              </div>
-              <div className="flex min-w-0 items-start gap-3">
-                <Phone className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                <div className="min-w-0">
-                  <p className="text-xs text-muted-foreground">Phone</p>
-                  {jobBrief.phone ? (
-                    <>
-                      <p className="text-sm font-medium">{jobBrief.phone}</p>
-                      <div className="mt-1.5 flex gap-2">
-                        <a href={`tel:${jobBrief.phone}`} className="text-xs font-medium text-blue-400 hover:underline" data-testid="link-job-brief-call">Call</a>
-                        <a href={`sms:${jobBrief.phone}`} className="text-xs font-medium text-green-400 hover:underline" data-testid="link-job-brief-text">Text</a>
-                      </div>
-                    </>
-                  ) : (
-                    <p className="text-sm font-medium text-muted-foreground">Not provided</p>
-                  )}
-                </div>
-              </div>
-              {jobBrief.email && (
-                <div className="flex min-w-0 items-start gap-3">
-                  <Mail className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <p className="text-xs text-muted-foreground">Email</p>
-                    <a href={`mailto:${jobBrief.email}`} className="block truncate text-sm font-medium hover:underline" data-testid="link-job-brief-email">{jobBrief.email}</a>
-                  </div>
-                </div>
-              )}
-              <div className="flex min-w-0 items-start gap-3">
-                <Calendar className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                <div className="min-w-0">
-                  <p className="text-xs text-muted-foreground">Date & time</p>
-                  <p className="break-words text-sm font-medium">{jobBrief.schedule}</p>
-                </div>
-              </div>
-              <div className="flex min-w-0 items-start gap-3">
-                <Users className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                <div>
-                  <p className="text-xs text-muted-foreground">Crew size</p>
-                  <p className="text-sm font-medium">{jobBrief.crewSize ? `${jobBrief.crewSize} mover${jobBrief.crewSize === 1 ? "" : "s"}` : "Crew TBD"}</p>
-                </div>
-              </div>
-              <div className="flex min-w-0 items-start gap-3">
-                <Clock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                <div>
-                  <p className="text-xs text-muted-foreground">Expected hours</p>
-                  <p className="text-sm font-medium">{jobBrief.expectedHours ? `${jobBrief.expectedHours} hour${jobBrief.expectedHours === 1 ? "" : "s"}` : "Hours TBD"}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-3 border-t pt-4 sm:grid-cols-2">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notes</p>
-                <p className="mt-1 max-h-10 overflow-hidden text-sm leading-5 text-foreground/90">
-                  {jobBrief.notesPreview || "No notes added."}
-                </p>
-              </div>
+          <CardContent className="space-y-4 pt-3">
+            <div>
               <div className="min-w-0">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Photos</p>
@@ -1769,13 +1619,9 @@ export default function LeadDetailPage() {
               <div className="flex items-start gap-3">
                 <DollarSign className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
                 <div className="min-w-0">
-                  <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Quote<Popover><PopoverTrigger asChild><button type="button" aria-label="Explain quote"><CircleHelp className="h-3 w-3" /></button></PopoverTrigger><PopoverContent className="w-64 text-xs">The live rate card calculates labor, truck, trailer, stairs, and elevator fees on the server. Manual changes stay labeled for audit.</PopoverContent></Popover></p>
+                  <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Payment<Popover><PopoverTrigger asChild><button type="button" aria-label="Explain quote"><CircleHelp className="h-3 w-3" /></button></PopoverTrigger><PopoverContent className="w-64 text-xs">The live rate card calculates labor, truck, trailer, stairs, and elevator fees on the server. Manual changes stay labeled for audit.</PopoverContent></Popover></p>
                   <p className="capitalize text-sm font-medium">{paymentState}</p>
-                  {hasAdminAccess && (
-                    <button type="button" onClick={() => leadHasQuote ? setShowQuoteDeliveryDialog(true) : openJobSetup()} className="mt-1 text-xs font-medium text-blue-400 hover:underline">
-                      {leadHasQuote ? "Send quote & invoice" : "Open job setup"}
-                    </button>
-                  )}
+
                 </div>
               </div>
               <div className="flex items-start gap-3">
@@ -1817,59 +1663,7 @@ export default function LeadDetailPage() {
         </Card>
         </details>
 
-        <Card className="mb-4 hidden" aria-hidden="true">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Job Basics</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-2">
-            <div className="flex items-start gap-3">
-              <MapPin className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-              <div className="min-w-0">
-                <p className="text-xs text-muted-foreground">From</p>
-                <p className="text-sm font-medium break-words">{lead.confirmedFromAddress || lead.fromAddress}</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <Calendar className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-              <div>
-                <p className="text-xs text-muted-foreground">Date & Time</p>
-                <p className="text-sm font-medium">{lead.confirmedDate || lead.moveDate || "Not set"}{lead.arrivalWindow ? ` - ${lead.arrivalWindow}` : ""}</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <DollarSign className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-              <div>
-                <p className="text-xs text-muted-foreground">{savedZoneEstimateLabel && !(lead.totalPrice || lead.basePrice) ? "Zone estimate" : "Quote"}</p>
-                <p className="text-sm font-medium">{lead.totalPrice || lead.basePrice ? formatMoney(lead.totalPrice || lead.basePrice) : savedZoneEstimateLabel || "Not quoted"}</p>
-                {savedZoneEstimateLabel && !(lead.totalPrice || lead.basePrice) && <p className={`text-xs ${lead.isQuoteOnly || !savedZonePreview?.matched ? "text-amber-400" : "text-emerald-400"}`}>{lead.isQuoteOnly || !savedZonePreview?.matched ? "Owner review required" : "Saved with job"}</p>}
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <Users className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-              <div className="min-w-0">
-                <p className="text-xs text-muted-foreground">Crew</p>
-                <p className="text-sm font-medium truncate">
-                  {selectedCrewNames.length > 0 ? selectedCrewNames.join(", ") : `${lead.crewSize || 2} mover${(lead.crewSize || 2) !== 1 ? "s" : ""}`}
-                </p>
-              </div>
-            </div>
-            {(lead.confirmedHours || truckProviderLabel) && (
-              <div className="flex items-start gap-3">
-                <Truck className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-xs text-muted-foreground">Plan</p>
-                  <p className="text-sm font-medium truncate">{lead.confirmedHours ? `${lead.confirmedHours} expected hour${lead.confirmedHours === 1 ? "" : "s"}` : "Hours to confirm"}{truckProviderLabel ? ` · ${truckProviderLabel}` : ""}{lead.truckSize && lead.truckSize !== "none" ? ` · ${lead.truckSize.replace("_", " ")}` : ""}</p>
-                </div>
-              </div>
-            )}
-            {savedZonePreview?.quote?.rate && (
-              <div className="flex items-start gap-3">
-                <Clock className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-                <div><p className="text-xs text-muted-foreground">Saved zone rate</p><p className="text-sm font-medium">${savedZonePreview.quote.rate.hourlyRate}/hr · {savedZonePreview.quote.rate.minimumHours} hour minimum</p></div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+
 
         <div className="mb-4">
           <Button
@@ -2087,7 +1881,7 @@ export default function LeadDetailPage() {
                 {/* Quote changes use the unified inline Job Setup workspace. */}
                 {hasAdminAccess && (
                   <div className="pt-1">
-                    <Button variant="outline" className="w-full" onClick={() => openJobSetup()}>
+                    <Button variant="outline" className="w-full" onClick={() => openJobSetup("quote")}>
                       <DollarSign className="h-4 w-4 mr-2" /> Open Job Setup
                     </Button>
                   </div>
@@ -2727,7 +2521,7 @@ export default function LeadDetailPage() {
                     className="mt-3"
                     onClick={() => {
                       setShowOfflineCloseoutDialog(false);
-                      openJobSetup();
+                      openJobSetup("schedule");
                     }}
                   >
                     <Users className="mr-2 h-4 w-4" />Assign Crew in Job Setup
