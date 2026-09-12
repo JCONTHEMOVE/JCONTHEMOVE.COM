@@ -1,3 +1,4 @@
+import { TrainingJobSnapshot } from '@/components/training-job-snapshot';
 import { useEffect, useRef, useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -61,7 +62,7 @@ function TeamRequest({data,index,onNavigate}:{data:Data;index:number;onNavigate:
   const initialFinal=seed?{answer:seed.answer,status:'draft' as const,revision:ownerAnswer?.revision??0,updatedAt:ownerAnswer?.updatedAt??''}:ownerAnswer;
   const go=(delta:number)=>{setSeed(null);onNavigate(delta);};
   return <section className="space-y-5">
-    <div className="rounded-xl bg-slate-900 p-4"><p className="text-sm text-blue-300">Request {index+1} of 500 · {s.id}{data.completed.includes(s.id)?' · Owner finalized':''}</p><h2 className="mt-2 text-xl font-bold">{s.title}</h2><p className="mt-3 whitespace-pre-wrap text-sm leading-6">{s.request}</p></div>
+    <TrainingJobSnapshot scenario={s} index={index} count={data.scenarios.length} finalized={data.completed.includes(s.id)}/>
     <div className="flex flex-wrap gap-2"><Button className="min-h-12" disabled={!canCompare} variant={mode==='compare'?'default':'outline'} onClick={()=>setMode('compare')}>{canCompare?`Compare responses (${detail.data?.responses.length??0})`:'Compare after submitting'}</Button>
       <Button className="min-h-12" variant={mode==='contribute'?'default':'outline'} onClick={()=>setMode('contribute')}>My contribution</Button>
       {data.canReview&&<Button className="min-h-12" variant={mode==='final'?'default':'outline'} onClick={()=>{setSeed(null);setMode('final');}}>Owner final answer</Button>}
@@ -75,9 +76,9 @@ function TeamRequest({data,index,onNavigate}:{data:Data;index:number;onNavigate:
       {mine.reviewNote&&<p className="mt-2 whitespace-pre-wrap text-sm">{mine.reviewNote}</p>}
     </div>}
     {mode==='contribute'&&(mine?.grade?<div className="rounded-xl bg-slate-900 p-4"><p className="mt-2 text-sm text-slate-400">Reviewed submissions are kept unchanged for the reward audit.</p></div>:<><p className="text-sm text-slate-300">Submit your own judgment and explanation. Saving an answer submits it for owner review; drafts do not earn rewards.</p>
-      <ScenarioTest scenario={s} saved={mine} ownerId={`team:${data.userId}`} index={index} count={500} saveEndpoint={endpoint} onSaved={value=>{queryClient.setQueryData<Data>([endpoint],old=>old?{...old,answers:{...old.answers,[s.id]:{...value,grade:null,rewardAmount:0,reviewNote:null}}}:old);if(value.status==='reviewed')toast({title:'✓ Answer submitted',description:'JCMOVES pending owner approval: 100 for contribution, 150 mostly correct, or 200 correct.'});void refresh();}} onNavigate={go}/></>)}
+      <ScenarioTest showSnapshot={false} scenario={s} saved={mine} ownerId={`team:${data.userId}`} index={index} count={500} saveEndpoint={endpoint} onSaved={value=>{queryClient.setQueryData<Data>([endpoint],old=>old?{...old,answers:{...old.answers,[s.id]:{...value,grade:null,rewardAmount:0,reviewNote:null}}}:old);if(value.status==='reviewed')toast({title:'✓ Answer submitted',description:'JCMOVES pending owner approval: 100 for contribution, 150 mostly correct, or 200 correct.'});void refresh();}} onNavigate={go}/></>)}
     {mode==='final'&&data.canReview&&(detail.isPending?<p>Loading final answer…</p>:detail.isError?<p role="alert">Cannot load the final answer. Return to comparisons and retry.</p>:<><p className="rounded-xl border border-blue-500 p-3 text-sm">{seed?`Starting from ${seed.displayName}'s response. `:''}Review or override every value, then save the final answer. Only this answer counts toward the shared 500 goal.</p>
-      <ScenarioTest key={`${s.id}:final:${seed?.id??'owner'}:${ownerAnswer?.revision??0}`} scenario={s} saved={initialFinal} ownerId={`final:${data.userId}:${seed?.id??'owner'}`} index={index} count={500} saveEndpoint={`${endpoint}/final`} onSaved={()=>{setSeed(null);void refresh();}} onNavigate={go}/></>)}
+      <ScenarioTest showSnapshot={false} key={`${s.id}:final:${seed?.id??'owner'}:${ownerAnswer?.revision??0}`} scenario={s} saved={initialFinal} ownerId={`final:${data.userId}:${seed?.id??'owner'}`} index={index} count={500} saveEndpoint={`${endpoint}/final`} onSaved={()=>{setSeed(null);void refresh();}} onNavigate={go}/></>)}
     {mode==='compare'&&canCompare&&<>
       {detail.isPending?<p>Loading responses…</p>:detail.isError?<div role="alert">Could not load responses. <Button onClick={()=>void detail.refetch()}>Retry</Button></div>:<>
         <p className="text-sm text-slate-400">Charts show submitted responses, not a vote on correctness. Missing values are excluded. The owner makes the final decision.</p>

@@ -1,3 +1,5 @@
+import { TrainingJobSnapshot, decisionIcons, difficultyIcons, reasonIcons, Check, sectionIcons } from '@/components/training-job-snapshot';
+import type { LucideIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -9,21 +11,21 @@ import { TRAINING_REASONS, emptyTrainingAnswer, trainingAnswerProblems, training
 type TrainingData={ownerId:string;version:number;scenarios:PricingTrainingScenario[];answers:Record<string,SavedTrainingAnswer>};
 const endpoint="/api/admin/pricing-training";
 
-function Choice<T extends string|number>({label,value,options,onChange}:{label:string;value:T|null;options:{value:T;label:string}[];onChange:(value:T)=>void}){
+function Choice<T extends string|number>({label,value,options,onChange,icons}:{label:string;value:T|null;options:{value:T;label:string}[];onChange:(value:T)=>void;icons?:Record<string,LucideIcon>}){
   return <fieldset className="min-w-0 space-y-2"><legend className="mb-2 font-semibold">{label}</legend><div className="grid grid-cols-2 gap-2">
-    {options.map(option=><button type="button" key={option.value} aria-pressed={value===option.value} onClick={()=>onChange(option.value)} className={`min-h-12 rounded-xl border px-3 py-3 text-left text-sm font-medium ${value===option.value?"border-blue-400 bg-blue-600 text-white":"border-slate-700 bg-slate-900 text-slate-200"}`}>{option.label}</button>)}
+    {options.map(option=>{const Icon=icons?.[String(option.value)];return <button type="button" key={option.value} aria-pressed={value===option.value} onClick={()=>onChange(option.value)} className={`min-h-12 rounded-xl border px-3 py-3 text-left text-base font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-300 ${value===option.value?"border-blue-400 bg-blue-600 text-white":"border-slate-700 bg-slate-900 text-slate-200"}`}><span className="flex items-center gap-2">{Icon&&<Icon aria-hidden="true" className="h-8 w-8 shrink-0"/>}<span className="flex-1">{option.label}</span>{value===option.value&&<Check aria-hidden="true" className="h-4 w-4 shrink-0"/>}</span></button>})}
   </div></fieldset>;
 }
 function NumberChoice({label,value,options,onChange,unit=""}:{label:string;value:number|null;options:number[];onChange:(value:number|null)=>void;unit?:string}){
   const [custom,setCustom]=useState(false);
   const showCustom=custom||(value!=null&&!options.includes(value));
-  return <div className="space-y-2"><Choice label={label} value={value} options={options.map(n=>({value:n,label:`${unit==="$"?"$":""}${n}${unit&&unit!=="$"?` ${unit}`:""}`}))} onChange={n=>{setCustom(false);onChange(n);}}/>
+  return <div className="space-y-2"><Choice icons={Object.fromEntries(options.map(n=>[String(n),unit==="workers"?sectionIcons.Crew:unit==="$"?sectionIcons.Price:sectionIcons.Hours]))} label={label} value={value} options={options.map(n=>({value:n,label:`${unit==="$"?"$":""}${n}${unit&&unit!=="$"?` ${unit}`:""}`}))} onChange={n=>{setCustom(false);onChange(n);}}/>
     <button type="button" onClick={()=>setCustom(true)} className="min-h-11 text-sm font-semibold text-blue-300 underline">None of these — enter my own</button>
     {showCustom&&<Input aria-label={`Custom ${label}`} type="number" inputMode={unit==="workers"?"numeric":"decimal"} min={unit==="workers"?1:0.25} step={unit==="workers"?1:"any"} value={value??""} onChange={event=>onChange(event.target.value===""?null:Number(event.target.value))} className="h-12 border-slate-600 bg-slate-900"/>}
   </div>;
 }
 
-export function ScenarioTest({scenario,saved,ownerId,onSaved,onNavigate,index,count,saveEndpoint=endpoint}:{scenario:PricingTrainingScenario;saved?:SavedTrainingAnswer;ownerId:string;onSaved:(answer:SavedTrainingAnswer)=>void;onNavigate:(direction:number)=>void;index:number;count:number;saveEndpoint?:string}){
+export function ScenarioTest({scenario,saved,ownerId,onSaved,onNavigate,index,count,saveEndpoint=endpoint,showSnapshot=true}:{scenario:PricingTrainingScenario;saved?:SavedTrainingAnswer;ownerId:string;onSaved:(answer:SavedTrainingAnswer)=>void;onNavigate:(direction:number)=>void;index:number;count:number;saveEndpoint?:string;showSnapshot?:boolean}){
   const storageKey=`jc-pricing-training:${ownerId}:${scenario.id}:${scenario.fingerprint}${saveEndpoint===endpoint?'':':'+saveEndpoint}`;
   const [olderDraft,setOlderDraft]=useState<TrainingAnswer|null>(()=>{
     try{const draft=JSON.parse(localStorage.getItem(storageKey)||"null");const parsed=trainingAnswerSchema.safeParse(draft?.answer);if(draft&&draft.revision!==(saved?.revision??0)&&parsed.success)return parsed.data;}catch{}
@@ -71,17 +73,13 @@ export function ScenarioTest({scenario,saved,ownerId,onSaved,onNavigate,index,co
   return <article className="min-w-0 space-y-5" aria-busy={saving}>
     {olderDraft&&<div role="alert" className="rounded-xl border border-amber-500 p-4 text-sm"><p>A newer answer is saved in your account. Your older phone draft is still available. Choose which to review before continuing.</p><div className="mt-3 flex flex-wrap gap-3"><Button onClick={()=>{setAnswer(olderDraft);setOlderDraft(null);}}>Review phone draft</Button><Button variant="outline" onClick={()=>setOlderDraft(null)}>Use account answer</Button></div></div>}
     <label className="block text-sm">Jump to a batch (20 requests each)<select aria-label="Jump to batch" disabled={saving||!!olderDraft} value={Math.floor(index/20)} onChange={e=>void move(Number(e.target.value)*20-index)} className="mt-2 h-12 w-full rounded-xl border border-slate-700 bg-slate-900 px-3">{Array.from({length:Math.ceil(count/20)},(_,i)=><option key={i} value={i}>Batch {i+1}: requests {i*20+1}–{Math.min(count,(i+1)*20)}</option>)}</select></label>
-    <div className="rounded-2xl border border-slate-700 bg-slate-900 p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-blue-300">Request {index+1} of {count} · Batch {scenario.batch} · {scenario.id}</p>
-      <h2 className="mt-2 text-xl font-bold">{scenario.title}</h2>
-      <details className="mt-3" open={current==="Decision"}><summary className="min-h-10 cursor-pointer text-sm font-semibold text-blue-200">Customer request</summary><p className="whitespace-pre-wrap text-sm leading-6 text-slate-200">{scenario.request}</p></details>
-      {saved?.status==="reviewed"&&<p className="mt-2 text-sm text-emerald-300">Previously answered. You can revise your choices.</p>}
-    </div>
-    <div className="flex flex-wrap gap-2" aria-label="Question sections">{stages.map((label,i)=><button key={label} type="button" onClick={()=>setStep(i)} aria-current={current===label?"step":undefined} className={`min-h-11 rounded-lg px-3 py-2 text-xs ${current===label?"bg-blue-600":"bg-slate-800 text-slate-300"}`}>{i+1}. {label}</button>)}</div>
+    {showSnapshot&&<TrainingJobSnapshot scenario={scenario} index={index} count={count}/>}
+    {saved?.status==="reviewed"&&<p className="text-sm text-emerald-300">Previously answered. You can revise your choices.</p>}
+    <div className="flex flex-wrap gap-2" aria-label="Question sections">{stages.map((label,i)=>{const Icon=sectionIcons[label];return <button key={label} type="button" onClick={()=>setStep(i)} aria-current={current===label?"step":undefined} className={`flex min-h-12 items-center gap-2 rounded-lg px-3 py-2 text-sm ${current===label?"bg-blue-600":"bg-slate-800 text-slate-300"}`}><Icon aria-hidden="true" className="h-5 w-5"/>{i+1}. {label}</button>})}</div>
     <fieldset disabled={saving||!!olderDraft} className="min-w-0 space-y-6 disabled:opacity-60">
       {current==="Decision"&&<>
-        <Choice label="How would you handle this request?" value={answer.decision} onChange={v=>set("decision",v)} options={[{value:"quote",label:"I can price this job"},{value:"information",label:"Need more information"},{value:"specialist",label:"Specialist / site review"},{value:"decline",label:"Decline this job"}]}/>
-        <Choice label="How difficult is this job?" value={answer.difficulty} onChange={v=>set("difficulty",v)} options={[{value:"low",label:"Low"},{value:"moderate",label:"Moderate"},{value:"high",label:"High"},{value:"unknown",label:"Cannot tell yet"}]}/>
+        <Choice icons={decisionIcons} label="How would you handle this request?" value={answer.decision} onChange={v=>set("decision",v)} options={[{value:"quote",label:"I can price this job"},{value:"information",label:"Need more information"},{value:"specialist",label:"Specialist / site review"},{value:"decline",label:"Decline this job"}]}/>
+        <Choice icons={difficultyIcons} label="How difficult is this job?" value={answer.difficulty} onChange={v=>set("difficulty",v)} options={[{value:"low",label:"Low"},{value:"moderate",label:"Moderate"},{value:"high",label:"High"},{value:"unknown",label:"Cannot tell yet"}]}/>
       </>}
       {current==="Crew"&&<>
         <p className="text-sm text-slate-300">Count trained JC workers. Extra hours do not make an unsafe crew size acceptable.</p>
@@ -99,7 +97,7 @@ export function ScenarioTest({scenario,saved,ownerId,onSaved,onNavigate,index,co
         <NumberChoice label="What would you charge?" value={answer.price} options={[150,250,350,500,750,1000,1500,2000]} onChange={v=>set("price",v)} unit="$"/>
       </>}
       {current==="Reasons"&&<>
-        <fieldset><legend className="mb-2 font-semibold">Why? Tap all that apply.</legend><div className="grid grid-cols-2 gap-2">{TRAINING_REASONS.map(reason=><button key={reason} type="button" aria-pressed={answer.reasons.includes(reason)} onClick={()=>set("reasons",answer.reasons.includes(reason)?answer.reasons.filter(r=>r!==reason):[...answer.reasons,reason])} className={`min-h-12 rounded-xl border p-3 text-left text-sm ${answer.reasons.includes(reason)?"border-blue-400 bg-blue-600":"border-slate-700 bg-slate-900"}`}>{reason}</button>)}</div></fieldset>
+        <fieldset><legend className="mb-2 font-semibold">Why? Tap all that apply.</legend><div className="grid grid-cols-2 gap-2">{TRAINING_REASONS.map(reason=>{const Icon=reasonIcons[reason];return <button key={reason} type="button" aria-pressed={answer.reasons.includes(reason)} onClick={()=>set("reasons",answer.reasons.includes(reason)?answer.reasons.filter(r=>r!==reason):[...answer.reasons,reason])} className={`min-h-12 rounded-xl border p-3 text-left text-base focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-300 ${answer.reasons.includes(reason)?"border-blue-400 bg-blue-600":"border-slate-700 bg-slate-900"}`}><span className="flex flex-col gap-2"><Icon aria-hidden="true" className="h-8 w-8 shrink-0"/><span className="flex items-start gap-2"><span className="flex-1">{reason}</span>{answer.reasons.includes(reason)&&<Check aria-hidden="true" className="h-5 w-5 shrink-0"/>}</span></span></button>})}</div></fieldset>
         <label className="block space-y-2"><span className="font-semibold">Your explanation (optional)</span><Textarea value={answer.notes} onChange={e=>set("notes",e.target.value)} rows={4} maxLength={8000} placeholder="Example: I need 3 movers because of the stairs. The two-hour charge still applies even if it takes less time." className="border-slate-600 bg-slate-900"/></label>
         <label className="block space-y-2"><span>Equipment or skills needed (optional)</span><Textarea value={answer.equipment} onChange={e=>set("equipment",e.target.value)} maxLength={2000} rows={2} className="border-slate-600 bg-slate-900"/></label>
         <label className="block space-y-2"><span>What would you ask the customer? (optional)</span><Textarea value={answer.followUp} onChange={e=>set("followUp",e.target.value)} maxLength={2000} rows={2} className="border-slate-600 bg-slate-900"/></label>
