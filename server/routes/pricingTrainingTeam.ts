@@ -40,6 +40,8 @@ export function createPricingTrainingTeamRouter(auth:RequestHandler,staff:Reques
       await pool.query(`CREATE TABLE IF NOT EXISTS pricing_training_final_audit (
         id text PRIMARY KEY DEFAULT gen_random_uuid()::text, owner_id text NOT NULL, scenario_id text NOT NULL,
         revision integer NOT NULL, actor_id text NOT NULL, saved_at timestamptz NOT NULL DEFAULT now())`);
+      await pool.query(`CREATE TABLE IF NOT EXISTS pricing_training_daily_prizes (
+        day date PRIMARY KEY, awards jsonb NOT NULL DEFAULT '[]', awarded_at timestamptz NOT NULL DEFAULT now())`);
       // Same tables as the personal editor; never copy, clear or replace existing owner answers.
       await pool.query(`CREATE TABLE IF NOT EXISTS pricing_training_answers (owner_id text NOT NULL,scenario_id text NOT NULL,
         fingerprint text NOT NULL,answer jsonb NOT NULL,status text NOT NULL CHECK(status IN ('draft','reviewed')),
@@ -87,15 +89,57 @@ export function createPricingTrainingTeamRouter(auth:RequestHandler,staff:Reques
   router.use(auth,staff,(_req,res,next)=>{res.setHeader('Cache-Control','no-store');next();});
   router.get('/',route(async(req,res)=>{
     const ownerId=await primaryOwner();
-    const [finals,mine,counts]=await Promise.all([
+    const [finals,mine,counts,scores]=await Promise.all([
       pool.query('SELECT scenario_id,fingerprint,status FROM pricing_training_answers WHERE owner_id=$1',[ownerId]),
       pool.query('SELECT * FROM pricing_training_contributions WHERE user_id=$1',[userId(req)]),
-      pool.query(`SELECT scenario_id,count(*)::int AS responses,count(*) FILTER(WHERE grade IS NULL)::int AS pending FROM pricing_training_contributions WHERE status='reviewed' GROUP BY scenario_id`)
+      pool.query(`SELECT scenario_id,count(*)::int AS responses,count(*) FILTER(WHERE grade IS NULL)::int AS pending FROM pricing_training_contributions WHERE status='reviewed' GROUP BY scenario_id`),
+      // Aggregate only current scenarios. Never expose answers, notes, or scenario-level grades here.
+      pool.query(`SELECT c.user_id AS "userId",COALESCE(NULLIF(u.first_name,''),NULLIF(u.username,''),'Coworker') AS "displayName",
+        count(*) FILTER(WHERE c.status='reviewed')::int AS submitted,
+        count(*) FILTER(WHERE c.status='draft')::int AS drafts,
+        count(*) FILTER(WHERE c.status='reviewed' AND c.grade IS NOT NULL)::int AS reviewed,
+        count(*) FILTER(WHERE c.status='reviewed' AND c.grade IS NULL)::int AS pending,
+        count(*) FILTER(WHERE c.status='reviewed' AND c.grade='correct')::int AS correct,
+        count(*) FILTER(WHERE c.status='reviewed' AND c.grade='mostly_correct')::int AS "mostlyCorrect",
+        COALESCE(sum(c.reward_amount) FILTER(WHERE c.status='reviewed' AND c.grade IS NOT NULL),0)::int AS rewards,
+        COALESCE(sum(c.reward_amount) FILTER(WHERE c.status='reviewed' AND c.grade IS NOT NULL AND (c.updated_at AT TIME ZONE 'America/Chicago')::date=(now() AT TIME ZONE 'America/Chicago')::date),0)::int AS "todayPoints",
+        COALESCE(sum(GREATEST(c.reward_amount-100,0)) FILTER(WHERE c.status='reviewed' AND c.grade IS NOT NULL),0)::int AS bonus
+        FROM pricing_training_contributions c JOIN users u ON u.id=c.user_id
+        JOIN jsonb_to_recordset($1::jsonb) AS current(id text,fingerprint text) ON current.id=c.scenario_id AND current.fingerprint=c.fingerprint
+        GROUP BY c.user_id,u.first_name,u.username`,[JSON.stringify(scenarios.map(s=>({id:s.id,fingerprint:s.fingerprint})))])
     ]);
     const current=new Map(scenarios.map(s=>[s.id,s.fingerprint]));
     const completed=finals.rows.filter(r=>r.status==='reviewed'&&current.get(r.scenario_id)===r.fingerprint).map(r=>r.scenario_id);
-    res.json({ownerId,userId:userId(req),canReview:isOwner(req),scenarios,completed,counts:counts.rows,
+    const myScore=scores.rows.find(r=>r.userId===userId(req))??{userId:userId(req),displayName:'You',submitted:0,drafts:0,reviewed:0,pending:0,correct:0,mostlyCorrect:0,rewards:0,bonus:0,todayPoints:0};
+    const leaderboard=scores.rows.filter(r=>r.submitted>0).map(({drafts,...r})=>r);
+    res.json({ownerId,userId:userId(req),canReview:isOwner(req),scenarios,completed,counts:counts.rows,myScore,leaderboard,
       answers:Object.fromEntries(mine.rows.map(r=>[r.scenario_id,{...saved(r),grade:r.grade,rewardAmount:r.reward_amount,reviewNote:r.review_note}])),rewards:TRAINING_REWARDS});
+  }));
+  router.post('/daily-prize',owner,route(async(req,res)=>{
+    const result=await transaction(async c=>{
+      const date=await c.query(`SELECT to_char((now() AT TIME ZONE 'America/Chicago')::date-1,'YYYY-MM-DD') AS day`);
+      const day=date.rows[0].day;
+      const claim=await c.query(`INSERT INTO pricing_training_daily_prizes(day) VALUES($1) ON CONFLICT DO NOTHING RETURNING day`,[day]);
+      if(!claim.rows.length){const previous=await c.query('SELECT awards FROM pricing_training_daily_prizes WHERE day=$1',[day]);return {day,awards:previous.rows[0].awards,alreadyAwarded:true};}
+      const scores=await c.query(`SELECT c.user_id AS "userId",COALESCE(NULLIF(u.first_name,''),NULLIF(u.username,''),'Coworker') AS "displayName",sum(c.reward_amount)::int AS points
+        FROM pricing_training_contributions c JOIN users u ON u.id=c.user_id
+        JOIN jsonb_to_recordset($2::jsonb) AS current(id text,fingerprint text) ON current.id=c.scenario_id AND current.fingerprint=c.fingerprint
+        WHERE c.status='reviewed' AND c.grade IS NOT NULL AND c.reward_amount>0
+        AND (c.updated_at AT TIME ZONE 'America/Chicago')::date=$1::date
+        GROUP BY c.user_id,u.first_name,u.username ORDER BY points DESC,c.user_id`,[day,JSON.stringify(scenarios.map(s=>({id:s.id,fingerprint:s.fingerprint})))]);
+      const leaders=scores.rows.filter(r=>r.points===scores.rows[0]?.points);
+      const awards=[];
+      for(const [i,leader] of leaders.entries()){
+        const amount=Math.floor(1000/leaders.length)+(i<1000%leaders.length?1:0);
+        if(!amount)continue;
+        await deps.reward(c,leader.userId,amount,`pricing-training-daily:${day}:${leader.userId}`,userId(req));
+        await c.query(`INSERT INTO notifications(id,user_id,type,title,message,data) VALUES($1,$2,'reward_available',$3,$4,$5::jsonb) ON CONFLICT(id) DO NOTHING`,
+          [`training-daily:${day}:${leader.userId}`,leader.userId,`Daily leaderboard · +${amount} JCMOVES`,`${day}: ${leader.points} owner-verified points. ${leaders.length>1?'The 1,000 JCMOVES prize was split among tied leaders.':'You earned the 1,000 JCMOVES daily prize.'}`,JSON.stringify({type:'training_daily_prize',url:'/crew/pricing-training',amount,day})]);
+        awards.push({...leader,amount});
+      }
+      await c.query('UPDATE pricing_training_daily_prizes SET awards=$2::jsonb WHERE day=$1',[day,JSON.stringify(awards)]);
+      return {day,awards,alreadyAwarded:false};
+    });res.json(result);
   }));
   router.get('/scenario/:id',route(async(req,res)=>{
     const scenario=scenarios.find(s=>s.id===req.params.id);if(!scenario)throw new RequestError(404,'Request not found.');

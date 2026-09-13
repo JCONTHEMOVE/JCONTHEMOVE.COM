@@ -116,6 +116,35 @@ try{
     assert.equal(reviewed.status,200);assert.equal((await reviewed.json()).rewardAmount,amount);
   }
   assert.equal(Number((await pg.query<any>("SELECT token_balance FROM wallet_accounts WHERE user_id='crew'")).rows[0].token_balance),450);
+  await pg.query(`INSERT INTO pricing_training_contributions(user_id,scenario_id,fingerprint,answer,status) VALUES('crew',$1,$2,$3::jsonb,'draft')`,[cases[6].id,cases[6].fingerprint,JSON.stringify(a)]);
+  const scoreboard=await (await call()).json();
+  assert.deepEqual(scoreboard.myScore,{userId:'crew',displayName:'Crew',submitted:4,drafts:1,reviewed:4,pending:0,correct:1,mostlyCorrect:1,rewards:450,bonus:150,todayPoints:450},'scores exclude outdated answers and drafts; review retries cannot inflate rewards');
+  const peer=scoreboard.leaderboard.find((r:any)=>r.userId==='crew2');
+  assert.equal(peer.submitted,2);assert.equal(peer.pending,2);assert.equal(peer.rewards,0,'pending submissions earn no leaderboard credit');
+  assert.ok(scoreboard.leaderboard.every((r:any)=>Object.keys(r).sort().join(',')==='bonus,correct,displayName,mostlyCorrect,pending,reviewed,rewards,submitted,todayPoints,userId'),'leaderboard contains aggregates only, with no answers, notes, or private drafts');
+  assert.equal((await call('/daily-prize','POST')).status,403,'only owner can trigger authorized daily payout');
+  const emptyPrize=await (await call('/daily-prize','POST',undefined,'owner')).json();
+  assert.deepEqual(emptyPrize.awards,[],'empty day has no prize');
+  await pg.query('DELETE FROM pricing_training_daily_prizes');
+  // Synthetic tied winners yesterday; today\'s reviews cannot influence yesterday\'s payout.
+  await pg.query(`UPDATE pricing_training_contributions SET updated_at=((now() AT TIME ZONE 'America/Chicago')::date-1 + time '12:00') AT TIME ZONE 'America/Chicago' WHERE user_id='crew' AND grade IS NOT NULL`);
+  await pg.query(`UPDATE pricing_training_contributions SET grade='correct',reward_amount=450,updated_at=((now() AT TIME ZONE 'America/Chicago')::date-1 + time '12:00') AT TIME ZONE 'America/Chicago' WHERE user_id='crew2' AND scenario_id=$1`,[cases[1].id]);
+  rewardFailure=true;
+  assert.equal((await call('/daily-prize','POST',undefined,'owner')).status,503);
+  assert.equal((await pg.query('SELECT * FROM pricing_training_daily_prizes')).rows.length,0,'failed payout rolls back day claim');
+  assert.equal(Number((await pg.query<any>("SELECT token_balance FROM wallet_accounts WHERE user_id='crew'")).rows[0].token_balance),450,'failed prize credit rolls back wallet');
+  rewardFailure=false;
+  const payouts=await Promise.all([call('/daily-prize','POST',undefined,'owner'),call('/daily-prize','POST',undefined,'owner')]);
+  const results=await Promise.all(payouts.map(r=>r.json()));
+  assert.ok(results.some(r=>r.alreadyAwarded));assert.equal(results[0].awards.length,2);
+  assert.equal(results[0].awards.reduce((sum:number,r:any)=>sum+r.amount,0),1000,'ties share a total 1000-token budget');
+  assert.equal((await pg.query("SELECT * FROM rewards WHERE reference_id LIKE 'pricing-training-daily:%'")).rows.length,2,'one prize ledger credit per tied winner despite parallel retries');
+  assert.equal((await pg.query("SELECT * FROM notifications WHERE id LIKE 'training-daily:%'")).rows.length,2);
+  assert.equal(Number((await pg.query<any>("SELECT token_balance FROM wallet_accounts WHERE user_id='crew'")).rows[0].token_balance),950);
+  assert.equal((await (await call()).json()).myScore.rewards,450,'daily prize must not inflate scenario leaderboard scores');
+  assert.equal((await (await call()).json()).myScore.todayPoints,0,'previous day points reset in today race');
+  const newParticipant=await (await call('','GET',undefined,'legacy-owner')).json();
+  assert.equal(newParticipant.myScore.submitted,0);assert.equal(newParticipant.myScore.rewards,0);
   assert.deepEqual(TRAINING_REWARDS,{contribution:100,mostly_correct:150,correct:200,rejected:0});
   assert.deepEqual(answerDistribution([a,{...a,price:100},{...a,price:null}], 'price'),[{label:'100',count:1},{label:'500',count:1}]);
   console.log('Team training PostgreSQL integration passed: access, shared progress, contributions, owner overrides, atomic reward rollback, retry deduplication, self-reward prevention, charts, thank-you deduplication.');
