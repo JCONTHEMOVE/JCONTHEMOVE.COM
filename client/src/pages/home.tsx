@@ -317,7 +317,7 @@ export default function HomePage() {
               <span className="mt-1 block truncate text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400 transition group-hover:text-slate-200 sm:text-[10px] sm:tracking-[0.28em]">Northwoods moving & more</span>
             </span>
           </Link>
-          <div className="hidden items-center gap-8 text-sm font-semibold text-slate-200 md:flex">
+          <div className="hidden items-center gap-8 text-sm font-semibold text-slate-200 xl:flex">
             <a href="#services" className="hover:text-white">Services</a>
             <Link href="/gift-cards" className="text-amber-200 hover:text-amber-100">Gift Cards</Link>
             <a href="#jobs" className="hover:text-white">Jobs</a>
@@ -366,7 +366,7 @@ export default function HomePage() {
                 Just ask
               </button>
             </p>
-            <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
               <Button onClick={() => setLocation("/book?mode=quick&service=moving")} className="h-12 rounded-lg bg-blue-600 px-8 text-base font-black hover:bg-blue-500">
                 Request A Callback <ArrowRight className="ml-2 h-5 w-5" />
               </Button>
