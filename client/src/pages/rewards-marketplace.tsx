@@ -19,6 +19,7 @@ import {
 import { LOYALTY_TIERS, calculateJCMovesReward, getNextTier, getTierProgress, TIER_POINT_WAYS, formatTokens as fmtTokens, type LoyaltyTierKey } from "@/lib/loyalty";
 import { PLATFORM_REDEEM_RATE } from "@shared/rewards";
 import { SpinWheelDialog } from "@/components/spin-wheel";
+import { DailySpinCard } from '@/components/DailySpinCard';
 import { LotteryPanel } from "@/components/lottery-panel";
 import { ShopSwitcher } from "@/components/shop-switcher";
 import { LevelBadge } from "@/components/LevelBadge";
@@ -530,6 +531,7 @@ export default function RewardsMarketplacePage() {
   return (
     <div className="min-h-screen bg-background pb-28">
       <ShopSwitcher />
+      <div className="mx-auto max-w-5xl px-4 pt-4"><DailySpinCard onOpen={()=>setDirectSpinOpen(true)}/></div>
       {/* Auto-Booking Confirmation Banner */}
       {autoBookingLeadId && (
         <div className="bg-orange-500/10 border-b border-orange-500/30 px-4 py-3">

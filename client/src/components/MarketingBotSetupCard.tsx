@@ -5,6 +5,7 @@ import { MARKETING_BOT_TERRITORIES, MARKETING_TERRITORY_LABELS } from '@shared/m
 import { DEFAULT_GROWTH_GOALS, GROWTH_GOALS } from '@shared/crewGrowth';
 
 import { WorkerPhotoAvatar } from './WorkerPhotoAvatar';
+import { DailySpinCard } from './DailySpinCard';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { apiRequest } from '@/lib/queryClient';
@@ -58,6 +59,7 @@ export function MarketingBotSetupCard() {
       <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-indigo-400/15 px-3 py-2">{data.partner?.lane}</span><span className="rounded-full bg-slate-800 px-3 py-2">Backup · {data.partner?.backup}</span><span className="break-all rounded-full bg-slate-800 px-3 py-2">{data.rep?.promo_verified?'✓':'!'} {data.rep?.promo_code}</span></div>
     </div>
     <div className="space-y-4 p-4 sm:p-5">
+      <DailySpinCard />
       <WorkerPhotoAvatar />
 
       <div className="rounded-2xl border border-slate-800 p-3">
