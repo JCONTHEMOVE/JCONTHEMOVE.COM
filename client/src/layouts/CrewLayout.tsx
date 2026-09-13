@@ -1,3 +1,4 @@
+import { canLeaveTask } from "@/components/task-ui";
 import { useLocation } from "wouter";
 import { useState, type ReactNode } from "react";
 import { CalendarDays, Briefcase, Calendar, Coins, Star, Settings2, PlusCircle, ChevronRight, Megaphone, GraduationCap, ShieldCheck, Users } from "lucide-react";
@@ -14,6 +15,7 @@ import {
 } from "@/components/ui/sheet";
 
 const optionLinks = [
+  { label: "Rewards", description: "Daily spin, training standings, and avatar", icon: Star, path: "/marketplace?view=crew" },
   { label: "Job Planner", description: "Calendar, open work, and job details", icon: Briefcase, path: "/crew" },
   { label: "Schedule", description: "Availability and blocked days", icon: Calendar, path: "/crew/schedule" },
   { label: "Reviews", description: "Customer feedback and rating", icon: Star, path: "/crew/reviews" },
@@ -44,11 +46,13 @@ export default function CrewLayout({ children }: { children: ReactNode }) {
   const optionsActive = location.startsWith("/crew/schedule") || location.startsWith("/crew/reviews") || location.startsWith("/crew/earnings") || location.startsWith("/crew/marketing") || location.startsWith("/crew/tutorials") || location.startsWith("/crew/add-job") || location.startsWith("/crew/pricing-training");
 
   function go(path: string) {
+    if (!canLeaveTask()) return;
     setOptionsOpen(false);
     setLocation(path);
   }
 
   function returnToAdmin() {
+    if (!canLeaveTask()) return;
     setCrewPreview(false);
     setOptionsOpen(false);
     setLocation("/admin/ops-board");

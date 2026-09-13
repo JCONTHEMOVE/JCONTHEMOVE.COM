@@ -1,3 +1,4 @@
+import { TaskStepNav, TaskDetails, useUnsavedTask } from "@/components/task-ui";
 import { useEffect, useState, useRef } from "react";
 import { WorkerAvatar } from '@/components/WorkerAvatar';
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -448,6 +449,7 @@ export default function LeaveReviewPage() {
   const [, navigate] = useLocation();
   const [submitted, setSubmitted] = useState(false);
   const [rating, setRating] = useState(0);
+  const [reviewStep,setReviewStep]=useState("review");
   const [comment, setComment] = useState("");
   const [moverNames, setMoverNames] = useState("");
   const [wouldRecommend, setWouldRecommend] = useState(true);
@@ -588,6 +590,8 @@ export default function LeaveReviewPage() {
     },
     onSuccess: () => setSubmitted(true),
   });
+
+  useUnsavedTask((rating > 0 || !!comment || thanksWorkerIds.length > 0) && !submitted && !submitMutation.isPending);
 
   // Refs must be declared before any conditional returns
   const commentRef = useRef<HTMLTextAreaElement>(null);
@@ -760,7 +764,10 @@ export default function LeaveReviewPage() {
           </Card>
         )}
 
-        {!!assignedEmployees.length&&<Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-lg"><Heart className="h-5 w-5 text-rose-500"/>Send your movers some love</CardTitle></CardHeader><CardContent><div className="grid grid-cols-2 gap-3">{assignedEmployees.map(worker=><button type="button" key={worker.id} aria-pressed={thanksWorkerIds.includes(worker.id)} disabled={submitMutation.isPending} onClick={()=>setThanksWorkerIds(current=>current.includes(worker.id)?current.filter(id=>id!==worker.id):[...current,worker.id])} className={`flex min-h-24 flex-col items-center justify-center gap-2 rounded-2xl border p-3 ${thanksWorkerIds.includes(worker.id)?'border-rose-400 bg-rose-500/10':'border-border'}`}>{worker.avatarImageUrl?<img src={worker.avatarImageUrl} className="h-12 w-12 rounded-full" alt={`${worker.name} avatar`}/>:<WorkerAvatar avatar={worker.avatar} label={worker.name} className="h-12 w-12"/>}<span className="text-sm font-semibold">{worker.name.split(' ')[0]}</span><Heart className={`h-5 w-5 text-rose-500 ${thanksWorkerIds.includes(worker.id)?'fill-rose-500':''}`}/></button>)}</div><p className="mt-3 text-xs text-muted-foreground">Free appreciation, sent with your review. Tips are optional below.</p></CardContent></Card>}
+        <TaskStepNav steps={[{id:"review",label:"Review"},{id:"tip",label:"Tip (optional)"}]} value={reviewStep} disabled={submitMutation.isPending} onChange={next=>{if(next==="tip"&&!rating){toast({title:"Choose a star rating first",variant:"destructive"});return;}setReviewStep(next);}}/>
+        <section hidden={reviewStep!=="review"} className="space-y-3">
+        <TaskDetails title="Thank your movers">        {!!assignedEmployees.length&&<Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-lg"><Heart className="h-5 w-5 text-rose-500"/>Send your movers some love</CardTitle></CardHeader><CardContent><div className="grid grid-cols-2 gap-3">{assignedEmployees.map(worker=><button type="button" key={worker.id} aria-pressed={thanksWorkerIds.includes(worker.id)} disabled={submitMutation.isPending} onClick={()=>setThanksWorkerIds(current=>current.includes(worker.id)?current.filter(id=>id!==worker.id):[...current,worker.id])} className={`flex min-h-24 flex-col items-center justify-center gap-2 rounded-2xl border p-3 ${thanksWorkerIds.includes(worker.id)?'border-rose-400 bg-rose-500/10':'border-border'}`}>{worker.avatarImageUrl?<img src={worker.avatarImageUrl} className="h-12 w-12 rounded-full" alt={`${worker.name} avatar`}/>:<WorkerAvatar avatar={worker.avatar} label={worker.name} className="h-12 w-12"/>}<span className="text-sm font-semibold">{worker.name.split(' ')[0]}</span><Heart className={`h-5 w-5 text-rose-500 ${thanksWorkerIds.includes(worker.id)?'fill-rose-500':''}`}/></button>)}</div><p className="mt-3 text-xs text-muted-foreground">Free appreciation, sent with your review. Tips are optional below.</p></CardContent></Card>}
+        </TaskDetails>
         {/* ─── Star Rating ─── */}
         <Card>
           <CardHeader className="pb-2">
@@ -834,6 +841,7 @@ export default function LeaveReviewPage() {
           </CardContent>
         </Card>
 
+        </section><section hidden={reviewStep!=="tip"} className="space-y-3"><p className="text-sm">Your review: {rating} / 5 stars</p>{comment&&<p className="break-words text-sm">{comment}</p>}
         {/* ─── Tip Section ─── */}
         <Card className={`border-2 transition-all ${includeTip
           ? "border-amber-400 shadow-amber-100 dark:shadow-amber-900 shadow-lg"
@@ -844,8 +852,8 @@ export default function LeaveReviewPage() {
                 <DollarSign className="h-5 w-5 text-amber-500" />
                 Tip your movers 💛
               </CardTitle>
-              <button type="button" onClick={() => setIncludeTip(!includeTip)}
-                className={`relative inline-flex h-7 items-center rounded-full transition-colors focus:outline-none ${
+              <button type="button" role="switch" aria-label="Include a tip" aria-checked={includeTip} onClick={() => setIncludeTip(!includeTip)}
+                className={`relative inline-flex min-h-11 items-center rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-amber-500 ${
                   includeTip ? "bg-amber-500" : "bg-slate-300 dark:bg-slate-600"
                 }`} style={{ width: 52 }}>
                 <span className={`inline-block h-5 w-5 rounded-full bg-white shadow-md transform transition-transform ${
@@ -1182,8 +1190,7 @@ export default function LeaveReviewPage() {
           )}
         </Card>
 
-        {/* ─── Jewelry Discount ─── */}
-        <JewelryDiscountCard />
+        </section>
 
       </div>
 
@@ -1200,29 +1207,30 @@ export default function LeaveReviewPage() {
               Tap the stars above to rate your experience
             </p>
           )}
-          {includeTip && hasAssignedCrew && tipRecipientCount === 0 && (
+          {reviewStep === 'tip' && includeTip && hasAssignedCrew && tipRecipientCount === 0 && (
             <p className="text-center text-xs text-destructive">
               Select at least one mover to receive the tip.
             </p>
           )}
-          {walletTipNeedsLogin && (
+          {reviewStep === 'tip' && walletTipNeedsLogin && (
             <p className="text-center text-xs text-destructive">
               Sign in to submit a JCMOVES wallet tip, or choose card or Bitcoin.
             </p>
           )}
-          {walletTipInsufficient && !walletTipNeedsLogin && (
+          {reviewStep === 'tip' && walletTipInsufficient && !walletTipNeedsLogin && (
             <p className="text-center text-xs text-destructive">
               Your wallet balance is lower than this tip.
             </p>
           )}
+          {reviewStep==='tip'&&<Button variant="outline" disabled={submitMutation.isPending} onClick={()=>setReviewStep('review')}>Back</Button>}
           <Button
-            onClick={() => submitMutation.mutate()}
+            onClick={() => {if(reviewStep==='review')setReviewStep('tip');else submitMutation.mutate();}}
             disabled={
               rating === 0 ||
               submitMutation.isPending ||
-              (includeTip && hasAssignedCrew && tipRecipientCount === 0) ||
+              (reviewStep === 'tip' && ((includeTip && hasAssignedCrew && tipRecipientCount === 0) ||
               walletTipNeedsLogin ||
-              walletTipInsufficient
+              walletTipInsufficient))
             }
             size="lg"
             className="w-full h-12 text-base bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg">
@@ -1233,7 +1241,7 @@ export default function LeaveReviewPage() {
               </span>
             ) : (
               <span className="flex items-center gap-2">
-                Submit Review
+                {reviewStep==='review'?'Next':'Submit review'}
                 <ChevronRight className="h-4 w-4" />
               </span>
             )}

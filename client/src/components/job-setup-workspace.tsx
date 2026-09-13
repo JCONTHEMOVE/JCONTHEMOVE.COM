@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { CheckCircle2, CircleHelp, ClipboardPenLine, Loader2 } from "lucide-react";
 import type { LaborWorkScope } from "@shared/laborBooking";
 import { confirmedJobDate, isHourlyJobArrivalWindow, JOB_SCHEDULE_OPTIONS } from "@shared/jcOperations";
-import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
+import { TaskStepNav, TaskActionBar, TaskDetails, useUnsavedTask } from "@/components/task-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -220,7 +220,7 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
     setQuoteDraft(savedQuote(lead));
     setQuoteDirty(false);
     setQuotePricingSource(lead.quoteSnapshot?.manualQuoteOverride ? "manual_override" : "rate_card_auto");
-  }, [lead]);
+  }, [lead.id]);
 
   const updateDraft = <Key extends keyof SetupDraft>(key: Key, value: SetupDraft[Key]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -415,14 +415,27 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
     || (quoteDirty && Number(quoteDraft?.totalPrice || 0) !== Number(lead.totalPrice || lead.basePrice || 0))
     || quotePricingSource !== (lead.quoteSnapshot?.manualQuoteOverride ? "manual_override" : "rate_card_auto");
 
+  useUnsavedTask(hasChanges && !saveMutation.isPending);
+  const steps = [{id:'customer',label:'Customer'},{id:'details',label:'Service / location'},...(canManageSetup?[{id:'schedule',label:'Schedule / crew'}]:[]),{id:'quote',label:'Review'}];
+  const step = activeSection || 'customer';
+  const stepIndex = steps.findIndex(item=>item.id===step);
+  const changeStep = (next:string) => {
+    if(steps.findIndex(item=>item.id===next)>stepIndex){
+      const missing = !draft.firstName.trim() ? 'setup-first-name' : !draft.lastName.trim() ? 'setup-last-name' : steps.findIndex(item=>item.id===next)>1&&!draft.fromAddress.trim() ? 'setup-from-address' : null;
+      if(missing){onSectionChange(missing==='setup-from-address'?'details':'customer');window.setTimeout(()=>document.getElementById(missing)?.focus(),0);toast({title:'Complete the required fields',variant:'destructive'});return;}
+    }
+    onSectionChange(next as JobSetupSection);
+  };
+  const summary = <dl className="grid gap-2 rounded-xl border p-3 text-sm"><div><dt className="text-muted-foreground">Customer</dt><dd>{draft.firstName} {draft.lastName} · {draft.phone || draft.email || 'No contact supplied'}</dd></div><div><dt className="text-muted-foreground">Location</dt><dd className="break-words">{draft.fromAddress}{draft.toAddress ? ' → '+draft.toAddress : ''}</dd></div>{canManageSetup&&<div><dt className="text-muted-foreground">Schedule / crew</dt><dd>{draft.confirmedDate || 'Date not set'} · {draft.arrivalWindow || 'Arrival not set'} · {draft.crewSize} movers · {draft.confirmedHours} hours</dd></div>}</dl>;
+
   return (
     <Card id="job-setup" className="mb-4 scroll-mt-4 border-blue-500/35 bg-gradient-to-b from-blue-950/20 to-background" data-testid="job-setup-workspace">
       <CardHeader className="px-4 py-3"><CardTitle className="text-base">Edit job</CardTitle></CardHeader>
       <CardContent className="px-4 pb-3 [&_input]:min-h-11 [&_input]:text-base [&_textarea]:text-base [&_button[role=combobox]]:min-h-11 [&_button[role=combobox]]:text-base">
-        <Accordion type="single" collapsible value={activeSection} onValueChange={(value) => onSectionChange(value as JobSetupSection)}>
-        <AccordionItem value="customer">
-          <AccordionTrigger className="min-h-12 text-left">Customer</AccordionTrigger>
-          <AccordionContent>
+        <TaskStepNav steps={steps} value={step} onChange={changeStep} disabled={saveMutation.isPending}/><fieldset disabled={saveMutation.isPending} className="min-w-0">
+        <section hidden={step!=='customer'} aria-label="customer">
+
+          <div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div><Label htmlFor="setup-first-name">First Name</Label><Input id="setup-first-name" value={draft.firstName} onChange={(event) => updateDraft("firstName", event.target.value)} data-testid="input-setup-first-name" /></div>
             <div><Label htmlFor="setup-last-name">Last Name</Label><Input id="setup-last-name" value={draft.lastName} onChange={(event) => updateDraft("lastName", event.target.value)} data-testid="input-setup-last-name" /></div>
@@ -434,11 +447,11 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
             {lead.phone && <Button asChild variant="outline"><a href={`sms:${lead.phone}`}>Text</a></Button>}
             {lead.email && <Button asChild variant="outline"><a href={`mailto:${lead.email}`}>Email</a></Button>}
           </div>
-          </AccordionContent>
-        </AccordionItem>
-        <AccordionItem value="details">
-          <AccordionTrigger className="min-h-12 text-left">Job details</AccordionTrigger>
-          <AccordionContent className="space-y-3">
+          </div>
+        </section>
+        <section hidden={step!=='details'} aria-label="details">
+
+          <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="sm:col-span-2"><Label htmlFor="setup-from-address">Pickup / Service Address</Label><Input id="setup-from-address" value={draft.fromAddress} onChange={(event) => updateDraft("fromAddress", event.target.value)} /></div>
             <div className="sm:col-span-2"><Label htmlFor="setup-to-address">Drop-off Address <span className="text-muted-foreground">(if applicable)</span></Label><Input id="setup-to-address" value={draft.toAddress} onChange={(event) => updateDraft("toAddress", event.target.value)} /></div>
@@ -461,14 +474,14 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
             <div className="space-y-2"><div className="flex items-center justify-between gap-3"><Label>Additional stops</Label><Button type="button" size="sm" variant="outline" onClick={() => updateDraft("additionalStops", [...draft.additionalStops, { address: "", note: "" }])}>Add stop</Button></div>{draft.additionalStops.map((stop, index) => <div key={index} className="grid gap-2 rounded-lg border p-3 sm:grid-cols-[1fr_1fr_auto]"><Input value={stop.address} onChange={(event) => updateAdditionalStop(index, "address", event.target.value)} placeholder="Stop address" /><Input value={stop.note} onChange={(event) => updateAdditionalStop(index, "note", event.target.value)} placeholder="Stop note (optional)" /><Button type="button" variant="ghost" size="sm" onClick={() => updateDraft("additionalStops", draft.additionalStops.filter((_, stopIndex) => stopIndex !== index))}>Remove</Button></div>)}</div>
           </section>
         </>}
-          </AccordionContent>
-        </AccordionItem>
+          </div>
+        </section>
         {canManageSetup ? <>
 
 
-          <AccordionItem value="schedule" id="job-setup-schedule" className="scroll-mt-24" data-testid="job-setup-schedule">
-            <AccordionTrigger className="min-h-12 text-left">Crew &amp; schedule</AccordionTrigger>
-            <AccordionContent className="space-y-3">
+          <section hidden={step!=='schedule'} aria-label="schedule" id="job-setup-schedule" className="scroll-mt-24" data-testid="job-setup-schedule">
+
+            <div className="space-y-3">
             <div className="grid gap-4 sm:grid-cols-2">
               <div><Label>Confirmed Job Date</Label><DatePicker value={draft.confirmedDate || undefined} onChange={(value) => updateDraft("confirmedDate", value || "")} placeholder="Pick a confirmed job date" /></div>
               <div><Label>Arrival Window</Label><Select value={draft.arrivalWindow || undefined} onValueChange={(value) => updateDraft("arrivalWindow", value)}><SelectTrigger><SelectValue placeholder="Select arrival window" /></SelectTrigger><SelectContent>{draft.arrivalWindow && !isHourlyJobArrivalWindow(draft.arrivalWindow) && <SelectItem value={draft.arrivalWindow}>Current legacy window: {draft.arrivalWindow}</SelectItem>}{JOB_SCHEDULE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div>
@@ -482,11 +495,11 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
             <div><Label>Crew lead</Label><Select value={draft.crewLeadUserId || undefined} onValueChange={(value) => updateDraft("crewLeadUserId", value)}><SelectTrigger><SelectValue placeholder="Select the crew lead" /></SelectTrigger><SelectContent>{draft.crewMembers.length ? draft.crewMembers.map((id) => { const employee = approvedEmployees.find((entry) => entry.id === id); return <SelectItem key={id} value={id}>{employee ? `${employee.firstName} ${employee.lastName}` : "Selected crew member"}</SelectItem>; }) : <SelectItem value="__none" disabled>Select a crew member first</SelectItem>}</SelectContent></Select></div>
             <p className="text-xs text-muted-foreground">Driver premiums are designated during owner payout review in Finance.</p>
             {draft.crewMembers.length > 0 && <div><Label className="mb-2 block">Job classifications</Label><div className="grid grid-cols-1 gap-2 rounded-lg border p-3 sm:grid-cols-2">{draft.crewMembers.map((id) => { const employee = approvedEmployees.find((entry) => entry.id === id); const isLead = id === draft.crewLeadUserId; return <div key={id} className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center"><span className="min-w-0 flex-1 text-sm [overflow-wrap:anywhere]">{employee ? `${employee.firstName} ${employee.lastName}` : "Crew member"}</span><Select disabled={isLead} value={isLead ? "lead_mover" : (draft.crewRoles[id] || "mover")} onValueChange={(value) => setDraft((current) => ({ ...current, crewRoles: { ...current.crewRoles, [id]: value as "lead_mover" | "mover" | "helper" } }))}><SelectTrigger className="w-full sm:w-36 sm:shrink-0"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="lead_mover">Lead Mover</SelectItem><SelectItem value="mover">Mover</SelectItem><SelectItem value="helper">Helper</SelectItem></SelectContent></Select></div>; })}</div><p className="mt-1 text-xs text-muted-foreground">Per-job classifications override the employee default and feed the payout ledger.</p></div>}
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem value="quote">
-            <AccordionTrigger className="min-h-12 text-left">Quote details</AccordionTrigger>
-            <AccordionContent className="space-y-3">
+            </div>
+          </section>
+          <section hidden={step!=='quote'} aria-label="Review job">{summary}
+
+            <div className="space-y-3">
           <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end"><div><Label htmlFor="setup-promo-code">Promo / package code</Label><Input id="setup-promo-code" value={draft.promoCode} onChange={(event) => updateDraft("promoCode", event.target.value.toUpperCase())} placeholder="e.g. LOCAL4X4" autoCapitalize="characters" /></div>{draft.promoCode && <Button type="button" variant="ghost" size="sm" onClick={() => updateDraft("promoCode", "")}>Clear code</Button>}</div>
             {quotePreviewFailed && quotePricingSource === "rate_card_auto" ? (
               <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3">
@@ -522,16 +535,17 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
             ) : (
               <div className="rounded-lg border p-3 text-sm text-muted-foreground">Calculating the quote from the job setup...</div>
             )}
-            </AccordionContent>
-          </AccordionItem>
+            </div>
+          </section>
         </> : <p className="rounded-lg border border-muted bg-muted/30 p-3 text-sm text-muted-foreground">An owner or admin can add crew, scheduling, and pricing. Your edits to customer and job details will still save here.</p>}
 
-        </Accordion>
-        {hasChanges && <div className="sticky bottom-3 z-10 mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-blue-500/30 bg-background/95 p-3 shadow-lg backdrop-blur sm:flex-row sm:justify-end">
-          <p className="mr-auto text-sm" role="status">{quoteIsUpdating ? "Updating estimate…" : quoteCannotSave ? "Quote unavailable — open Quote details to retry" : `Unsaved changes${canManageSetup && quoteDraft ? ` · Estimate $${quoteTotal.toFixed(2)}` : ""}`}</p>
+        {!canManageSetup&&step==='quote'&&summary}</fieldset>
+        <TaskActionBar>
+          <p className="mr-auto text-sm" role="status">{quoteIsUpdating ? "Updating estimate…" : quoteCannotSave ? "Quote unavailable — open Review to retry" : `${hasChanges ? "Unsaved changes" : "Saved"}${canManageSetup && quoteDraft ? ` · Estimate $${quoteTotal.toFixed(2)}` : ""}`}</p>
           <Button type="button" variant="outline" className="min-h-11" onClick={() => { setDraft(setupDraftFromLead(lead)); setQuoteDraft(savedQuote(lead)); setQuoteDirty(false); setQuotePricingSource(lead.quoteSnapshot?.manualQuoteOverride ? "manual_override" : "rate_card_auto"); }} disabled={saveMutation.isPending}>Reset</Button>
-          <Button type="button" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending || quoteIsUpdating || quoteCannotSave} className="min-h-11 bg-blue-600 hover:bg-blue-700" data-testid="button-save-job-setup">{saveMutation.isPending || quoteIsUpdating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}{quoteIsUpdating ? "Updating Quote" : "Save changes"}</Button>
-        </div>}
+          {stepIndex>0&&<Button type="button" variant="outline" disabled={saveMutation.isPending} onClick={()=>changeStep(steps[stepIndex-1].id)}>Back</Button>}
+          {step!=='quote'?<Button type="button" disabled={saveMutation.isPending} onClick={()=>changeStep(steps[stepIndex+1].id)}>Next</Button>:<Button type="button" onClick={() => saveMutation.mutate()} disabled={!hasChanges || saveMutation.isPending || quoteIsUpdating || quoteCannotSave} className="min-h-11 bg-blue-600 hover:bg-blue-700" data-testid="button-save-job-setup">{saveMutation.isPending || quoteIsUpdating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}{quoteIsUpdating ? "Updating Quote" : "Save changes"}</Button>}
+        </TaskActionBar>
       </CardContent>
     </Card>
   );

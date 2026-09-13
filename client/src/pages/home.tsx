@@ -1,3 +1,5 @@
+import { AshleyFeaturedCard } from "@/components/ashley-featured-card";
+import { TaskDetails } from "@/components/task-ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
@@ -315,7 +317,7 @@ export default function HomePage() {
               <span className="mt-1 block truncate text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400 transition group-hover:text-slate-200 sm:text-[10px] sm:tracking-[0.28em]">Northwoods moving & more</span>
             </span>
           </Link>
-          <div className="hidden items-center gap-8 text-sm font-semibold text-slate-200 md:flex">
+          <div className="hidden items-center gap-8 text-sm font-semibold text-slate-200 xl:flex">
             <a href="#services" className="hover:text-white">Services</a>
             <Link href="/gift-cards" className="text-amber-200 hover:text-amber-100">Gift Cards</Link>
             <a href="#jobs" className="hover:text-white">Jobs</a>
@@ -343,19 +345,17 @@ export default function HomePage() {
       </nav>
 
       <section
-        className="relative isolate min-h-[560px] overflow-hidden border-b border-white/10 bg-cover bg-center md:min-h-[660px]"
+        className="relative isolate min-h-[320px] overflow-hidden border-b border-white/10 bg-cover bg-center md:min-h-[400px]"
         style={{ backgroundImage: `url(${HERO_IMAGE})` }}
       >
         <div className="absolute inset-0 bg-gradient-to-r from-[#020915] via-[#020915]/78 to-[#020915]/25" />
         <div className="absolute inset-0 bg-gradient-to-t from-[#020915] via-transparent to-black/30" />
 
-        <div className="relative z-10 mx-auto max-w-6xl px-4 py-12 md:py-20">
+        <div className="relative z-10 mx-auto grid max-w-6xl items-start gap-5 px-4 py-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)] md:py-10">
           <div className="max-w-3xl">
             <p className="mb-4 text-xs font-black uppercase tracking-[0.24em] text-blue-300">Local movers. Northwoods strong.</p>
-            <h1 className="text-[clamp(2rem,8.2vw,4.9rem)] font-black leading-[0.94] tracking-tight md:text-7xl">
-              WE MOVE<br />
-              THE<br />
-              <span className="text-blue-500">NORTHWOODS.</span>
+            <h1 className="text-3xl font-bold leading-tight tracking-tight md:text-4xl">
+              Moving &amp; local services
             </h1>
             <p className="mt-5 flex flex-wrap gap-x-3 gap-y-1 text-base font-bold text-white">
               <span>Moving</span>
@@ -366,7 +366,7 @@ export default function HomePage() {
                 Just ask
               </button>
             </p>
-            <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
               <Button onClick={() => setLocation("/book?mode=quick&service=moving")} className="h-12 rounded-lg bg-blue-600 px-8 text-base font-black hover:bg-blue-500">
                 Request A Callback <ArrowRight className="ml-2 h-5 w-5" />
               </Button>
@@ -382,24 +382,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="mt-8 rounded-2xl border border-white/15 bg-slate-950/80 p-4 shadow-2xl backdrop-blur-md md:absolute md:left-[50%] md:top-24 md:mt-0 md:w-[300px] md:p-5">
-            <div className="mb-4 flex items-center gap-2">
-              <span className="h-3 w-3 rounded-full bg-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.8)]" />
-              <p className="text-lg font-black uppercase text-emerald-300">Available Now</p>
-            </div>
-            <p className="mb-4 text-sm font-semibold text-white">{availabilityLine}</p>
-            <div className="space-y-3 text-sm text-slate-200">
-              <p className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-blue-300" /> Quick callback or guided quote</p>
-              <p className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-blue-300" /> Photos, videos, or album links</p>
-              <p className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-blue-300" /> Local crew confirmation</p>
-              <a href={MOVERS_ALBUM_URL} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-blue-200 hover:text-blue-100">
-                <CheckCircle2 className="h-4 w-4 text-blue-300" /> View real movers album
-              </a>
-            </div>
-            <Button onClick={() => setLocation("/book?mode=quick&service=moving")} className="mt-6 h-12 w-full rounded-lg bg-emerald-600 font-black hover:bg-emerald-500">
-              Start In 60 Seconds
-            </Button>
-          </div>
+          <AshleyFeaturedCard/><p className="text-sm text-slate-200 lg:col-span-2">{availabilityLine} · Serving Ironwood and the Northwoods.</p>
         </div>
       </section>
 
@@ -414,7 +397,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section id="route-days" className="border-b border-white/10 bg-slate-950 px-4 py-10 md:py-12">
+      <section id="route-days" className="border-b border-white/10 bg-slate-950 px-4 py-10 md:py-12"><TaskDetails title="Service areas and route days">
         <div className="mx-auto max-w-6xl">
           <div className="grid gap-6 lg:grid-cols-[0.72fr_1.28fr] lg:items-start">
             <div>
@@ -471,7 +454,7 @@ export default function HomePage() {
             </div>
           </div>
         </div>
-      </section>
+      </TaskDetails></section>
 
       <section id="services" className="px-4 py-10 md:py-12">
         <div className="mx-auto max-w-6xl">
@@ -605,7 +588,7 @@ export default function HomePage() {
 
       <VisualStoryCarousel onQuote={() => openQuoteStart("moving")} />
 
-      <section id="reviews" className="px-4 py-12">
+      <section id="reviews" className="px-4 py-12"><TaskDetails title="Customer reviews">
         <div className="mx-auto max-w-6xl">
           <div className="mb-7 flex items-center justify-center gap-5">
             <span className="h-px w-16 bg-white/20" />
@@ -639,9 +622,9 @@ export default function HomePage() {
             ))}
           </div>
         </div>
-      </section>
+      </TaskDetails></section>
 
-      <section id="rewards" className="border-y border-white/10 bg-slate-950/70 px-4 py-12">
+      <section id="rewards" className="border-y border-white/10 bg-slate-950/70 px-4 py-12"><TaskDetails title="Rewards and JCMOVES">
         <div className="mx-auto max-w-6xl">
           <div className="text-center">
             <p className="text-sm font-black uppercase tracking-[0.25em] text-blue-300">Book Moves. Earn Rewards.</p>
@@ -673,7 +656,7 @@ export default function HomePage() {
             </div>
           </div>
         </div>
-      </section>
+      </TaskDetails></section>
 
       <section className="relative overflow-hidden px-4 py-10">
         <img src={CTA_IMAGE} alt="" className="absolute inset-0 h-full w-full object-cover opacity-35" />

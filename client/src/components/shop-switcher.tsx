@@ -1,63 +1,8 @@
-import { useLocation } from "wouter";
-import { Coins, Truck } from "lucide-react";
-
-export function ShopSwitcher() {
-  const [location, setLocation] = useLocation();
-
-  const onEarn = location.startsWith("/services");
-  const onSpend = location.startsWith("/marketplace");
-
-  if (!onEarn && !onSpend) return null;
-
-  return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
-      <div className="pointer-events-auto flex items-center gap-0 rounded-full bg-black/40 backdrop-blur-md border border-white/15 shadow-2xl shadow-black/40 p-1">
-
-        {/* Earn tab */}
-        <button
-          onClick={() => setLocation("/services")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold transition-all duration-200 ${
-            onEarn
-              ? "bg-blue-500 text-white shadow-lg shadow-blue-500/30"
-              : "text-white/50 hover:text-white/80"
-          }`}
-        >
-          <Truck className="h-4 w-4" />
-          <span>Earn</span>
-          {onEarn && (
-            <span className="text-[10px] font-semibold text-blue-200 bg-blue-400/25 px-1.5 py-0.5 rounded-full">
-              Moving Shop
-            </span>
-          )}
-        </button>
-
-        {/* Divider */}
-        <div className="w-px h-5 bg-white/15 mx-0.5" />
-
-        {/* Spend tab */}
-        <button
-          onClick={() => setLocation("/marketplace")}
-          className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold transition-all duration-200 ${
-            onSpend
-              ? "bg-purple-500 text-white shadow-lg shadow-purple-500/30"
-              : "text-white/50 hover:text-white/80"
-          }`}
-        >
-          <Coins className="h-4 w-4" />
-          <span>Spend</span>
-          {onSpend && (
-            <span className="text-[10px] font-semibold text-purple-200 bg-purple-400/25 px-1.5 py-0.5 rounded-full">
-              Reward Shop
-            </span>
-          )}
-        </button>
-
-      </div>
-
-      {/* Subtle label under the pill */}
-      <p className="text-center text-[10px] text-white/30 mt-1.5 font-medium tracking-wide">
-        {onEarn ? "Buy services · earn JCMOVES" : "Redeem JCMOVES · get rewards"}
-      </p>
-    </div>
-  );
+import { Link, useLocation } from 'wouter';
+import { Coins, Truck, Wallet, Gem } from 'lucide-react';
+export function ShopSwitcher(){
+  const [location]=useLocation();
+  return <nav aria-label="Shop and rewards" className="mx-auto flex max-w-5xl flex-wrap gap-2 px-4 py-3">
+    {[{path:'/services',label:'Book services',Icon:Truck},{path:'/marketplace',label:'Rewards shop',Icon:Coins},{path:'/wallet',label:'Wallet',Icon:Wallet},{path:'/handmade-jewels-by-ashley',label:'Ashley’s Shop',Icon:Gem}].map(({path,label,Icon})=><Link key={path} href={path} aria-current={location===path?'page':undefined} className={`inline-flex min-h-11 items-center gap-2 rounded-xl border px-3 text-sm font-semibold ${location===path?'border-blue-400 bg-blue-500/15 text-blue-400':'border-border text-muted-foreground'}`}><Icon aria-hidden className="h-4 w-4"/>{label}</Link>)}
+  </nav>;
 }

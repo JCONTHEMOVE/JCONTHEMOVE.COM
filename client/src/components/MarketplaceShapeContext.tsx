@@ -1,3 +1,4 @@
+import { TaskDetails } from "@/components/task-ui";
 import {
   getMarketplaceFunctionalIdeasForShape,
   getMarketplaceSourceFlowsForContext,
@@ -43,7 +44,7 @@ function audienceFlowReality(
   return { label: "Company control", value: flow.companyControl };
 }
 
-export default function MarketplaceShapeContext({
+function MarketplaceShapeContextContent({
   shapeId,
   serviceCode,
   serviceLabel,
@@ -214,3 +215,5 @@ export default function MarketplaceShapeContext({
     </div>
   );
 }
+
+export default function MarketplaceShapeContext(props:MarketplaceShapeContextProps){return <TaskDetails title="Service details"><MarketplaceShapeContextContent {...props}/></TaskDetails>;}

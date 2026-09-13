@@ -262,8 +262,8 @@ export default function InstantBookingPage() {
       <div className="mx-auto max-w-3xl">
         <div className="mb-6 text-center">
           <p className="text-xs font-bold uppercase tracking-[0.22em] text-blue-300">JC ON THE MOVE LLC</p>
-          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Choose the date. We’ll confirm the move.</h1>
-          <p className="mx-auto mt-3 max-w-2xl text-slate-300">Start with a preferred date and exact time so your request lands on the calendar instead of sitting as a date-less callback.</p>
+          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Request service</h1>
+
         </div>
 
         {mode === "schedule" && <DateFirstBooking onChooseCallback={() => setMode("callback")} onDetailedBooking={() => setMode("reserve")} />}
@@ -379,7 +379,7 @@ export default function InstantBookingPage() {
           </form>
         )}
       </div>
-      <style>{".field-select{display:flex;height:2.5rem;width:100%;border-radius:.375rem;border:1px solid hsl(var(--input));background:hsl(var(--background));padding:.5rem .75rem;font-size:.875rem;color:hsl(var(--foreground))}.field-select:focus{outline:2px solid hsl(var(--ring));outline-offset:2px}"}</style>
+      <style>{".field-select{display:flex;min-height:2.75rem;width:100%;border-radius:.375rem;border:1px solid hsl(var(--input));background:hsl(var(--background));padding:.5rem .75rem;font-size:1rem;color:hsl(var(--foreground))}.field-select:focus{outline:2px solid hsl(var(--ring));outline-offset:2px}"}</style>
     </div>
   );
 }

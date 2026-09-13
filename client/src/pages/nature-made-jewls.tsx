@@ -1,3 +1,4 @@
+import { ShopSwitcher } from "@/components/shop-switcher";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -724,6 +725,7 @@ export default function AshleyShop() {
   return (
     <div className="min-h-screen" style={{ background: "linear-gradient(160deg, #fdf6f0 0%, #fef1f2 40%, #fff8f0 100%)" }}>
 
+      <ShopSwitcher />
       {/* Header */}
       <header className="sticky top-0 z-50 backdrop-blur border-b border-rose-100/80 shadow-sm" style={{ background: "rgba(253,246,240,0.97)" }}>
         <div className="container mx-auto px-4 py-3 flex items-center justify-between">
