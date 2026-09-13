@@ -2,6 +2,11 @@ import type { TrainingAnswer } from './pricingTraining';
 
 export const TRAINING_REWARDS = { contribution: 100, mostly_correct: 150, correct: 200, rejected: 0 } as const;
 export type TrainingGrade = keyof typeof TRAINING_REWARDS;
+export type TrainingScore = {
+  userId: string; displayName: string; submitted: number; drafts: number;
+  reviewed: number; pending: number; correct: number; mostlyCorrect: number;
+  rewards: number; bonus: number; todayPoints: number;
+};
 export function answerDistribution(answers: TrainingAnswer[], field: keyof TrainingAnswer) {
   const counts = new Map<string, number>();
   for (const answer of answers) {

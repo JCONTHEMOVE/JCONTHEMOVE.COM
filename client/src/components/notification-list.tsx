@@ -51,6 +51,11 @@ export function NotificationList({ open, onOpenChange }: NotificationListProps) 
       markAsReadMutation.mutate(notification.id);
     }
     const training = notification.data as { type?: string; scenarioId?: string } | null;
+    if (training?.type === 'training_daily_prize') {
+      onOpenChange(false);
+      navigate('/crew/pricing-training');
+      return;
+    }
     if ((training?.type === 'training_submitted' || training?.type === 'training_verified') && training.scenarioId) {
       onOpenChange(false);
       navigate(`/crew/pricing-training?scenario=${encodeURIComponent(training.scenarioId)}`);

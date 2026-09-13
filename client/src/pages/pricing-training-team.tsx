@@ -1,4 +1,5 @@
 import { TrainingJobSnapshot } from '@/components/training-job-snapshot';
+import { TrainingScoreboard } from '@/components/training-scoreboard';
 import { useEffect, useRef, useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -6,11 +7,11 @@ import { apiRequest } from '@/lib/queryClient';
 import { Button } from '@/components/ui/button';
 import { ScenarioTest } from './admin/pricing-training';
 import { emptyTrainingAnswer, type TrainingAnswer, type SavedTrainingAnswer, type PricingTrainingScenario } from '@shared/pricingTraining';
-import { answerDistribution, TRAINING_REWARDS, type TrainingGrade } from '@shared/pricingTrainingTeam';
+import { answerDistribution, TRAINING_REWARDS, type TrainingGrade, type TrainingScore } from '@shared/pricingTrainingTeam';
 
 const endpoint='/api/pricing-training-team';
 type Contribution={id:string;userId:string;displayName:string;answer:TrainingAnswer;revision:number;grade:TrainingGrade|null;rewardAmount:number;reviewNote:string|null;thanksStatus?:string};
-type Data={ownerId:string;userId:string;canReview:boolean;scenarios:PricingTrainingScenario[];completed:string[];counts:{scenario_id:string;responses:number;pending:number}[];answers:Record<string,SavedTrainingAnswer&{grade:TrainingGrade|null;rewardAmount:number;reviewNote:string|null}>};
+type Data={ownerId:string;userId:string;canReview:boolean;scenarios:PricingTrainingScenario[];completed:string[];myScore:TrainingScore;leaderboard:Omit<TrainingScore,'drafts'>[];counts:{scenario_id:string;responses:number;pending:number}[];answers:Record<string,SavedTrainingAnswer&{grade:TrainingGrade|null;rewardAmount:number;reviewNote:string|null}>};
 type Detail={canCompare:boolean;responses:Contribution[];final:SavedTrainingAnswer|null};
 const labels:Record<TrainingGrade,string>={contribution:'Contribution',mostly_correct:'Mostly correct',correct:'Correct',rejected:'No reward (spam / invalid)'};
 async function get<T>(url:string):Promise<T>{return (await apiRequest('GET',url)).json();}
@@ -103,19 +104,32 @@ export default function PricingTrainingTeamPage(){
     previousReviews.current={userId:d.userId,grades:Object.fromEntries(Object.entries(d.answers).map(([id,a])=>[id,a.grade]))};
   },[query.data,toast]);
   const [index,setIndex]=useState<number|null>(null),[copied,setCopied]=useState(false);
+  const [awarding,setAwarding]=useState(false),[prizeResult,setPrizeResult]=useState('');
+  async function awardDailyPrize(){
+    setAwarding(true);setPrizeResult('');
+    try{const result=await (await apiRequest('POST',`${endpoint}/daily-prize`)).json();
+      setPrizeResult(`${result.day}: ${result.awards.length?`${result.alreadyAwarded?'Already credited':'Credited'} — ${result.awards.map((a:{displayName:string;amount:number})=>`${a.displayName}: ${a.amount} JCMOVES`).join('; ')}`:'No eligible verified points; no prize awarded.'}`);
+    }catch{setPrizeResult('Could not confirm the daily prize. Retry safely; the same day cannot be paid twice.');}finally{setAwarding(false);}
+  }
   if(query.isPending)return <p className="p-6">Loading team training…</p>;
   if(query.isError||!query.data)return <div className="p-6"><p role="alert">Team training is available to approved crew and owners. Could not load it.</p><Button onClick={()=>void query.refetch()}>Retry</Button></div>;
   const d=query.data,linked=d.scenarios.findIndex(s=>s.id===new URLSearchParams(window.location.search).get('scenario'));
   const active=Math.min(index??(linked>=0?linked:Math.max(0,d.scenarios.findIndex(s=>!d.completed.includes(s.id)))),499);
-  const totalRewards=Object.values(d.answers).reduce((sum,a)=>sum+a.rewardAmount,0),submitted=Object.values(d.answers).filter(a=>a.status==='reviewed').length;
   return <main className="dark mx-auto min-h-screen w-full max-w-3xl space-y-6 bg-slate-950 px-4 py-6 text-white">
     <header className="space-y-3"><h1 className="text-2xl font-black">500 requests · one team goal</h1><p className="text-sm text-slate-300">Contribute your pricing judgment. The owner reviews, rewards, and finalizes each request.</p><p className="text-xl font-bold">{d.completed.length} / 500 finalized together</p><progress aria-label="Team completion" value={d.completed.length} max={500} className="h-3 w-full accent-blue-500"/>
-      <p className="text-sm">Your submissions: {submitted} · Your rewards: {totalRewards} JCMOVES</p><p className="text-sm text-slate-300">100 for contribution · 150 mostly correct · 200 correct. All rewards require owner approval. One reward per coworker per request.</p>
+      <p className="text-sm text-slate-300">100 for contribution · 150 mostly correct · 200 correct. All rewards require owner approval. One reward per coworker per request.</p>
       <Button className="min-h-12" variant="outline" onClick={()=>{void navigator.clipboard.writeText(`${window.location.origin}/crew/pricing-training`).then(()=>setCopied(true)).catch(()=>setCopied(false));}}>{copied?'Link copied':'Copy coworker link'}</Button>
       <p className="break-all text-xs text-blue-300">{window.location.origin}/crew/pricing-training</p>
       {d.canReview&&<a className="block py-3 text-sm text-blue-300 underline" href="/admin/pricing-training">Your original answers & export</a>}
       {d.completed.length===500&&<p role="status" className="rounded-xl bg-emerald-950 p-4">All 500 finalized together! Ready for owner review of pricing and safety rules. Live rules have not changed automatically.</p>}
     </header>
+    <TrainingScoreboard mine={d.myScore} entries={d.leaderboard} total={d.scenarios.length}/>
+    <section className="rounded-2xl border border-amber-400/40 bg-amber-950/30 p-4" aria-label="Daily leaderboard prize">
+      <h2 className="font-bold text-amber-200">Daily leader prize · 1,000 JCMOVES</h2>
+      <p className="mt-2 text-sm">Most scenario JCMOVES verified by the owner during a Chicago calendar day wins. Tied leaders split 1,000 equally (extra whole tokens follow a fixed order). No verified points means no prize. Prizes are credited separately to your wallet after the day ends.</p>
+      {d.canReview&&<Button className="mt-3 min-h-12" disabled={awarding} onClick={()=>void awardDailyPrize()}>{awarding?'Checking daily prize…':"Award yesterday's leaders"}</Button>}
+      {prizeResult&&<p role="status" className="mt-3 text-sm">{prizeResult}</p>}
+    </section>
     <label className="block text-sm">Choose a request<select aria-label="Choose team request" value={active} onChange={e=>setIndex(Number(e.target.value))} className="mt-2 min-h-12 w-full min-w-0 rounded-xl bg-slate-900 p-3">{d.scenarios.map((s,i)=>{const count=d.counts.find(c=>c.scenario_id===s.id);return <option key={s.id} value={i}>{i+1}. {d.completed.includes(s.id)?'✓ ':''}{s.title} ({count?.responses??0} responses{d.canReview?`, ${count?.pending??0} pending`:''})</option>;})}</select></label>
     <TeamRequest key={d.scenarios[active].id} data={d} index={active} onNavigate={delta=>{setIndex(Math.max(0,Math.min(499,active+delta)));window.scrollTo({top:0});}}/>
     <div className="flex justify-between"><Button className="min-h-12" disabled={active===0} onClick={()=>setIndex(active-1)}>Previous request</Button><Button className="min-h-12" disabled={active===499} onClick={()=>setIndex(active+1)}>Next request</Button></div>
