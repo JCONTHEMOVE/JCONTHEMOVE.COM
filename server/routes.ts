@@ -11026,13 +11026,15 @@ Thank you for your business!
       handyman: "Handyman", demolition: "Light Demolition", flooring: "Flooring", painting: "Painting",
     };
     const employees = await getReviewCrewMembers(lead);
+    const { publicWorkerAvatars } = await import('./services/workerAvatars');
+    const avatars = await publicWorkerAvatars(employees.map(employee=>employee.id));
     return {
       jobId: lead.id,
       customerName: `${lead.firstName}`,
       serviceType: lead.serviceType,
       serviceLabel: serviceLabels[lead.serviceType] || lead.serviceType,
       completedDate: lead.createdAt ? new Date(lead.createdAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : null,
-      assignedEmployees: employees,
+      assignedEmployees: employees.map(employee=>({...employee,...avatars.get(employee.id)})),
       crewSize: lead.crewSize || 2,
     };
   }
@@ -11238,6 +11240,12 @@ Thank you for your business!
       authenticatedUserId: string | null;
     },
   ) {
+    const thanks=z.array(z.string().min(1).max(100)).max(20).parse(args.body?.thanksWorkerIds||[]);
+    const assigned=new Set(getReviewCrewIds(args.lead));
+    if(thanks.some(id=>!assigned.has(id)))throw new ReviewTipError(400,'Send thanks only to movers assigned to this job');
+    for(const id of new Set(thanks)) {
+      await tx.execute(sql`INSERT INTO review_worker_thanks(review_id,worker_id) VALUES(${args.review.id},${id}) ON CONFLICT DO NOTHING`);
+    }
     const method = normalizeTipMethod(args.body?.tipMethod);
     if (!method) {
       return { method: null, status: "none", allocations: [], totalUsd: 0, totalTokens: 0 };

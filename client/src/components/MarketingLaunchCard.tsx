@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { MarketingBotSetupCard } from './MarketingBotSetupCard';
 
 type LaunchAction = {
   id: string;
@@ -70,7 +71,7 @@ export function MarketingLaunchCard() {
 
   const completed = data.actions.filter((action) => action.status === "completed").length;
   return (
-    <Card className="border-emerald-400/25 bg-emerald-500/10">
+    <div className="space-y-4"><MarketingBotSetupCard /><details><summary className="min-h-11 cursor-pointer rounded-xl border border-slate-700 p-3 text-sm font-semibold">Launch actions · {completed}/{data.actions.length} completed</summary><Card className="mt-3 border-emerald-400/25 bg-emerald-500/10">
       <CardHeader className="pb-2"><CardTitle className="flex items-start justify-between gap-3 text-white"><span><span className="block text-xs uppercase tracking-[0.18em] text-emerald-200">Marketing launch</span><span className="mt-1 block text-lg">{data.rep.brand_name}</span></span><Megaphone className="h-5 w-5 text-emerald-300" /></CardTitle></CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-slate-200">Use <strong>{data.rep.promo_code}</strong> and your verified rep page whenever you share JC ON THE MOVE.</p>
@@ -84,6 +85,6 @@ export function MarketingLaunchCard() {
           ))}
         </div>
       </CardContent>
-    </Card>
+    </Card></details></div>
   );
 }

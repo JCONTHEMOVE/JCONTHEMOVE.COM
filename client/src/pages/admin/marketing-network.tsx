@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { MarketingExecutionBoard } from "@/components/MarketingExecutionBoard";
+import { MarketingGrowthReview } from '@/components/MarketingGrowthReview';
 
 const REFERRAL_COMMISSION_RATE = 0.05;
 
@@ -321,7 +322,7 @@ export default function AdminMarketingNetworkPage() {
           ))}
         </div>
 
-        {tab === "plan" && <MarketingExecutionBoard />}
+        {tab === "plan" && <><MarketingGrowthReview/><MarketingExecutionBoard /></>}
 
         {tab === "performance" && (
           <div className="space-y-4">

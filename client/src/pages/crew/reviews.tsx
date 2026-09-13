@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import { WorkerPhotoAvatar } from '@/components/WorkerPhotoAvatar';
+import { CrewReviewCelebration } from '@/components/CrewReviewCelebration';
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -141,6 +143,7 @@ function ReviewCard({ review }: { review: Review }) {
 export default function CrewReviewsPage() {
   const { user } = useAuth();
   const [sortMode, setSortMode] = useState<SortMode>("newest");
+  const celebrationId=new URLSearchParams(window.location.search).get('review');
 
   const { data: reviews = [], isLoading: reviewsLoading } = useQuery<Review[]>({
     queryKey: [`/api/reviews?employeeId=${user?.id || ""}&limit=100`],
@@ -177,6 +180,8 @@ export default function CrewReviewsPage() {
         <p className="text-sm text-slate-400">Customer feedback for your completed jobs</p>
       </div>
 
+      {celebrationId&&<CrewReviewCelebration reviewId={celebrationId}/>}
+      <div className="mb-5"><WorkerPhotoAvatar /></div>
       {loading ? (
         <div className="grid min-h-[280px] place-items-center rounded-[8px] border border-slate-800 bg-slate-900/70 text-slate-400">
           <Loader2 className="h-8 w-8 animate-spin text-blue-400" />

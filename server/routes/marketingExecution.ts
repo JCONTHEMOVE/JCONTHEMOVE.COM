@@ -8,6 +8,11 @@ import { sendNotificationEmail } from "../services/email";
 import { smsService } from "../services/sms";
 import { getAppUrl } from "../appUrl";
 import { ROUTE_DAY_SCHEDULE } from "@shared/routeDays";
+import { ensureWorkerBotSetup, workerBotReadiness, workerBotSetupSchema } from '../services/marketingWorkerSetup';
+import { ensureMarketingBotSchema } from '../services/marketingBot';
+import { ensureWorkerAvatars } from '../services/workerAvatars';
+import { workerAvatarsRouter } from './workerAvatars';
+import { startReviewCelebrations } from '../services/reviewCelebrations';
 
 const DISCORD_INVITE_URL = "https://discord.gg/8zVq5dxKQ";
 const QUALIFYING_LEAD_STATUSES = ["booked", "confirmed", "assigned", "available", "in_progress", "completed"];
@@ -402,7 +407,92 @@ const inviteSchema = z.object({
 
 export async function createMarketingExecutionRouter() {
   await ensureMarketingExecutionSchema();
+  await ensureMarketingBotSchema();
+  await ensureWorkerAvatars();
+  await startReviewCelebrations();
+  await ensureWorkerBotSetup();
   const router = Router();
+  router.use('/crew/avatar',workerAvatarsRouter(requireEmployee));
+  router.get('/crew/review-celebrations/:reviewId',requireEmployee,async(req,res)=>{
+    try {
+      const row=(await pool.query(`SELECT r.id,r.rating,r.comment,o.crew_ids FROM reviews r
+        JOIN review_celebration_outbox o ON o.event_key='review:'||r.id WHERE r.id=$1`,[req.params.reviewId])).rows[0];
+      if(!row)return res.status(404).json({error:'Review celebration not found'});
+      const crew=(await pool.query(`SELECT id,COALESCE(NULLIF(TRIM(CONCAT(first_name,' ',last_name)),''),'Crew member') AS name FROM users
+        WHERE id=ANY($1::varchar[]) AND role IN ('employee','admin','business_owner') ORDER BY first_name,id`,[row.crew_ids])).rows;
+      const tips=(await pool.query(`SELECT worker_id,amount_usd,token_amount,tip_method,status,payroll_paid_at FROM review_tip_allocations WHERE review_id=$1`,[row.id])).rows;
+      const thanks=(await pool.query(`SELECT worker_id FROM review_worker_thanks WHERE review_id=$1`,[row.id])).rows.map(row=>row.worker_id);
+      return res.json({id:row.id,rating:row.rating,crew,tips,thanks});
+    }catch{return res.status(500).json({error:'Unable to load review celebration'});}
+  });
+  router.get('/public/worker-avatar/:userId.png',async(req,res)=>{
+    try {
+      const {publicWorkerAvatars}=await import('../services/workerAvatars');
+      const avatar=(await publicWorkerAvatars([req.params.userId])).get(req.params.userId);
+      if(avatar?.avatarImageUrl)return res.redirect(avatar.avatarImageUrl);
+      const worker=(await pool.query(`SELECT id FROM users WHERE id=$1 AND role IN ('employee','admin','business_owner')`,[req.params.userId])).rows[0];
+      if(!worker)return res.sendStatus(404);
+      const [{renderToStaticMarkup},{createElement},{WorkerAvatar},{default:sharp}]=await Promise.all([
+        import('react-dom/server'),import('react'),import('../../client/src/components/WorkerAvatar'),import('sharp')]);
+      const image=await sharp(Buffer.from(renderToStaticMarkup(createElement(WorkerAvatar,{avatar:avatar?.avatar})))).resize(256,256).png().toBuffer();
+      return res.set('Cache-Control','public, max-age=60').type('png').send(image);
+    }catch{return res.sendStatus(500);}
+  });
+  router.get('/admin/marketing-execution/review-alerts',requireOwner,async(_req,res)=>{
+    try {return res.json((await pool.query(`SELECT event_key,review_id,status,message_id,error,created_at FROM review_celebration_outbox ORDER BY created_at DESC LIMIT 100`)).rows);}
+    catch{return res.status(500).json({error:'Could not load review delivery queue'});}
+  });
+  router.get('/admin/marketing-execution/bot-readiness',requireOwner,async(_req,res)=>{
+    try {
+      const {GROWTH_PARTNERS}=await import('@shared/crewGrowth');
+      const partners=(await pool.query(`SELECT id,slug,user_id FROM marketing_reps WHERE slug=ANY($1::text[]) AND is_active=TRUE`,[GROWTH_PARTNERS.map(partner=>partner.slug)])).rows;
+      return res.json(await Promise.all(GROWTH_PARTNERS.map(async partner=>{
+        const matches=partners.filter(rep=>rep.slug===partner.slug);
+        return {slug:partner.slug,lane:partner.lane,setup:matches.length===1&&matches[0].user_id?await workerBotReadiness(matches[0].user_id):{enrolled:false,reason:'Owner account mapping needed'}};
+      })));
+    }catch{return res.status(500).json({error:'Could not load worker bot readiness'});}
+  });
+  router.post('/admin/marketing-execution/review-alerts/reconcile',requireOwner,async(req:MarketingActorRequest,res)=>{
+    const input=z.object({eventKey:z.string().max(200),action:z.enum(['delivered','not_delivered']),reason:z.string().trim().min(10).max(1000),messageId:z.string().regex(/^\d+$/).optional()}).safeParse(req.body);
+    if(!input.success||input.data.action==='delivered'&&!input.data.messageId)return res.status(400).json({error:'Enter a reconciliation reason and Discord message ID for a delivered alert'});
+    const client=await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const row=(await client.query(`UPDATE review_celebration_outbox SET status=$2,message_id=$3,error=NULL,updated_at=NOW() WHERE event_key=$1 AND status='uncertain' RETURNING event_key`,[input.data.eventKey,input.data.action==='delivered'?'delivered':'pending',input.data.messageId||null])).rows[0];
+      if(!row){await client.query('ROLLBACK');return res.status(409).json({error:'This alert is not awaiting reconciliation'});}
+      await client.query(`INSERT INTO review_celebration_audit(event_key,actor_id,action,reason) VALUES($1,$2,$3,$4)`,[input.data.eventKey,req.marketingActor.id,input.data.action,input.data.reason]);
+      await client.query('COMMIT');return res.json({saved:true});
+    }catch{await client.query('ROLLBACK');return res.status(500).json({error:'Reconciliation was not saved'});}finally{client.release();}
+  });
+  router.post('/admin/marketing-execution/review-alerts/retry',requireOwner,async(req,res)=>{
+    try {
+      const key=z.string().max(200).parse(req.body?.eventKey);
+      const result=await pool.query(`UPDATE review_celebration_outbox SET status='pending',error=NULL,updated_at=NOW() WHERE event_key=$1 AND status='failed' RETURNING event_key`,[key]);
+      return result.rows.length?res.json({queued:true}):res.status(409).json({error:'Only a confirmed failed delivery can retry. Uncertain deliveries need reconciliation.'});
+    }catch{return res.status(400).json({error:'Could not retry review delivery'});}
+  });
+
+  router.get('/marketing-execution/bot-setup', requireEmployee, async (req: MarketingActorRequest, res) => {
+    try { return res.json(await workerBotReadiness(req.marketingActor.id)); }
+    catch { return res.status(500).json({error:'Unable to load Marketing Bot setup'}); }
+  });
+  router.put('/marketing-execution/bot-setup', requireEmployee, async (req: MarketingActorRequest, res) => {
+    try {
+      const input=workerBotSetupSchema.parse(req.body);
+      const state=await workerBotReadiness(req.marketingActor.id);
+      if (!state.enrolled || !state.rep) return res.status(409).json({error:'An owner must verify your marketing profile first'});
+      const client=await pool.connect();
+      try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO marketing_worker_bot_setup(rep_id,territories,message,ideas,goals)
+        VALUES($1,$2::jsonb,$3,$4,$5::jsonb) ON CONFLICT(rep_id) DO UPDATE
+        SET territories=EXCLUDED.territories,message=EXCLUDED.message,ideas=EXCLUDED.ideas,goals=EXCLUDED.goals,updated_at=NOW()`,
+        [state.rep.id,JSON.stringify(input.territories),input.message,input.ideas,JSON.stringify(input.goals)]);
+      await client.query('COMMIT');
+      }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+      return res.json(await workerBotReadiness(req.marketingActor.id));
+    } catch(error) { return res.status(error instanceof z.ZodError ? 400 : 500).json({error:'Could not save setup. Choose an area and enter at least 30 characters for your message.'}); }
+  });
 
   router.get("/admin/marketing-execution/overview", requireOwner, async (_req, res) => {
     try {
@@ -430,6 +520,7 @@ export async function createMarketingExecutionRouter() {
         SET recipient_user_id = $1, account_linked_at = COALESCE(account_linked_at, NOW()), status = CASE WHEN status = 'draft' THEN 'account_linked' ELSE status END, updated_at = NOW()
         WHERE rep_id = $2 AND recipient_user_id IS NULL
       `, [userId, repId]);
+      await ensureWorkerBotSetup();
       return res.json({ success: true, rep: linked.rows[0] });
     } catch (error) {
       return res.status(400).json({ error: error instanceof Error ? error.message : "Could not link marketing profile" });

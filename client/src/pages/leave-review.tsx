@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { WorkerAvatar } from '@/components/WorkerAvatar';
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Star, Heart, Users, DollarSign, ChevronRight, CheckCircle, Truck,
@@ -225,6 +226,8 @@ const SERVICE_LABELS: Record<string, string> = {
 type TipMethod = "cash" | "cart" | "bitcoin" | "jcmoves" | "jcmoves_usd";
 
 type AssignedEmployee = {
+  avatar?: import('@shared/crewGrowth').WorkerAvatar;
+  avatarImageUrl?: string | null;
   id: string;
   name: string;
   firstName?: string | null;
@@ -461,6 +464,7 @@ export default function LeaveReviewPage() {
   // Keep all hooks ABOVE any conditional returns
   const tipCartId = `tip-${token || jobId || "job"}`;
   const tipInCart = isInCart(tipCartId);
+  const [thanksWorkerIds,setThanksWorkerIds]=useState<string[]>([]);
 
   const { data: jobInfo, isLoading, error } = useQuery<{
     jobId: string; customerName: string; serviceType: string;
@@ -565,6 +569,7 @@ export default function LeaveReviewPage() {
         body: JSON.stringify({
           rating,
           comment,
+          thanksWorkerIds,
           moverNames: hasAssignedCrew && selectedCrew.length > 0
             ? selectedCrew.map((employee) => employee.name).join(", ")
             : moverNames,
@@ -738,7 +743,7 @@ export default function LeaveReviewPage() {
                   <div className="ml-auto flex gap-2 flex-wrap justify-end">
                     {jobInfo.assignedEmployees.map((e) => (
                       <div key={e.id} className="flex items-center gap-2 rounded-full border border-amber-300 bg-amber-50 px-2 py-1 dark:border-amber-800 dark:bg-amber-950">
-                        {e.profileImageUrl ? (
+                        {e.avatarImageUrl ? <img src={e.avatarImageUrl} alt={`${e.name} avatar`} className="h-7 w-7 rounded-full object-cover" /> : e.avatar ? <WorkerAvatar avatar={e.avatar} label={e.name} className="h-7 w-7"/> : e.profileImageUrl ? (
                           <img src={e.profileImageUrl} alt={e.name} className="h-7 w-7 rounded-full object-cover" />
                         ) : (
                           <span className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-500 text-xs font-black text-white">
@@ -755,6 +760,7 @@ export default function LeaveReviewPage() {
           </Card>
         )}
 
+        {!!assignedEmployees.length&&<Card><CardHeader className="pb-2"><CardTitle className="flex items-center gap-2 text-lg"><Heart className="h-5 w-5 text-rose-500"/>Send your movers some love</CardTitle></CardHeader><CardContent><div className="grid grid-cols-2 gap-3">{assignedEmployees.map(worker=><button type="button" key={worker.id} aria-pressed={thanksWorkerIds.includes(worker.id)} disabled={submitMutation.isPending} onClick={()=>setThanksWorkerIds(current=>current.includes(worker.id)?current.filter(id=>id!==worker.id):[...current,worker.id])} className={`flex min-h-24 flex-col items-center justify-center gap-2 rounded-2xl border p-3 ${thanksWorkerIds.includes(worker.id)?'border-rose-400 bg-rose-500/10':'border-border'}`}>{worker.avatarImageUrl?<img src={worker.avatarImageUrl} className="h-12 w-12 rounded-full" alt={`${worker.name} avatar`}/>:<WorkerAvatar avatar={worker.avatar} label={worker.name} className="h-12 w-12"/>}<span className="text-sm font-semibold">{worker.name.split(' ')[0]}</span><Heart className={`h-5 w-5 text-rose-500 ${thanksWorkerIds.includes(worker.id)?'fill-rose-500':''}`}/></button>)}</div><p className="mt-3 text-xs text-muted-foreground">Free appreciation, sent with your review. Tips are optional below.</p></CardContent></Card>}
         {/* ─── Star Rating ─── */}
         <Card>
           <CardHeader className="pb-2">
@@ -884,7 +890,7 @@ export default function LeaveReviewPage() {
                               : "border-border hover:border-blue-300"
                           }`}
                         >
-                          {employee.profileImageUrl ? (
+                          {employee.avatarImageUrl ? <img src={employee.avatarImageUrl} alt={`${employee.name} avatar`} className="h-12 w-12 rounded-full object-cover"/> : employee.avatar ? <WorkerAvatar avatar={employee.avatar} label={employee.name} className="h-12 w-12"/> : employee.profileImageUrl ? (
                             <img src={employee.profileImageUrl} alt={employee.name} className="h-12 w-12 rounded-full object-cover" />
                           ) : (
                             <span className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-sm font-black text-white dark:bg-slate-100 dark:text-slate-900">

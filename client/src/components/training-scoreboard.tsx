@@ -35,6 +35,7 @@ export function TrainingScoreboard({mine,entries,total}:{mine:TrainingScore;entr
         <p className="text-sm font-semibold">{myRank?`Your rank: #${myRank}`:metric==='submitted'?'Submit your first scenario to join.':'No verified points for this ranking yet.'}</p>
         {sorted.length?<ol className="space-y-2" aria-label="Crew rankings">{(expanded?sorted:sorted.slice(0,5)).map(row=><li key={row.userId} className={`flex min-w-0 items-center gap-3 rounded-xl border p-3 ${row.userId===mine.userId?'border-blue-400 bg-blue-950/50':'border-slate-700'}`}>
           <span className="w-8 shrink-0 text-center font-black text-amber-300">{rank(row)?`#${rank(row)}`:'—'}</span>
+          <img src={`/api/public/worker-avatar/${encodeURIComponent(row.userId)}.png`} alt={`${row.displayName} avatar`} className="h-9 w-9 shrink-0 rounded-full" loading="lazy"/>
           <div className="min-w-0 flex-1"><p className="break-words text-sm font-bold">{row.displayName}{row.userId===mine.userId?' (you)':''}</p><p className="text-xs text-slate-400">{row.submitted}/{total} submitted · {row.reviewed} reviewed</p></div>
           <div className="shrink-0 text-right"><p className="font-black">{row[metric].toLocaleString()}</p><p className="text-xs text-slate-300">{metric==='submitted'?'submitted':'JCMOVES'}</p></div>
         </li>)}</ol>:<p className="rounded-xl bg-slate-950 p-4 text-sm">The board is ready. Submit the first scenario to get started.</p>}
