@@ -1,5 +1,6 @@
 import { pool } from "../db";
 import { getAshleyShopSetup } from "./ashleyShopPolicy";
+import { JEWELRY_RESERVATION_COLUMNS } from "./jewelryReservationSchema";
 
 let schemaPromise: Promise<void> | null = null;
 
@@ -15,6 +16,7 @@ export function ensureAshleyShopSchema(): Promise<void> {
 
 async function initialize(): Promise<void> {
   await pool.query(`
+    ${JEWELRY_RESERVATION_COLUMNS}
     ALTER TABLE jewelry_items
       ADD COLUMN IF NOT EXISTS sku TEXT,
       ADD COLUMN IF NOT EXISTS quantity INTEGER NOT NULL DEFAULT 1,

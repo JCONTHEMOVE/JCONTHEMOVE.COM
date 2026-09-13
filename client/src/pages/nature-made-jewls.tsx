@@ -372,7 +372,7 @@ export default function AshleyShop() {
     return item.postedBy === user.id;
   };
 
-  const { data: items = [], isLoading } = useQuery<JewelryItem[]>({
+  const { data: items = [], isLoading, isError: catalogError, refetch: retryCatalog } = useQuery<JewelryItem[]>({
     queryKey: ["/api/jewelry", { category: selectedCategory !== "all" ? selectedCategory : undefined, search: searchQuery }],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -1010,6 +1010,11 @@ export default function AshleyShop() {
 
         {isLoading ? (
           <div className="text-center text-rose-400 py-16 font-serif italic">Loading beautiful pieces...</div>
+        ) : catalogError ? (
+          <div role="alert" className="py-12 text-center text-stone-700">
+            <p>Could not load Ashley’s shop. Please try again.</p>
+            <Button variant="outline" className="mt-3 min-h-11" onClick={() => void retryCatalog()}>Retry shop</Button>
+          </div>
         ) : items.length === 0 ? (
           <div className="text-center py-16">
             <div className="text-5xl mb-4">🌸</div>
