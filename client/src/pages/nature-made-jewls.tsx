@@ -1,3 +1,4 @@
+import { CatalogImage } from "@/components/catalog-image";
 import { ShopSwitcher } from "@/components/shop-switcher";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
@@ -36,7 +37,7 @@ function MediaItem({ src, alt, className }: { src: string; alt: string; classNam
       />
     );
   }
-  return <img src={src} alt={alt} className={className} />;
+  return <CatalogImage src={src} alt={alt} className={className} />;
 }
 
 function MediaThumb({ src, alt, className }: { src: string; alt: string; className?: string }) {
@@ -51,7 +52,7 @@ function MediaThumb({ src, alt, className }: { src: string; alt: string; classNa
       />
     );
   }
-  return <img src={src} alt={alt} className={className} />;
+  return <CatalogImage src={src} alt={alt} className={className} />;
 }
 
 interface JewelryItem {
@@ -1137,7 +1138,7 @@ export default function AshleyShop() {
                       <div key={item.id} className="flex items-center gap-3 p-2 rounded-xl hover:bg-rose-50 transition-colors">
                         <div className="w-16 h-16 rounded-lg overflow-hidden bg-rose-50 flex-shrink-0">
                           {photos.length > 0 ? (
-                            <img src={photos[0]} alt={item.title} className="w-full h-full object-cover" />
+                            <CatalogImage src={photos[0]} alt={item.title} className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center"><Gem className="h-6 w-6 text-rose-200" /></div>
                           )}
