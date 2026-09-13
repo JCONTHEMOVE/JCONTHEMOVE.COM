@@ -1,11 +1,10 @@
+import { RewardsLink } from "@/components/task-ui";
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bot, MapPin, Target, MessageSquare, Lightbulb, Check, ChevronDown, RotateCcw, Rocket, Trophy, Users, BookOpen, Megaphone, CalendarCheck, ShieldCheck } from 'lucide-react';
 import { MARKETING_BOT_TERRITORIES, MARKETING_TERRITORY_LABELS } from '@shared/marketingBot';
 import { DEFAULT_GROWTH_GOALS, GROWTH_GOALS } from '@shared/crewGrowth';
 
-import { WorkerPhotoAvatar } from './WorkerPhotoAvatar';
-import { DailySpinCard } from './DailySpinCard';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { apiRequest } from '@/lib/queryClient';
@@ -59,8 +58,8 @@ export function MarketingBotSetupCard() {
       <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-indigo-400/15 px-3 py-2">{data.partner?.lane}</span><span className="rounded-full bg-slate-800 px-3 py-2">Backup · {data.partner?.backup}</span><span className="break-all rounded-full bg-slate-800 px-3 py-2">{data.rep?.promo_verified?'✓':'!'} {data.rep?.promo_code}</span></div>
     </div>
     <div className="space-y-4 p-4 sm:p-5">
-      <DailySpinCard />
-      <WorkerPhotoAvatar />
+
+      <RewardsLink/>
 
       <div className="rounded-2xl border border-slate-800 p-3">
         <div className="flex items-center justify-between gap-2"><h3 className="flex items-center gap-2 text-sm font-bold"><MapPin className="h-4 w-4 text-cyan-300"/>My areas <span className="text-cyan-300">{territories.length}</span></h3><button type="button" className="flex min-h-11 items-center gap-1 rounded-lg px-2 text-xs text-cyan-200 focus-visible:outline focus-visible:outline-2" aria-expanded={expanded} aria-controls="worker-bot-areas" onClick={()=>setExpanded(!expanded)}>{expanded?'Simplify':'Expand'}<ChevronDown className={`h-4 w-4 ${expanded?'rotate-180':''}`}/></button></div>

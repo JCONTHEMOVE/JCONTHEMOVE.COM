@@ -1,5 +1,5 @@
+import { RewardsLink } from "@/components/task-ui";
 import { useMemo, useState } from "react";
-import { WorkerPhotoAvatar } from '@/components/WorkerPhotoAvatar';
 import { CrewReviewCelebration } from '@/components/CrewReviewCelebration';
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
@@ -181,7 +181,7 @@ export default function CrewReviewsPage() {
       </div>
 
       {celebrationId&&<CrewReviewCelebration reviewId={celebrationId}/>}
-      <div className="mb-5"><WorkerPhotoAvatar /></div>
+      <div className="mb-5"><RewardsLink/></div>
       {loading ? (
         <div className="grid min-h-[280px] place-items-center rounded-[8px] border border-slate-800 bg-slate-900/70 text-slate-400">
           <Loader2 className="h-8 w-8 animate-spin text-blue-400" />

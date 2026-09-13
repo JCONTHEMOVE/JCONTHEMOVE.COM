@@ -12,7 +12,6 @@ export default function AdminFinancePage() {
       <div className="max-w-6xl mx-auto px-4 pt-6">
         <div className="mb-6">
           <h1 className="text-2xl font-black text-white">Finance</h1>
-          <p className="text-slate-400 text-sm">Job earnings, monthly payroll and tips, quarterly profit bonuses, cashouts, treasury, and ledger</p>
         </div>
         <Tabs defaultValue="job-payouts">
           <TabsList className="bg-slate-800/50 border border-slate-700/50 mb-6 flex-wrap">

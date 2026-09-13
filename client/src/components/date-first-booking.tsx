@@ -1,4 +1,5 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { TaskStepNav, TaskActionBar, TaskDetails, useUnsavedTask, canLeaveTask } from "@/components/task-ui";
+import { useMemo, useState, useRef, type FormEvent } from "react";
 import { CalendarClock, CheckCircle2, Clock3, Home, MapPin, ShieldCheck, Truck, Users } from "lucide-react";
 import { estimateJobDuration, JOB_SCHEDULE_OPTIONS, type SizingBasis, type TruckSize } from "@shared/jcOperations";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 export function DateFirstBooking({ onChooseCallback, onDetailedBooking }: { onChooseCallback: () => void; onDetailedBooking: () => void }) {
   const { toast } = useToast();
+  const [step,setStep]=useState('customer');
+  const formRef=useRef<HTMLFormElement>(null);
+  const steps=[{id:'customer',label:'Customer'},{id:'service',label:'Service / location'},{id:'schedule',label:'Schedule / crew'},{id:'review',label:'Review'}];
   const [service, setService] = useState<Service>("moving");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -91,6 +95,12 @@ export function DateFirstBooking({ onChooseCallback, onDetailedBooking }: { onCh
       toast({ title: "Add your name and complete 10-digit phone number", variant: "destructive" });
       return;
     }
+    if (!email.trim() || !address.trim() || !zip.trim() || !workScope.trim() || !date) {
+      setStep(!email.trim() ? 'customer' : !address.trim() || !zip.trim() || !workScope.trim() ? 'service' : 'schedule');
+      toast({ title: 'Complete the required fields before submitting', variant: 'destructive' });
+      return;
+    }
+    if (submitting) return;
     setSubmitting(true);
     try {
       const response = await apiRequest("POST", "/api/leads/quick-request", {
@@ -122,6 +132,20 @@ export function DateFirstBooking({ onChooseCallback, onDetailedBooking }: { onCh
     }
   }
 
+  useUnsavedTask(Boolean(name||email||phone||address||workScope)&&!complete&&!submitting);
+  function goStep(next:string){
+    const target=steps.findIndex(item=>item.id===next);
+    if(target>steps.findIndex(item=>item.id===step)){
+      for(const item of steps.slice(0,target)){
+        const fields=Array.from(formRef.current?.querySelectorAll<HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement>(`[data-step="${item.id}"] input,[data-step="${item.id}"] textarea,[data-step="${item.id}"] select`)||[]);
+        const invalid=fields.find(field=>!field.checkValidity());
+        if(invalid){setStep(item.id);window.setTimeout(()=>{invalid.focus();invalid.reportValidity();},0);return;}
+        if(item.id==='schedule'&&!date){setStep('schedule');window.setTimeout(()=>formRef.current?.querySelector<HTMLInputElement>('input[type="date"]')?.focus(),0);return;}
+        if(item.id==='customer'&&!phoneIsComplete(phone)){setStep('customer');toast({title:'Enter a complete phone number',variant:'destructive'});window.setTimeout(()=>formRef.current?.querySelector<HTMLInputElement>('input[type="tel"]')?.focus(),0);return;}
+      }
+    }
+    setStep(next);
+  }
   if (complete) {
     return (
       <Card className="border-emerald-500/40 bg-emerald-500/5 text-slate-100">
@@ -141,54 +165,33 @@ export function DateFirstBooking({ onChooseCallback, onDetailedBooking }: { onCh
     );
   }
 
-  return (
-    <form className="space-y-5" onSubmit={submit}>
-      <Card className="border-blue-500/40 bg-slate-900/95 text-slate-100">
-        <CardHeader>
-          <div className="flex items-center gap-2"><CalendarClock className="h-6 w-6 text-blue-300" /><CardTitle>Choose your preferred moving date first</CardTitle></div>
-          <CardDescription>Pick an exact hourly start. JC will call to confirm the scope, crew, price, and date before anything is dispatched.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Service"><select className="field-select" value={service} onChange={(event) => setService(event.target.value as Service)}><option value="moving">Moving</option><option value="labor">Loading / unloading labor</option><option value="junk_removal">Junk removal</option></select></Field>
-            <Field label="Preferred date"><Input type="date" min={new Date().toISOString().slice(0, 10)} value={date} onChange={(event) => { setDate(event.target.value); setCapacity(null); }} required /></Field>
-            <Field label="Preferred start"><select className="field-select" value={time} onChange={(event) => { setTime(event.target.value); setCapacity(null); }}>{JOB_SCHEDULE_OPTIONS.filter((option) => option.start).map((option) => <option key={option.start!} value={option.start!}>{option.label} Central</option>)}</select></Field>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Your name"><Input autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} required /></Field>
-            <Field label="Email"><Input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></Field>
-            <Field label="Phone"><Input type="tel" autoComplete="tel" placeholder="(906) 285-9312" value={phone} onChange={(event) => setPhone(event.target.value)} required /></Field>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-[1fr_160px]">
-            <Field label="Service address"><div className="relative"><MapPin className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-500" /><Input className="pl-9" autoComplete="street-address" value={address} onChange={(event) => setAddress(event.target.value)} required /></div></Field>
-            <Field label="ZIP code"><Input inputMode="numeric" maxLength={10} value={zip} onChange={(event) => setZip(event.target.value)} required /></Field>
-          </div>
-          <Field label="What work do you need done?"><Textarea rows={3} placeholder="Pickup/drop-off, rooms or items, stairs, access, and anything unusually heavy" value={workScope} onChange={(event) => setWorkScope(event.target.value)} required /></Field>
-        </CardContent>
-      </Card>
-
-      <Card className="border-slate-700 bg-slate-900/95 text-slate-100">
-        <CardHeader>
-          <div className="flex items-center gap-2"><Home className="h-5 w-5 text-cyan-300" /><CardTitle>Plan the crew time</CardTitle></div>
-          <CardDescription>Use the home size or rental-truck size so the calendar has a realistic planning window.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Estimate from"><select className="field-select" value={sizingBasis} onChange={(event) => { setSizingBasis(event.target.value as SizingBasis); setCrewSize(null); setCapacity(null); }}><option value="square_footage">Home square footage</option><option value="truck">Truck size</option></select></Field>
-            {sizingBasis === "square_footage" ? <Field label="Approx. square footage"><Input type="number" min="1" max="100000" value={squareFootage} onChange={(event) => { setSquareFootage(event.target.value); setCrewSize(null); setCapacity(null); }} required /></Field> : <Field label="Truck"><select className="field-select" value={truckSize} onChange={(event) => { setTruckSize(event.target.value as TruckSize); setCrewSize(null); setCapacity(null); }}><option value="pickup_van_10">Pickup / cargo van / 10 ft</option><option value="15_ft">15 ft box truck</option><option value="20_ft">20 ft box truck</option><option value="26_ft">26 ft box truck</option></select></Field>}
-            <Field label="Crew"><select className="field-select" value={selectedCrew} onChange={(event) => { setCrewSize(Number(event.target.value) as 2 | 3 | 4); setCapacity(null); }}><option value="2">2 movers</option><option value="3">3 movers</option><option value="4">4 movers</option></select></Field>
-          </div>
-          <div className="grid gap-3 rounded-xl border border-cyan-500/25 bg-cyan-500/10 p-4 sm:grid-cols-3">
-            <div><p className="text-xs uppercase tracking-wide text-cyan-200/70">Recommended crew</p><p className="mt-1 font-black">{estimate.recommendedCrewSize} movers</p></div>
-            <div><p className="text-xs uppercase tracking-wide text-cyan-200/70">Estimated work time</p><p className="mt-1 font-black">{estimate.minimumHours === estimate.maximumHours ? `${estimate.planningHours} hours` : `${estimate.minimumHours}–${estimate.maximumHours} hours`}</p></div>
-            <div><p className="text-xs uppercase tracking-wide text-cyan-200/70">Calendar planning</p><p className="mt-1 font-black">{estimate.planningHours} hours</p></div>
-          </div>
-          {estimate.manualReview && <p className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-100">This size or crew combination needs JC review before confirmation.</p>}
-          <Field label="Additional notes (optional)"><Textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
-        </CardContent>
-      </Card>
-
-      <Card className="border-emerald-500/30 bg-emerald-500/[0.06] text-slate-100">
+  return <form ref={formRef} noValidate className="space-y-4" onSubmit={event=>{if(step!=='review'){event.preventDefault();goStep(steps[steps.findIndex(item=>item.id===step)+1].id);}else void submit(event);}}>
+    <TaskStepNav steps={steps} value={step} onChange={goStep} disabled={submitting}/>
+    <fieldset disabled={submitting} className="min-w-0 space-y-4">
+      <section hidden={step!=='customer'} data-step="customer" className="space-y-3" aria-label="Customer">
+        <Field label="Your name"><Input autoComplete="name" value={name} onChange={e=>setName(e.target.value)} required/></Field>
+        <Field label="Email"><Input type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} required/></Field>
+        <Field label="Phone"><Input type="tel" autoComplete="tel" value={phone} onChange={e=>setPhone(e.target.value)} required/></Field>
+      </section>
+      <section hidden={step!=='service'} data-step="service" className="space-y-3" aria-label="Service and location">
+        <Field label="Service"><select className="field-select min-h-11" value={service} onChange={e=>setService(e.target.value as Service)}><option value="moving">Moving</option><option value="labor">Loading / unloading</option><option value="junk_removal">Junk removal</option></select></Field>
+        <Field label="Service address"><Input autoComplete="street-address" value={address} onChange={e=>setAddress(e.target.value)} required/></Field>
+        <Field label="ZIP code"><Input inputMode="numeric" maxLength={10} value={zip} onChange={e=>setZip(e.target.value)} required/></Field>
+        <Field label="Work needed"><Textarea rows={3} value={workScope} onChange={e=>setWorkScope(e.target.value)} placeholder="Items, pickup/drop-off, stairs, access" required/></Field>
+      </section>
+      <section hidden={step!=='schedule'} data-step="schedule" className="space-y-3" aria-label="Schedule and crew">
+        <Field label="Preferred date"><Input type="date" min={new Date().toISOString().slice(0,10)} value={date} onChange={e=>{setDate(e.target.value);setCapacity(null);}} required/></Field>
+        <Field label="Preferred start"><select className="field-select min-h-11" value={time} onChange={e=>{setTime(e.target.value);setCapacity(null);}}>{JOB_SCHEDULE_OPTIONS.filter(o=>o.start).map(o=><option key={o.start!} value={o.start!}>{o.label} Central</option>)}</select></Field>
+        <Field label="Estimate from"><select className="field-select min-h-11" value={sizingBasis} onChange={e=>{setSizingBasis(e.target.value as SizingBasis);setCrewSize(null);setCapacity(null);}}><option value="square_footage">Home size</option><option value="truck">Truck size</option></select></Field>
+        {sizingBasis==='square_footage'?<Field label="Approx. square feet"><Input type="number" min="1" max="100000" value={squareFootage} onChange={e=>{setSquareFootage(e.target.value);setCrewSize(null);setCapacity(null);}} required/></Field>:<Field label="Truck"><select className="field-select min-h-11" value={truckSize} onChange={e=>{setTruckSize(e.target.value as TruckSize);setCrewSize(null);setCapacity(null);}}><option value="pickup_van_10">Pickup / van / 10 ft</option><option value="15_ft">15 ft</option><option value="20_ft">20 ft</option><option value="26_ft">26 ft</option></select></Field>}
+        <Field label="Crew"><select className="field-select min-h-11" value={selectedCrew} onChange={e=>{setCrewSize(Number(e.target.value) as 2|3|4);setCapacity(null);}}><option value="2">2 movers</option><option value="3">3 movers</option><option value="4">4 movers</option></select></Field>
+        <p className="text-sm">Estimated time: {estimate.minimumHours}–{estimate.maximumHours} hours · Planning: {estimate.planningHours} hours</p>
+        {estimate.manualReview&&<p role="status" className="text-amber-300">Crew and size need staff review.</p>}
+        <TaskDetails title="Additional notes"><Field label="Notes"><Textarea value={notes} onChange={e=>setNotes(e.target.value)}/></Field></TaskDetails>
+      </section>
+      <section hidden={step!=='review'} className="space-y-3" aria-label="Review request">
+        <dl className="grid gap-3 rounded-xl border p-3 text-sm"><div><dt>Customer</dt><dd>{name} · {email} · {phone}</dd></div><div><dt>Service / location</dt><dd>{service.replace('_',' ')} · {address} · {zip}</dd><dd>{workScope}</dd></div><div><dt>Schedule / crew</dt><dd>{date} · {time} Central · {selectedCrew} movers · {estimate.planningHours} hours</dd></div></dl>
+              <Card className="border-emerald-500/30 bg-emerald-500/[0.06] text-slate-100">
         <CardContent className="grid gap-4 p-5 sm:grid-cols-[1fr_auto] sm:items-center">
           <div>
             <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-emerald-300" /><p className="font-black">Clear minimums and local package options</p></div>
@@ -201,14 +204,11 @@ export function DateFirstBooking({ onChooseCallback, onDetailedBooking }: { onCh
         </CardContent>
       </Card>
 
-      <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
-        <p className="text-sm text-slate-400"><Clock3 className="mr-1 inline h-4 w-4" />Your preference does not block the crew calendar until staff confirms it.</p>
-        <Button type="submit" size="lg" className="bg-blue-600 px-8 hover:bg-blue-500" disabled={submitting}>{submitting ? "Saving request…" : "Request this date"}</Button>
-      </div>
-      <div className="flex flex-wrap justify-center gap-2 border-t border-slate-800 pt-4 text-sm">
-        <Button type="button" variant="ghost" onClick={onChooseCallback}><Users className="mr-2 h-4 w-4" />Just request a callback</Button>
-        <Button type="button" variant="ghost" onClick={onDetailedBooking}><Truck className="mr-2 h-4 w-4" />Build deposit-ready booking</Button>
-      </div>
-    </form>
-  );
+
+        <p className="text-sm">Staff must confirm the date, crew, and price before dispatch.</p>
+      </section>
+    </fieldset>
+    <TaskActionBar>{step!=='customer'&&<Button type="button" variant="outline" disabled={submitting} onClick={()=>goStep(steps[steps.findIndex(item=>item.id===step)-1].id)}>Back</Button>}<Button type="submit" disabled={submitting}>{submitting?'Saving request…':step==='review'?'Request this date':'Next'}</Button></TaskActionBar>
+    <TaskDetails title="Other booking options"><Button type="button" variant="outline" onClick={()=>{if(canLeaveTask())onChooseCallback();}}>Request a callback</Button><Button type="button" variant="outline" onClick={()=>{if(canLeaveTask())onDetailedBooking();}}>Deposit-ready booking</Button></TaskDetails>
+  </form>;
 }

@@ -2,6 +2,9 @@ name: Pricing Training Checks
 on:
   pull_request:
     paths:
+      - 'client/**'
+      - 'shared/**'
+      - 'server/**'
       - '**/*pricingTraining*'
       - '**/*pricing-training*'
       - 'client/src/layouts/CrewLayout.tsx'

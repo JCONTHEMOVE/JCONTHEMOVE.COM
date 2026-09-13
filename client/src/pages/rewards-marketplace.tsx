@@ -1,3 +1,5 @@
+import { AshleyFeaturedCard } from "@/components/ashley-featured-card";
+import { CrewRewardsPanel } from "@/components/crew-rewards-panel";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -531,7 +533,7 @@ export default function RewardsMarketplacePage() {
   return (
     <div className="min-h-screen bg-background pb-28">
       <ShopSwitcher />
-      <div className="mx-auto max-w-5xl px-4 pt-4"><DailySpinCard onOpen={()=>setDirectSpinOpen(true)}/></div>
+      <div className="mx-auto max-w-5xl px-4 pt-4"><div className="grid items-start gap-3 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]"><DailySpinCard onOpen={()=>setDirectSpinOpen(true)}/><AshleyFeaturedCard/></div><div className="mt-3"><CrewRewardsPanel/></div></div>
       {/* Auto-Booking Confirmation Banner */}
       {autoBookingLeadId && (
         <div className="bg-orange-500/10 border-b border-orange-500/30 px-4 py-3">
@@ -556,9 +558,9 @@ export default function RewardsMarketplacePage() {
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <Gift className="h-5 w-5 text-yellow-500" />
-                <h1 className="text-xl font-bold">JCMOVES Rewards Marketplace</h1>
+                <h1 className="text-xl font-bold">Rewards & shops</h1>
               </div>
-              <p className="text-sm text-muted-foreground">Spend your tokens on real local rewards, service credits & gift cards</p>
+
               {/* Tier Progress — activity-based */}
               <div className={`mt-3 rounded-lg border ${tierConfig.border} ${tierConfig.bg} px-3 py-2.5 flex flex-col gap-1.5 max-w-sm`}>
                 <div className="flex items-center justify-between gap-4">
@@ -605,7 +607,7 @@ export default function RewardsMarketplacePage() {
               </details>
             </div>
             <div className="flex flex-col gap-3">
-              <div className="flex gap-3">
+              <div className="flex flex-wrap gap-3">
                 <div className="flex flex-col gap-2">
                   <div className="bg-card border border-border rounded-xl px-4 py-3 text-center min-w-[120px]">
                     <div className="text-xs text-muted-foreground mb-0.5">Your Balance</div>
@@ -652,16 +654,16 @@ export default function RewardsMarketplacePage() {
           </div>
 
           {/* Tab switcher */}
-          <div className="flex gap-2 mt-4">
+          <div className="flex flex-wrap gap-2 mt-4">
             <button
               onClick={() => setActiveTab("shop")}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${activeTab === "shop" ? "bg-yellow-500 text-black" : "bg-card border border-border text-muted-foreground hover:text-foreground"}`}
+              className={`flex items-center gap-1.5 min-h-11 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${activeTab === "shop" ? "bg-yellow-500 text-black" : "bg-card border border-border text-muted-foreground hover:text-foreground"}`}
             >
               <ShoppingBag className="h-4 w-4" /> Browse Rewards
             </button>
             <button
               onClick={() => setActiveTab("history")}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${activeTab === "history" ? "bg-yellow-500 text-black" : "bg-card border border-border text-muted-foreground hover:text-foreground"}`}
+              className={`flex items-center gap-1.5 min-h-11 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${activeTab === "history" ? "bg-yellow-500 text-black" : "bg-card border border-border text-muted-foreground hover:text-foreground"}`}
             >
               <History className="h-4 w-4" /> My Redemptions
             </button>

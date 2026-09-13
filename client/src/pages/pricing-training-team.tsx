@@ -1,3 +1,4 @@
+import { TaskHeader, TaskDetails, RewardsLink } from "@/components/task-ui";
 import { TrainingJobSnapshot } from '@/components/training-job-snapshot';
 import { TrainingScoreboard } from '@/components/training-scoreboard';
 import { useEffect, useRef, useState } from 'react';
@@ -68,7 +69,7 @@ function TeamRequest({data,index,onNavigate}:{data:Data;index:number;onNavigate:
       <Button className="min-h-12" variant={mode==='contribute'?'default':'outline'} onClick={()=>setMode('contribute')}>My contribution</Button>
       {data.canReview&&<Button className="min-h-12" variant={mode==='final'?'default':'outline'} onClick={()=>{setSeed(null);setMode('final');}}>Owner final answer</Button>}
     </div>
-    {!data.canReview&&!canCompare&&<p className="rounded-xl border border-blue-500/40 p-3 text-sm">Submit your own answer to this request first. Coworker responses, charts, and the owner's final answer stay hidden until you submit. Saving a draft does not unlock them.</p>}
+    {!data.canReview&&!canCompare&&<p className="rounded-xl border border-blue-500/40 p-3 text-sm">Submit your own answer to unlock comparisons. Drafts stay private.</p>}
     {!data.canReview&&detail.isError&&<p role="alert">Could not check comparison access. <Button variant="outline" onClick={()=>void detail.refetch()}>Retry</Button></p>}
     {mine?.status==='reviewed'&&<div role="status" className={`rounded-2xl border p-5 ${mine.grade?'border-emerald-400 bg-emerald-950/60':'border-amber-400 bg-amber-950/40'}`}>
       <p className="text-sm font-semibold">{mine.grade?'Owner review complete':'✓ Answer submitted'}</p>
@@ -116,20 +117,12 @@ export default function PricingTrainingTeamPage(){
   const d=query.data,linked=d.scenarios.findIndex(s=>s.id===new URLSearchParams(window.location.search).get('scenario'));
   const active=Math.min(index??(linked>=0?linked:Math.max(0,d.scenarios.findIndex(s=>!d.completed.includes(s.id)))),499);
   return <main className="dark mx-auto min-h-screen w-full max-w-3xl space-y-6 bg-slate-950 px-4 py-6 text-white">
-    <header className="space-y-3"><h1 className="text-2xl font-black">500 requests · one team goal</h1><p className="text-sm text-slate-300">Contribute your pricing judgment. The owner reviews, rewards, and finalizes each request.</p><p className="text-xl font-bold">{d.completed.length} / 500 finalized together</p><progress aria-label="Team completion" value={d.completed.length} max={500} className="h-3 w-full accent-blue-500"/>
-      <p className="text-sm text-slate-300">100 for contribution · 150 mostly correct · 200 correct. All rewards require owner approval. One reward per coworker per request.</p>
-      <Button className="min-h-12" variant="outline" onClick={()=>{void navigator.clipboard.writeText(`${window.location.origin}/crew/pricing-training`).then(()=>setCopied(true)).catch(()=>setCopied(false));}}>{copied?'Link copied':'Copy coworker link'}</Button>
-      <p className="break-all text-xs text-blue-300">{window.location.origin}/crew/pricing-training</p>
-      {d.canReview&&<a className="block py-3 text-sm text-blue-300 underline" href="/admin/pricing-training">Your original answers & export</a>}
-      {d.completed.length===500&&<p role="status" className="rounded-xl bg-emerald-950 p-4">All 500 finalized together! Ready for owner review of pricing and safety rules. Live rules have not changed automatically.</p>}
-    </header>
-    <TrainingScoreboard mine={d.myScore} entries={d.leaderboard} total={d.scenarios.length}/>
-    <section className="rounded-2xl border border-amber-400/40 bg-amber-950/30 p-4" aria-label="Daily leaderboard prize">
-      <h2 className="font-bold text-amber-200">Daily leader prize · 1,000 JCMOVES</h2>
-      <p className="mt-2 text-sm">Most scenario JCMOVES verified by the owner during a Chicago calendar day wins. Tied leaders split 1,000 equally (extra whole tokens follow a fixed order). No verified points means no prize. Prizes are credited separately to your wallet after the day ends.</p>
-      {d.canReview&&<Button className="mt-3 min-h-12" disabled={awarding} onClick={()=>void awardDailyPrize()}>{awarding?'Checking daily prize…':"Award yesterday's leaders"}</Button>}
-      {prizeResult&&<p role="status" className="mt-3 text-sm">{prizeResult}</p>}
-    </section>
+    <TaskHeader title="Pricing training" status={`${d.completed.length} / 500 finalized`} action={<RewardsLink/>}/>
+    <TaskDetails title="Leaderboard and daily prize">
+      <TrainingScoreboard mine={d.myScore} entries={d.leaderboard} total={d.scenarios.length}/>
+      <section aria-label="Daily leaderboard prize"><h2 className="font-bold">Daily leader prize · 1,000 JCMOVES</h2><p className="text-sm">Most verified scenario JCMOVES per Chicago day wins. Ties split 1,000. No verified points means no prize.</p>{d.canReview&&<Button className="mt-3 min-h-11" disabled={awarding} onClick={()=>void awardDailyPrize()}>{awarding?'Checking daily prize…':"Award yesterday's leaders"}</Button>}{prizeResult&&<p role="status">{prizeResult}</p>}</section>
+    </TaskDetails>
+    <TaskDetails title="Help"><p className="text-sm">100 for contribution · 150 mostly correct · 200 correct. Owner approval required; one reward per coworker per request.</p><Button variant="outline" className="min-h-11" onClick={()=>{void navigator.clipboard.writeText(`${window.location.origin}/crew/pricing-training`).then(()=>setCopied(true)).catch(()=>toast({title:"Could not copy link",variant:"destructive"}));}}>{copied?'Link copied':'Copy coworker link'}</Button>{d.canReview&&<a className="block min-h-11 py-3 underline" href="/admin/pricing-training">Original answers & export</a>}</TaskDetails>
     <label className="block text-sm">Choose a request<select aria-label="Choose team request" value={active} onChange={e=>setIndex(Number(e.target.value))} className="mt-2 min-h-12 w-full min-w-0 rounded-xl bg-slate-900 p-3">{d.scenarios.map((s,i)=>{const count=d.counts.find(c=>c.scenario_id===s.id);return <option key={s.id} value={i}>{i+1}. {d.completed.includes(s.id)?'✓ ':''}{s.title} ({count?.responses??0} responses{d.canReview?`, ${count?.pending??0} pending`:''})</option>;})}</select></label>
     <TeamRequest key={d.scenarios[active].id} data={d} index={active} onNavigate={delta=>{setIndex(Math.max(0,Math.min(499,active+delta)));window.scrollTo({top:0});}}/>
     <div className="flex justify-between"><Button className="min-h-12" disabled={active===0} onClick={()=>setIndex(active-1)}>Previous request</Button><Button className="min-h-12" disabled={active===499} onClick={()=>setIndex(active+1)}>Next request</Button></div>

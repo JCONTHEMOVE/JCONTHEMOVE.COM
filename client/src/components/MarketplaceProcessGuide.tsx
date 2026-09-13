@@ -1,3 +1,4 @@
+import { TaskDetails } from "@/components/task-ui";
 import { ArrowRight, CheckCircle2, ClipboardList, Route, Sparkles } from "lucide-react";
 import {
   MARKETPLACE_OPERATING_FLYWHEEL,
@@ -75,7 +76,7 @@ function pickStage(step: ProcessStep, flowStageIds: MarketplaceFlywheelStageId[]
   return stageById.get(fromFlow || step.stageIds[0]) || MARKETPLACE_OPERATING_FLYWHEEL[0];
 }
 
-export default function MarketplaceProcessGuide({
+function MarketplaceProcessGuideContent({
   source,
   shapeId,
   serviceCode,
@@ -169,3 +170,5 @@ export default function MarketplaceProcessGuide({
     </section>
   );
 }
+
+export default function MarketplaceProcessGuide(props:MarketplaceProcessGuideProps){return <TaskDetails title="How the process works"><MarketplaceProcessGuideContent {...props}/></TaskDetails>;}
