@@ -1,3 +1,4 @@
+import { CatalogImage } from "@/components/catalog-image";
 import { useState } from "react";
 import { useParams, Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -26,7 +27,7 @@ function MediaItem({ src, alt, className }: { src: string; alt: string; classNam
   if (isVideoUrl(src)) {
     return <video src={src} className={className} controls playsInline muted loop />;
   }
-  return <img src={src} alt={alt} className={className} />;
+  return <CatalogImage src={src} alt={alt} className={className} />;
 }
 
 const COLLECTIONS = [

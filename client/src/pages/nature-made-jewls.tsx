@@ -1,3 +1,4 @@
+import { CatalogImage } from "@/components/catalog-image";
 import { ShopSwitcher } from "@/components/shop-switcher";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
@@ -36,7 +37,7 @@ function MediaItem({ src, alt, className }: { src: string; alt: string; classNam
       />
     );
   }
-  return <img src={src} alt={alt} className={className} />;
+  return <CatalogImage src={src} alt={alt} className={className} />;
 }
 
 function MediaThumb({ src, alt, className }: { src: string; alt: string; className?: string }) {
@@ -51,7 +52,7 @@ function MediaThumb({ src, alt, className }: { src: string; alt: string; classNa
       />
     );
   }
-  return <img src={src} alt={alt} className={className} />;
+  return <CatalogImage src={src} alt={alt} className={className} />;
 }
 
 interface JewelryItem {
@@ -372,7 +373,7 @@ export default function AshleyShop() {
     return item.postedBy === user.id;
   };
 
-  const { data: items = [], isLoading } = useQuery<JewelryItem[]>({
+  const { data: items = [], isLoading, isError: catalogError, refetch: retryCatalog } = useQuery<JewelryItem[]>({
     queryKey: ["/api/jewelry", { category: selectedCategory !== "all" ? selectedCategory : undefined, search: searchQuery }],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -1010,6 +1011,11 @@ export default function AshleyShop() {
 
         {isLoading ? (
           <div className="text-center text-rose-400 py-16 font-serif italic">Loading beautiful pieces...</div>
+        ) : catalogError ? (
+          <div role="alert" className="py-12 text-center text-stone-700">
+            <p>Could not load Ashley’s shop. Please try again.</p>
+            <Button variant="outline" className="mt-3 min-h-11" onClick={() => void retryCatalog()}>Retry shop</Button>
+          </div>
         ) : items.length === 0 ? (
           <div className="text-center py-16">
             <div className="text-5xl mb-4">🌸</div>
@@ -1132,7 +1138,7 @@ export default function AshleyShop() {
                       <div key={item.id} className="flex items-center gap-3 p-2 rounded-xl hover:bg-rose-50 transition-colors">
                         <div className="w-16 h-16 rounded-lg overflow-hidden bg-rose-50 flex-shrink-0">
                           {photos.length > 0 ? (
-                            <img src={photos[0]} alt={item.title} className="w-full h-full object-cover" />
+                            <CatalogImage src={photos[0]} alt={item.title} className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center"><Gem className="h-6 w-6 text-rose-200" /></div>
                           )}
