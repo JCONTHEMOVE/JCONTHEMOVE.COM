@@ -16,10 +16,14 @@ The existing Twilio SMS configuration must be working. No new SMS provider or Sq
 
 ## Validation
 
-The original task's client/server builds and TypeScript checks passed. The integrated release must pass CI again before deployment.
+The integrated release passed TypeScript, full server tests, Quick Book guards, phone enrollment guards, production build, training and PWA checks. Review fixes must pass the same checks before deployment.
 
 The mocked `server/routes/__tests__/phoneRewards.test.ts` checks phone normalization, consent, send failure, throttling, invalid codes, duplicate/staff profiles, single-use codes and repeat enrollment. It also verifies that enrollment never writes rewards or changes payment state. Existing Square payment policy and mobile booking alignment tests were run.
 
 Browser verification used disposable local fixtures, with no live texts, customer records or charges: quote validation and submission, phone reuse, incorrect-code retry, success, preserved details on Back, three-section booking navigation, difficulty selection, and 320/390-pixel layouts. Those temporary fixtures were removed. Real SMS delivery and a real Square payment were not exercised.
 
 The integrated router passed actual SQL enrollment on the existing isolated Neon branch on September 14, 2026: the rewards-only profile and membership persisted, incorrect and reused codes were rejected, and booking, lead and wallet counts stayed unchanged. SMS was intercepted in-process; zero real texts were sent and production data was untouched. Regression tests also reject inactive customers and memberships whose accounts later become inactive or privileged.
+
+Integrated browser checks confirmed three-step quote navigation, contact-phone reuse, optional enrollment, preserved details when going Back, and no horizontal overflow at 320/390 pixels. The detailed booking path retained moving configuration and mandatory heavy-item safety checks. The client-only preview did not submit bookings or request texts.
+
+Review fixes preserve accumulated spending and referral fields in phone-based customer lookup and make memberships cascade on account deletion. Actual SQL checks confirmed the returned fields and successful cascading deletion of the isolated synthetic customer, then rolled back that deletion. Existing restrictive test-branch constraints are upgraded idempotently; no production records were changed during verification.
