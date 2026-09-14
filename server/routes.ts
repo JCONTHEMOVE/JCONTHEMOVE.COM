@@ -1,3 +1,5 @@
+import { phoneRewardsRouter } from "./routes/phoneRewards";
+import { findPhoneRewardsCustomer, rewardsPhone } from "./services/phoneRewards";
 import {
   appendQuickBookTranscript,
   createQuickBookSession,
@@ -3920,7 +3922,20 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       }
 
       // Check if email already exists
-      const existingUser = await findUserByEmail(data.email);
+      let existingUser = await findUserByEmail(data.email);
+      const enrollment = (req.session as any).phoneRewardsEnrollment;
+      let upgradingPhoneRewards = false;
+      if (!existingUser && rewardsPhone(data.phoneNumber)) {
+        const phoneMember = await findPhoneRewardsCustomer(data.phoneNumber);
+        const candidate = phoneMember ? await storage.getUser(phoneMember.id) : undefined;
+        if (candidate?.role === "customer" && candidate.status === "rewards_only" && !candidate.email && !candidate.passwordHash) {
+          if (!(enrollment?.expiresAt > Date.now()) || enrollment.userId !== candidate.id || enrollment.phone !== rewardsPhone(data.phoneNumber)) {
+            return res.status(400).json({ error: "Please verify this phone again in the booking rewards step, then finish signup in the same browser so your rewards stay together." });
+          }
+          existingUser = candidate;
+          upgradingPhoneRewards = true;
+        }
+      }
 
       const passwordHash = await bcrypt.hash(data.password, 10);
       let newUser;
@@ -3930,6 +3945,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         const [updatedUser] = await db
           .update(users)
           .set({
+            ...(upgradingPhoneRewards ? { email: data.email, status: "active" } : {}),
             passwordHash,
             firstName: data.firstName,
             lastName: data.lastName,
@@ -3938,8 +3954,13 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
             tosAccepted: data.tosAccepted ?? existingUser.tosAccepted,
             tosAcceptedAt: data.tosAccepted && !existingUser.tosAccepted ? new Date() : existingUser.tosAcceptedAt,
           })
-          .where(eq(users.id, existingUser.id))
+          .where(upgradingPhoneRewards
+            ? and(eq(users.id, existingUser.id), eq(users.role, "customer"), eq(users.status, "rewards_only"), sql`${users.email} IS NULL AND ${users.passwordHash} IS NULL`)
+            : eq(users.id, existingUser.id))
           .returning();
+        if (upgradingPhoneRewards && !updatedUser) {
+          return res.status(409).json({ error: "This rewards account was already updated. Please sign in or verify your phone again." });
+        }
         newUser = updatedUser;
       } else if (existingUser) {
         return res.status(400).json({ error: "Email already registered. Please sign in." });
@@ -4229,7 +4250,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       }
 
       // Always return success to prevent user enumeration attacks
-      if (!matchedUser) {
+      if (!matchedUser || matchedUser.status === "rewards_only") {
         console.log(`⚠️ Recovery request for unknown ${method}: ${value}`);
         return res.json({ success: true, method, masked: method === 'email' ? value.replace(/(.{2}).*(@.*)/, '$1***$2') : value.slice(-4) });
       }
@@ -33346,6 +33367,7 @@ Thank you for your business!
   app.use("/api/admin/pricing-training", createPricingTrainingRouter(isAuthenticated, requireBusinessOwner, pool));
   app.use("/api/pricing-training-team", createPricingTrainingTeamRouter(isAuthenticated, requireEmployee, requireBusinessOwner, pool, { reward: rewardTrainingContribution, thank: thankTrainingContributor }));
   app.use("/api", bookingsRouter);
+  app.use("/api/rewards/phone", phoneRewardsRouter);
   app.use("/api", quotesRouter);
   app.use("/api", pricingV2Router);
   app.use("/api", commerceCatalogRouter);

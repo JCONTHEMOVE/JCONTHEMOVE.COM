@@ -27,4 +27,9 @@ jobs:
           node --import tsx server/services/__tests__/quickBookSchedule.test.ts
           node --import tsx server/services/__tests__/quickBookCommit.test.ts
       - run: npm run test:server
+      - name: Phone rewards enrollment guards
+        run: |
+          node --import tsx server/routes/__tests__/phoneRewards.test.ts > phone-rewards-test.log 2>&1
+          cat phone-rewards-test.log
+          grep -q 'Phone rewards: consent, SMS failure, throttling, invalid code, duplicates, privileged profiles, replay and retry checks passed' phone-rewards-test.log
       - run: npm run build
