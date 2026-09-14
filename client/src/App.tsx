@@ -25,6 +25,7 @@ import AdminLayout from "@/layouts/AdminLayout";
 
 // All pages are lazy-loaded — each page's JS only downloads when first visited
 const HomePage = lazy(() => import("@/pages/home"));
+const QuickBookPage = lazy(() => import("@/pages/quick-book"));
 const LegacyHomePage = lazy(() => import("@/pages/_archive/home"));
 const SplashPage = lazy(() => import("@/pages/splash"));
 const OnboardingPage = lazy(() => import("@/pages/onboarding"));
@@ -547,6 +548,19 @@ function AuthenticatedApp() {
         </RouteGuard>
       </ComplianceCheck>
     );
+  }
+  if (location === "/quick-book") {
+    return (
+      <ComplianceCheck>
+        <RouteGuard allowedRoles={['admin', 'employee', 'business_owner']}>
+          <NotificationPrompt />
+          <QuickBookPage />
+        </RouteGuard>
+      </ComplianceCheck>
+    );
+  }
+  if (import.meta.env.DEV && location === "/quick-book-fixture") {
+    return <QuickBookPage visualFixture />;
   }
   if (location === "/post-job") {
     return <Redirect to="/book" />;

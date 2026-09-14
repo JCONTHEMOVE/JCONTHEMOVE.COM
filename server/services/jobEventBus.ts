@@ -27,6 +27,8 @@ export type JobEventType =
 type RecipientScope = "owners" | "all_crew" | "eligible_crew" | "assigned_crew" | "owners_and_assigned_crew" | "owners_and_all_crew" | "owners_and_eligible_crew";
 
 interface EmitJobEventOptions {
+  /** Keep unreviewed campaign intake with owners and off shared crew channels. */
+  ownerReviewOnly?: boolean;
   /** Stable caller-provided key makes a retried mutation idempotent. */
   eventId?: string;
   actorId?: string | null;
@@ -151,6 +153,14 @@ function messageFor(type: JobEventType, lead: Lead, options: EmitJobEventOptions
 
   switch (type) {
     case "quote_requested":
+      if (options.ownerReviewOnly) {
+        return {
+          scope: "owners",
+          notificationType: "quote_request",
+          title: "Home Project Quote Request",
+          message: `${name}'s ${service} project is ready for owner review. Review the scope and requested deadline before quoting or arranging crew.`,
+        };
+      }
       return {
         scope: "owners_and_all_crew",
         notificationType: "crew_opportunity",
@@ -695,6 +705,7 @@ export async function emitJobEvent(
       }
     }
     const message = messageFor(effectiveType, lead, effectiveOptions);
+    const ownerReviewOnly = effectiveType === "quote_requested" && effectiveOptions.ownerReviewOnly === true;
     let recipients: UserRecipient[] = [];
     let personalAlertsAlreadyAttempted = false;
     try {
@@ -726,7 +737,9 @@ export async function emitJobEvent(
 
     const personalRecipients = personalAlertsAlreadyAttempted
       ? []
-      : recipients.filter((recipient) => recipient.jobAlertChannelPreference !== "discord");
+      // Shared Discord is deliberately excluded from this intake, so owners
+      // still receive an in-app record when it is their usual job-alert channel.
+      : recipients.filter((recipient) => ownerReviewOnly || recipient.jobAlertChannelPreference !== "discord");
     await Promise.allSettled(personalRecipients.map(async (recipient) => {
       const isOwnerRecipient = ["admin", "business_owner"].includes(String(recipient.role || ""));
       const personalUrl = effectiveType === "jcmoves_disbursed"
@@ -769,7 +782,7 @@ export async function emitJobEvent(
       ]);
     }));
 
-    await deliverWebhooks({
+    if (!ownerReviewOnly) await deliverWebhooks({
       id: eventId,
       type: effectiveType,
       scope: message.scope,

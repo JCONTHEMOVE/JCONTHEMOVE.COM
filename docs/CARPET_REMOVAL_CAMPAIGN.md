@@ -31,7 +31,7 @@ Use the owner panel's **Copy link** button for the full Facebook/UTM-tagged vers
 - The lead and original attribution are saved in one database transaction. Attribution failure rolls back the lead too. The original record is separate from the editable quote snapshot.
 - A random request ID plus payload fingerprint makes retries idempotent. The same ID cannot be replayed with another representative. Customer success appears only after the server confirms an order number.
 - The report counts each lead once and reads its original attribution, even if the quote snapshot changes or additional quote attribution rows are added. The normal lead list also prefers that original campaign record.
-- Existing owner notifications are called after commit. If a notification fails, the saved lead is still in the queue and retries do not create extra requests.
+- Owner notifications are called after commit. Campaign intake stays with owners: it does not notify crew or shared job webhooks. Owners receive an in-app record even if they normally use shared Discord for other job alerts. Existing owner email notification is also attempted. If a notification fails, the saved lead is still in the queue and retries do not create extra requests.
 - Direct customers stay unassigned. Browser clearing, private browsing or switching devices can remove pre-submission attribution. The recorded source on a saved request remains in the database. This is referral accounting, not automatic commission payment or a change to payout rules.
 
 ## Goal and daily operation

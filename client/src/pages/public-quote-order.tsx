@@ -1,3 +1,4 @@
+import { PhoneRewardsEnrollment } from "@/components/phone-rewards-enrollment";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Printer } from "lucide-react";
 import { useRoute } from "wouter";
@@ -45,9 +46,10 @@ export default function PublicQuoteOrderPage() {
         {order ? (
           <>
             <JobOrderTicket order={order} viewer="customer" />
+            <div className="quote-order-actions mt-4"><PhoneRewardsEnrollment /></div>
             <div className="quote-order-actions mt-4 grid gap-2 sm:grid-cols-2">
               {order.paymentUrl ? (
-                <Button className="gap-2 bg-cyan-500 font-bold text-slate-950 hover:bg-cyan-400" onClick={() => window.open(order.paymentUrl || "", "_blank", "noopener,noreferrer")} data-testid="button-pay-quote-order">
+                <Button className="min-h-12 gap-2 bg-cyan-500 font-bold text-slate-950 hover:bg-cyan-400" onClick={() => window.open(order.paymentUrl || "", "_blank", "noopener,noreferrer")} data-testid="button-pay-quote-order">
                   Review & Pay <ExternalLink className="h-4 w-4" />
                 </Button>
               ) : null}

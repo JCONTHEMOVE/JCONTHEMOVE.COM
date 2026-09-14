@@ -141,7 +141,8 @@ export default function CarpetRemovalPage() {
             </div>
             <div><Label htmlFor="accessNotes">Stairs, parking or other project notes (optional)</Label><Textarea id="accessNotes" name="accessNotes" maxLength={1000} rows={2} className="mt-2 bg-white text-slate-950" /></div>
             <div><Label htmlFor="photos" className="flex items-center gap-2"><Upload className="h-4 w-4" />Project photos (up to five)</Label>
-              <Input id="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={uploading || sending || photos.length >= 5} className="mt-2 h-auto bg-white py-3 text-slate-950" onChange={event => { void addPhotos(event.currentTarget.files); event.currentTarget.value = ""; }} />
+              <Input id="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={uploading || sending || photos.length >= 5} className="mt-2 h-auto bg-white py-3 text-slate-950 file:text-slate-950" aria-describedby="photo-help" onChange={event => { void addPhotos(event.currentTarget.files); event.currentTarget.value = ""; }} />
+              <p id="photo-help" className="mt-2 text-sm text-slate-600">Optional. Choose JPG, PNG or WebP photos up to 20 MB each.</p>
               {uploading && <p className="mt-2 text-sm" role="status">Preparing photos…</p>}
               <div className="mt-3 flex flex-wrap gap-3">{photos.map((photo, index) => <div className="relative" key={photo.name + "-" + index}><img className="h-24 w-24 rounded-md object-cover" src={photo.url} alt={"Project photo " + (index + 1)} /><button type="button" aria-label={"Remove photo " + (index + 1)} className="absolute right-0 top-0 rounded-full bg-slate-900 p-1 text-white" disabled={sending} onClick={() => setPhotos(current => current.filter((_, i) => i !== index))}><X className="h-4 w-4" /></button></div>)}</div>
             </div>
@@ -155,4 +156,3 @@ export default function CarpetRemovalPage() {
     <footer className="px-5 py-8 text-center text-sm text-[#f0cf83]">JC ON THE MOVE LLC<br />We MOVE with PURPOSE. GLORY to GOD.</footer>
   </main>;
 }
-

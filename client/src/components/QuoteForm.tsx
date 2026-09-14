@@ -1,3 +1,5 @@
+import { PhoneRewardsEnrollment } from "@/components/phone-rewards-enrollment";
+import { z } from "zod";
 import { useState, useCallback, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -12,7 +14,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Send, Camera, X, ImagePlus } from "lucide-react";
-import ServiceCard from "@/components/ServiceCard";
 import { getService } from "@/lib/services";
 import { DatePicker } from "@/components/ui/date-picker";
 import ServiceBundleAddon from "@/components/ServiceBundleAddon";
@@ -48,6 +49,7 @@ export default function QuoteForm({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedService, setSelectedService] = useState<string>(prefilledService);
+  const [step, setStep] = useState(0);
   const [photos, setPhotos] = useState<QuotePhoto[]>([]);
   const [bundleAddons, setBundleAddons] = useState<string[]>([]);
 
@@ -55,7 +57,13 @@ export default function QuoteForm({
   const apiEndpoint = isEmployee ? "/api/leads/employee" : "/api/leads";
 
   const form = useForm<InsertLead>({
-    resolver: zodResolver(insertLeadSchema),
+    resolver: zodResolver(insertLeadSchema.extend({
+      serviceType: z.string().trim().min(1, "Choose a service."),
+      firstName: z.string().trim().min(1, "Enter a first name."),
+      lastName: z.string().trim().min(1, "Enter a last name."),
+      email: z.string().trim().email("Enter an email address for your quote."),
+      fromAddress: z.string().trim().min(1, "Enter the service address."),
+    })),
     defaultValues: {
       firstName: "",
       lastName: "",
@@ -173,6 +181,7 @@ export default function QuoteForm({
       form.reset();
       setSelectedService("");
       setPhotos([]);
+      setStep(0);
       setBundleAddons([]);
       
       onSuccess?.();
@@ -190,7 +199,8 @@ export default function QuoteForm({
   });
 
   const onSubmit = (data: InsertLead) => {
-    submitLead.mutate(data);
+    if (step !== 2) return;
+    submitLead.mutate({ ...data, toAddress: ["residential", "commercial"].includes(selectedService) ? data.toAddress : "" });
   };
 
   const getServiceTitle = () => {
@@ -228,23 +238,32 @@ export default function QuoteForm({
         </CardHeader>
       )}
       <CardContent className={isEmployee ? "pt-6" : "p-6 md:p-8"}>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <form noValidate onSubmit={form.handleSubmit(onSubmit, (errors) => {
+          setStep(errors.serviceType ? 0 : errors.fromAddress ? 1 : 2);
+        })} className="space-y-5 [&_input]:min-h-12 [&_input]:text-base [&_textarea]:text-base [&_button]:min-h-11">
+          <nav aria-label="Quote progress" className="grid grid-cols-3 gap-2">
+            {["Service", "Job details", "Contact"].map((label, index) => <button key={label} type="button" aria-current={step === index ? "step" : undefined} onClick={() => setStep(index)} className={`rounded-lg px-2 py-3 text-sm font-semibold ${step === index ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-200"}`}>{index + 1}. {label}</button>)}
+          </nav>
+          <p className="text-sm text-slate-300">Step {step + 1} of 3 · No payment needed for a quote.</p>
+          <div hidden={step !== 0}>
           <div>
             <Label className={`block text-sm font-medium ${labelClasses} mb-3`}>Service Type *</Label>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {QUOTE_FORM_SERVICE_KEYS.map(key => {
                 const svc = getService(key);
                 if (!svc) return null;
+                const Icon = svc.icon;
                 return (
-                  <ServiceCard
+                  <button
+                    type="button"
                     key={key}
-                    service={svc}
-                    selected={selectedService === key}
+                    aria-pressed={selectedService === key}
+                    className={`flex min-h-20 flex-col items-center justify-center gap-2 rounded-xl border-2 p-3 text-sm font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-300 ${selectedService === key ? "border-blue-400 bg-blue-950" : "border-slate-600 bg-slate-800"}`}
                     onClick={() => {
                       setSelectedService(key);
                       form.setValue("serviceType", key);
                     }}
-                  />
+                  ><Icon aria-hidden="true" className="h-6 w-6 text-blue-300" />{svc.label}</button>
                 );
               })}
             </div>
@@ -253,74 +272,8 @@ export default function QuoteForm({
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="firstName" className={labelClasses}>
-                {isEmployee ? "Customer First Name *" : "First Name *"}
-              </Label>
-              <Input
-                id="firstName"
-                placeholder={isEmployee ? "John" : "Enter your first name"}
-                className={inputClasses}
-                {...form.register("firstName")}
-                data-testid="input-first-name"
-              />
-              {form.formState.errors.firstName && (
-                <p className={errorClasses}>{form.formState.errors.firstName.message}</p>
-              )}
-            </div>
-            <div>
-              <Label htmlFor="lastName" className={labelClasses}>
-                {isEmployee ? "Customer Last Name *" : "Last Name *"}
-              </Label>
-              <Input
-                id="lastName"
-                placeholder={isEmployee ? "Doe" : "Enter your last name"}
-                className={inputClasses}
-                {...form.register("lastName")}
-                data-testid="input-last-name"
-              />
-              {form.formState.errors.lastName && (
-                <p className={errorClasses}>{form.formState.errors.lastName.message}</p>
-              )}
-            </div>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="email" className={labelClasses}>
-                {isEmployee ? "Customer Email *" : "Email Address *"}
-              </Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder={isEmployee ? "Customer email address" : "Best email address"}
-                className={inputClasses}
-                {...form.register("email")}
-                data-testid="input-email"
-              />
-              {form.formState.errors.email && (
-                <p className={errorClasses}>{form.formState.errors.email.message}</p>
-              )}
-            </div>
-            <div>
-              <Label htmlFor="phone" className={labelClasses}>
-                {isEmployee ? "Customer Phone *" : "Phone Number *"}
-              </Label>
-              <Input
-                id="phone"
-                type="tel"
-                placeholder="(906) 285-9312"
-                className={inputClasses}
-                {...form.register("phone")}
-                data-testid="input-phone"
-              />
-              {form.formState.errors.phone && (
-                <p className={errorClasses}>{form.formState.errors.phone.message}</p>
-              )}
-            </div>
-          </div>
-
+          <div hidden={step !== 1} className="space-y-5">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label htmlFor="fromAddress" className={labelClasses}>Service Address *</Label>
@@ -335,7 +288,7 @@ export default function QuoteForm({
                 <p className={errorClasses}>{form.formState.errors.fromAddress.message}</p>
               )}
             </div>
-            <div>
+            <div hidden={!["residential", "commercial"].includes(selectedService)}>
               <Label htmlFor="toAddress" className={labelClasses}>Destination (if moving)</Label>
               <PlacesAutocomplete
                 value={form.watch("toAddress") || ""}
@@ -358,7 +311,7 @@ export default function QuoteForm({
             </div>
             <div>
               <Label htmlFor="propertySize" className={labelClasses}>Property Size</Label>
-              <Select onValueChange={(value) => form.setValue("propertySize", value)} data-testid="select-property-size">
+              <Select value={form.watch("propertySize") || ""} onValueChange={(value) => form.setValue("propertySize", value)} data-testid="select-property-size">
                 <SelectTrigger className={inputClasses}>
                   <SelectValue placeholder="Select size" />
                 </SelectTrigger>
@@ -376,35 +329,16 @@ export default function QuoteForm({
           </div>
 
           <div>
-            <Label htmlFor="details" className={labelClasses}>Additional Details</Label>
+            <Label htmlFor="details" className={labelClasses}>Items, work & access</Label>
             <Textarea
               id="details"
               rows={4}
-              placeholder="Tell us more about what you need... (special items, stairs, parking, etc.)"
+              placeholder="What needs moving or work? Include quantities, stairs at each address, elevators, parking / carry distance, and unusually heavy items."
               className={inputClasses}
               {...form.register("details")}
               data-testid="textarea-details"
             />
           </div>
-
-          <div>
-            <Label htmlFor="promoCode" className={labelClasses}>Promo Code (optional)</Label>
-            <Input
-              id="promoCode"
-              placeholder="Enter promo code for savings"
-              className={inputClasses}
-              {...form.register("promoCode")}
-              data-testid="input-promo-code"
-            />
-          </div>
-
-          {/* Cross-sell: other services customer might want */}
-          <ServiceBundleAddon
-            currentService={selectedService === "residential" ? "moving" : selectedService === "junk" ? "junk_removal" : selectedService === "snow" ? "snow_removal" : selectedService === "cleaning" ? "cleaning" : undefined}
-            selected={bundleAddons}
-            onChange={setBundleAddons}
-            theme="slate"
-          />
 
           <div>
             <Label className={`${labelClasses} mb-3 block`}>
@@ -426,6 +360,7 @@ export default function QuoteForm({
                     />
                     <button
                       type="button"
+                      aria-label={`Remove photo ${photo.name}`}
                       onClick={() => removePhoto(photo.id)}
                       className="absolute top-1 right-1 bg-red-500 hover:bg-red-600 text-white rounded-full p-1 shadow-lg transition-colors"
                       data-testid={`button-remove-photo-${photo.id}`}
@@ -461,7 +396,113 @@ export default function QuoteForm({
             )}
           </div>
 
+          </div>
+          <div hidden={step !== 2} className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="firstName" className={labelClasses}>
+                {isEmployee ? "Customer First Name *" : "First Name *"}
+              </Label>
+              <Input
+                id="firstName"
+                autoComplete="given-name"
+                placeholder={isEmployee ? "John" : "Enter your first name"}
+                className={inputClasses}
+                {...form.register("firstName")}
+                data-testid="input-first-name"
+              />
+              {form.formState.errors.firstName && (
+                <p className={errorClasses}>{form.formState.errors.firstName.message}</p>
+              )}
+            </div>
+            <div>
+              <Label htmlFor="lastName" className={labelClasses}>
+                {isEmployee ? "Customer Last Name *" : "Last Name *"}
+              </Label>
+              <Input
+                id="lastName"
+                autoComplete="family-name"
+                placeholder={isEmployee ? "Doe" : "Enter your last name"}
+                className={inputClasses}
+                {...form.register("lastName")}
+                data-testid="input-last-name"
+              />
+              {form.formState.errors.lastName && (
+                <p className={errorClasses}>{form.formState.errors.lastName.message}</p>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="email" className={labelClasses}>
+                {isEmployee ? "Customer Email *" : "Email Address *"}
+              </Label>
+              <Input
+                id="email"
+                type="email"
+                autoComplete="email"
+                placeholder={isEmployee ? "Customer email address" : "Best email address"}
+                className={inputClasses}
+                {...form.register("email")}
+                data-testid="input-email"
+              />
+              {form.formState.errors.email && (
+                <p className={errorClasses}>{form.formState.errors.email.message}</p>
+              )}
+            </div>
+            <div>
+              <Label htmlFor="phone" className={labelClasses}>
+                {isEmployee ? "Customer Phone *" : "Phone Number *"}
+              </Label>
+              <Input
+                id="phone"
+                type="tel"
+                autoComplete="tel"
+                inputMode="tel"
+                placeholder="(906) 285-9312"
+                className={inputClasses}
+                {...form.register("phone")}
+                data-testid="input-phone"
+              />
+              {form.formState.errors.phone && (
+                <p className={errorClasses}>{form.formState.errors.phone.message}</p>
+              )}
+            </div>
+          </div>
+
+
+          <div className="rounded-xl bg-slate-900 p-4 text-sm text-slate-200"><strong>Review your request</strong><p>{getService(selectedService)?.label || "Choose a service"} · {form.watch("moveDate") || "Date flexible"}</p><p className="break-words">{form.watch("fromAddress") || "Add the service address"}</p><p className="whitespace-pre-wrap break-words">{form.watch("details")}</p><button type="button" className="text-blue-300 underline" onClick={() => setStep(1)}>Edit job details</button></div>
+          <details><summary className="min-h-12 cursor-pointer py-3 text-slate-200">Promo code or extra services (optional)</summary><div className="space-y-4">          <div>
+            <Label htmlFor="promoCode" className={labelClasses}>Promo Code (optional)</Label>
+            <Input
+              id="promoCode"
+              placeholder="Enter promo code for savings"
+              className={inputClasses}
+              {...form.register("promoCode")}
+              data-testid="input-promo-code"
+            />
+          </div>
+
+          {/* Cross-sell: other services customer might want */}
+          <ServiceBundleAddon
+            currentService={selectedService === "residential" ? "moving" : selectedService === "junk" ? "junk_removal" : selectedService === "snow" ? "snow_removal" : selectedService === "cleaning" ? "cleaning" : undefined}
+            selected={bundleAddons}
+            onChange={setBundleAddons}
+            theme="slate"
+          />
+
+</div></details>
+          <PhoneRewardsEnrollment phone={form.watch("phone")} crew={isEmployee} />
+          </div>
+          <div className="sticky bottom-0 grid grid-cols-2 gap-2 border-t border-slate-700 bg-slate-900 py-3 pb-[max(12px,env(safe-area-inset-bottom))]">
+          <Button type="button" variant="outline" disabled={step === 0 || submitLead.isPending} onClick={() => setStep(value => value - 1)}>Back</Button>
+          {step < 2 ? <Button key="continue" type="button" onClick={async () => {
+            const valid = await form.trigger(step === 0 ? ["serviceType"] : ["fromAddress"]);
+            if (valid) setStep(value => value + 1);
+          }}>Continue</Button> : (
           <Button
+            key="submit"
             type="submit"
             className={isEmployee 
               ? "w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-lg shadow-orange-500/25 py-6 text-lg font-bold" 
@@ -474,10 +515,11 @@ export default function QuoteForm({
             {submitLead.isPending 
               ? "Submitting..." 
               : isEmployee 
-                ? "Submit Job Request" 
-                : "Request Free Quote"
+                ? "Send request"
+                : "Get my quote"
             }
-          </Button>
+          </Button>)}
+          </div>
         </form>
       </CardContent>
 
@@ -492,35 +534,6 @@ export default function QuoteForm({
         </div>
       )}
 
-      {!isEmployee && (
-        <div className="mx-6 mb-6 rounded-xl overflow-hidden border border-orange-500/25"
-          style={{ background: "linear-gradient(135deg,#0c0a09 0%,#1a1000 60%,#0c0a09 100%)" }}>
-          <div className="px-4 pt-3 pb-1 flex items-center gap-2 border-b border-orange-500/15">
-            <span className="text-base text-yellow-400 font-black">J</span>
-            <span className="text-sm font-black text-white tracking-tight">Earn JCMOVES on This Service</span>
-          </div>
-          <div className="px-4 py-3 space-y-2">
-            <div className="flex items-baseline gap-2">
-              <span className="text-2xl font-black text-yellow-400">50</span>
-              <span className="text-sm text-orange-300/80 font-medium">JCMOVES per $1 spent</span>
-            </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Every dollar you spend on moving, junk removal, or any service earns JCMOVES tokens - redeemable for discounts, Quantum Spin prizes, and lottery tickets. Free to join.
-            </p>
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              {["10% off coupons", "Quantum Spin prizes", "Lottery tickets", "Cash-back credits"].map(b => (
-                <span key={b} className="text-[10px] bg-orange-950/60 text-orange-300 border border-orange-500/20 rounded-full px-2 py-0.5 font-medium">{b}</span>
-              ))}
-            </div>
-            <a
-              href="/login"
-              className="mt-2 flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-orange-500/15 border border-orange-500/30 text-orange-400 text-xs font-bold hover:bg-orange-500/25 transition-colors"
-            >
-              <span>Create a free account to start earning</span>
-            </a>
-          </div>
-        </div>
-      )}
     </Card>
   );
 }

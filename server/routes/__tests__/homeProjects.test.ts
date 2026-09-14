@@ -26,8 +26,12 @@ const pool = { query, connect: async () => {
   return { query, release };
 } };
 let notifications = 0;
+let notificationsFail = false;
 const app = express(); app.use(express.json({ limit: "16mb" }));
-app.use("/projects", createHomeProjectRouter(pool, async () => { notifications++; }));
+app.use("/projects", createHomeProjectRouter(pool, async () => {
+  notifications++;
+  if (notificationsFail) throw new Error("Test notification outage");
+}));
 app.get("/stats", (req, res, next) => req.headers["x-owner"] === "yes" ? next() : res.sendStatus(403), homeProjectStatsHandler(pool));
 const server = app.listen(0, "127.0.0.1");
 await new Promise<void>(resolve => server.once("listening", resolve));
@@ -95,5 +99,12 @@ try {
   assert.equal(stats.reps.find((r: any) => r.slug === "evan").booked, 1);
   assert.equal(stats.reps.find((r: any) => r.slug === "direct").requests, 1);
   assert.equal(stats.recent.find((l: any) => l.id === evan.requestId).deadline, "2026-11-20");
+  notificationsFail = true;
+  const afterNotificationOutage = payload("evan");
+  const beforeNotifications = notifications;
+  assert.equal((await send(afterNotificationOutage)).status, 201, "an alert outage must not hide a committed request");
+  assert.equal((await send(afterNotificationOutage)).status, 200, "a retry returns the committed confirmation");
+  assert.deepEqual(await counts(), { leads: 5, attributions: 6 }, "an alert outage and retry must not duplicate a lead or its original referral");
+  assert.equal(notifications, beforeNotifications + 1, "a retry must not fan out another notification");
   console.log("Home projects: durable HTTP intake/photos, atomic original credit, retries, cross-site links and private unique totals passed.");
 } finally { await new Promise<void>(resolve => server.close(() => resolve())); await pg.close(); }
