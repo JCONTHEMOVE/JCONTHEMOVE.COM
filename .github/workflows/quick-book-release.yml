@@ -1,0 +1,27 @@
+name: Quick Book release checks
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Quick Book extraction and guards
+        run: |
+          node --import tsx server/services/__tests__/quickBook.test.ts > quick-book-test.log 2>&1
+          cat quick-book-test.log
+          grep -q 'Quick Book extraction, gate, and transaction guardrail tests passed' quick-book-test.log
+          node --import tsx server/services/__tests__/quickBookRelease.test.ts
+      - run: npm run test:server
+      - run: npm run build
