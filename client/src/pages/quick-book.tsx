@@ -182,6 +182,7 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [startupError, setStartupError] = useState<string | null>(null);
   const [booked, setBooked] = useState<BookedResult | null>(null);
   const [newStop, setNewStop] = useState("");
   const startedRef = useRef(false);
@@ -228,6 +229,7 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
         }
         await createSession();
       } catch (error) {
+        setStartupError(error instanceof Error ? error.message : "Could not load your draft. Please retry.");
         toast({ title: "Quick Book could not start", description: error instanceof Error ? error.message : "Try again.", variant: "destructive" });
       } finally {
         setLoading(false);
@@ -358,8 +360,25 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
     }
   }, [busy, toast]);
 
-  if (loading || !session || !draft) {
+  if (loading) {
     return <div className="flex min-h-[70vh] items-center justify-center bg-slate-950 text-white"><Loader2 className="h-8 w-8 animate-spin text-cyan-300" /></div>;
+  }
+
+  if (!session || !draft) {
+    return (
+      <main className="flex min-h-[70vh] items-center justify-center bg-slate-950 px-4 text-white">
+        <Card className="w-full max-w-md border-slate-700 bg-slate-900 text-white">
+          <CardContent className="space-y-4 p-6">
+            <h1 className="text-xl font-bold">Quick Book could not start</h1>
+            <p role="alert" className="text-sm text-slate-300">{startupError || "Your draft could not be loaded. Please retry."}</p>
+            <div className="flex flex-wrap gap-3">
+              <Button onClick={() => window.location.reload()}>Retry</Button>
+              <Button variant="outline" onClick={() => navigate("/")}>Back to home</Button>
+            </div>
+          </CardContent>
+        </Card>
+      </main>
+    );
   }
 
   if (booked) {
