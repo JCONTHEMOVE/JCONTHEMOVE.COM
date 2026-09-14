@@ -25,7 +25,7 @@ const query = async (sql: string, args?: unknown[]) => {
   if (sql.includes("SET used=true")) used = true;
   return { rows: [] };
 };
-const originalQuery = pool.query, originalConnect = pool.connect, originalSMS = smsService.sendSMS;
+const originalQuery = pool.query, originalConnect = pool.connect, originalSMS = smsService.sendSMS, originalInitialize = smsService.initialize;
 (pool as any).query = query;
 (pool as any).connect = async () => ({ query, release() {} });
 smsService.sendSMS = async () => { sendCount++; return { success: false }; };
@@ -37,6 +37,11 @@ async function call(path: string, body: unknown) {
   return { status, response };
 }
 try {
+  smsService.initialize = async () => false;
+  assert.equal((await call("/status", {})).response.available, false);
+  smsService.initialize = async () => true;
+  assert.equal((await call("/status", {})).response.available, true);
+  assert.equal(sendCount, 0, "Availability checks must not send texts");
   assert.equal((await call("/code", { phone: "9062859312", consent: false })).status, 400);
   assert.equal(sendCount, 0);
   assert.equal((await call("/code", { phone: "9062859312", consent: true })).status, 503);
@@ -82,4 +87,5 @@ try {
   console.log("Phone rewards: consent, SMS failure, throttling, invalid code, duplicates, privileged profiles, replay and retry checks passed");
 } finally {
   pool.query = originalQuery; pool.connect = originalConnect; smsService.sendSMS = originalSMS;
+  smsService.initialize = originalInitialize;
 }

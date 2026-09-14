@@ -8,6 +8,11 @@ import { allowRewardsCode, ensurePhoneRewards, rewardsPhone, verificationHash } 
 
 export const phoneRewardsRouter = Router();
 
+phoneRewardsRouter.get("/status", async (_req, res) => {
+  // Configuration validation only: initialize does not send a provider request.
+  res.json({ available: await smsService.initialize() });
+});
+
 phoneRewardsRouter.post("/code", async (req, res) => {
   const phone = rewardsPhone(req.body.phone);
   if (!phone || req.body.consent !== true) return res.status(400).json({ error: "Enter a complete phone number and choose to join rewards." });

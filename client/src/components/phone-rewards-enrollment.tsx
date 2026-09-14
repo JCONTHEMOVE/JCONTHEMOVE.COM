@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Gift, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,6 +7,12 @@ import { apiRequest } from "@/lib/queryClient";
 import { normalizeCustomerPhone, phoneError } from "@shared/phone";
 
 export function PhoneRewardsEnrollment({ phone: contactPhone, crew = false }: { phone?: string; crew?: boolean }) {
+  const { data: availability, isPending } = useQuery<{ available: boolean }>({
+    queryKey: ["/api/rewards/phone/status"],
+    queryFn: async () => (await apiRequest("GET", "/api/rewards/phone/status")).json(),
+    staleTime: 60_000,
+    retry: false,
+  });
   const [ownPhone, setOwnPhone] = useState("");
   const phone = contactPhone ?? ownPhone;
   const [chosen, setChosen] = useState(false);
@@ -34,6 +41,11 @@ export function PhoneRewardsEnrollment({ phone: contactPhone, crew = false }: { 
       setEnrolledPhone(activeChallenge.phone);
     } catch (error) { setError(readError(error)); } finally { setBusy(false); }
   }
+  if (!availability?.available && !enrolledPhone) return <section aria-label="Optional JCMOVES rewards" className="rounded-xl border border-orange-400/30 bg-slate-900 p-4 text-slate-100">
+    <h3 className="font-bold">JCMOVES rewards · Optional</h3>
+    <p role="status" className="mt-2 text-sm text-slate-300">{isPending ? "Checking phone verification availability…" : "Phone verification is temporarily unavailable. You can continue your quote or payment and join rewards through account setup."}</p>
+    <a href="/login" target="_blank" rel="noreferrer" className="mt-2 inline-flex min-h-11 items-center text-sm underline">Sign in or create an account</a>
+  </section>;
   return <section aria-label="Optional JCMOVES rewards" className="rounded-xl border border-orange-400/30 bg-slate-900 p-4 text-slate-100">
     <h3 className="flex items-center gap-2 font-bold"><Gift aria-hidden="true" className="h-5 w-5 text-orange-300" />JCMOVES rewards · Optional</h3>
     {enrolledPhone && enrolledPhone === normalized ? <div><p role="status" className="mt-3 text-sm text-emerald-300"><CheckCircle2 aria-hidden="true" className="mr-1 inline h-5 w-5" />Rewards enrolled for {enrolledPhone}. Use this number for your booking. Eligible rewards follow the existing confirmed-job and payment rules.</p><p className="mt-2 text-xs text-slate-300">New here? <a href="/login" target="_blank" rel="noreferrer" className="underline">Finish account setup</a> with this phone number to access your rewards. Booking and payment can continue now.</p></div> : <>

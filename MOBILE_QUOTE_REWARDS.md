@@ -14,6 +14,8 @@ Integrated onto production commit `8fbc8656685f2380676fec8b739f27fa0c037cdb` in 
 
 The existing Twilio SMS configuration must be working. No new SMS provider or Square product is required. Enrollment lazily creates `phone_rewards_members`, `phone_rewards_challenges`, and `phone_rewards_send_limits` in the application's existing Postgres database; the deployment database role must allow this existing project migration pattern. Codes expire after 10 minutes and allow five attempts. Atomic per-phone and per-IP send limits fail closed on database errors.
 
+Railway's production service currently has no Twilio variables. The public availability endpoint validates configuration without sending a provider request. Until configuration is available, forms show a clear phone-verification-unavailable message with normal account setup and allow the quote/payment to continue. Live SMS configuration and delivery acceptance remain open.
+
 ## Validation
 
 The integrated release passed TypeScript, full server tests, Quick Book guards, phone enrollment guards, production build, training and PWA checks. Review fixes must pass the same checks before deployment.
