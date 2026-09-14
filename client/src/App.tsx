@@ -33,6 +33,7 @@ const MyJobsPage = lazy(() => import("@/pages/my-jobs"));
 // Canonical customer + worker booking engine. The same mobile wizard owns
 // address resolution, scheduling, quote review, and submission on /book.
 const MultiServiceBookPage = lazy(() => import("@/pages/book"));
+const CarpetRemovalPage = lazy(() => import("@/pages/carpet-removal"));
 const JobCloseoutPage = lazy(() => import("@/pages/job-closeout"));
 const ScheduleRequestPage = lazy(() => import("@/pages/schedule-request"));
 const CustomerWalletPage = lazy(() => import("@/pages/customer/wallet"));
@@ -812,6 +813,7 @@ function PageViewTracker() {
 }
 
 const PUBLIC_PATH_PREFIXES = [
+  "/carpet-removal",
   "/",
   "/get-started",
   "/home",
@@ -877,6 +879,7 @@ function Router() {
     <Switch>
       {/* Onboarding / Get Started */}
       <Route path="/get-started" component={OnboardingPage} />
+      <Route path="/carpet-removal" component={CarpetRemovalPage} />
 
       {/* Public site (original marketing page) */}
         <Route path="/home">{() => <PublicHomePage />}</Route>

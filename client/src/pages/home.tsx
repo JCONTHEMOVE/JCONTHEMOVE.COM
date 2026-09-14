@@ -342,6 +342,12 @@ export default function HomePage() {
             </Button>
           </div>
         </div>
+        <div className="border-t border-emerald-300/20 bg-[#102d25] px-4 py-2.5">
+          <Link href="/carpet-removal" className="mx-auto flex max-w-6xl items-center justify-between gap-3 text-sm font-bold text-[#f0cf83]">
+            <span>Carpet Removal &amp; Light Demolition</span>
+            <span className="inline-flex shrink-0 items-center gap-2">Get a quote <ArrowRight className="h-4 w-4" /></span>
+          </Link>
+        </div>
       </nav>
 
       <section
@@ -394,6 +400,18 @@ export default function HomePage() {
               <span className="min-w-0 leading-tight">{label}</span>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="border-b border-white/10 bg-[#102d25] px-4 py-10">
+        <div className="mx-auto grid max-w-6xl items-center gap-7 md:grid-cols-2">
+          <img src="/campaigns/carpet-removal/work.jpg" alt="JC ON THE MOVE crew removing carpet to reveal wood flooring" width={1536} height={1152} loading="lazy" className="aspect-[4/3] w-full rounded-xl object-cover" />
+          <div>
+            <p className="text-sm font-bold uppercase tracking-widest text-[#f0cf83]">Helping Hands for your home</p>
+            <h2 className="mt-3 text-3xl font-black text-white">Carpet removal &amp; light demolition</h2>
+            <p className="mt-4 text-base leading-relaxed text-white/80">See our crew at work, share photos of your project, and request a quote for carpet removal, flooring work or a small tear-out.</p>
+            <Button asChild className="mt-6 h-auto min-h-12 whitespace-normal bg-[#f0cf83] px-6 py-3 font-bold text-[#102d25] hover:bg-[#ffe1a0]"><Link href="/carpet-removal">Watch the slideshow &amp; get a quote <ArrowRight className="ml-2 h-5 w-5 shrink-0" /></Link></Button>
+          </div>
         </div>
       </section>
 
