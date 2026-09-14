@@ -3,6 +3,8 @@
 // bundle popup that fires once per cart shape (auto-applied or one-away).
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { PhoneRewardsEnrollment } from "@/components/phone-rewards-enrollment";
+import { phoneError } from "@shared/phone";
 import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -729,11 +731,11 @@ const STEPS = ["services", "address", "configure", "contact", "safety", "review"
 type Step = (typeof STEPS)[number];
 const STEP_LABELS: Record<Step, string> = {
   services: "Pick services",
-  address: "Service address",
+  address: "Job details",
   configure: "Configure each service",
   contact: "Contact info",
   safety: "Safety check",
-  review: "Review & confirm",
+  review: "Contact & review",
 };
 const STEP_PHASES: Record<Step, { number: 1 | 2 | 3; label: string; detail: string }> = {
   services: { number: 1, label: "Service", detail: "Choose the work" },
@@ -1168,6 +1170,7 @@ function QuickRequestForm({
             </div>
           )}
         </div>
+        <PhoneRewardsEnrollment phone={form.phone} />
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <Button
             disabled={!canSubmit || submitQuick.isPending || photoReading}
@@ -1305,7 +1308,9 @@ export default function MultiServiceBookPage() {
   const attributionSummary = formatAttributionSummary(attribution);
   const adHint = formatAdHint(attribution.marketingTracking);
 
-  const [step, setStep] = useState<Step>("services");
+  const [step, setRawStep] = useState<Step>("services");
+  // Preserve old deep links while presenting three customer-facing sections.
+  const setStep = (next: Step) => setRawStep(next === "configure" || next === "safety" ? "address" : next === "contact" ? "review" : next);
   const [items, setItems] = useState<SelectedItem[]>([]);
   const [selectedMarketplaceShapeId, setSelectedMarketplaceShapeId] = useState<MarketplaceRequestShapeId>(
     () => defaultMarketplaceShapeId(urlPrefill.codes, urlPrefill.marketplaceShapeId),
@@ -2542,7 +2547,7 @@ export default function MultiServiceBookPage() {
     if (stepIndex(step) >= stepIndex("address")) {
       if (!serviceAddress.trim()) return "Enter the service address";
     }
-    if (stepIndex(step) >= stepIndex("configure")) {
+    if (step !== "services") {
       for (const item of items) {
         const w = itemNeedsAttention(item);
         if (w) return `${item.label}: ${w.toLowerCase()}`;
@@ -2550,12 +2555,13 @@ export default function MultiServiceBookPage() {
     }
     if (stepIndex(step) >= stepIndex("contact")) {
       if (!contact.customerName.trim()) return "Enter your full name";
-      if (contact.customerPhone.replace(/\D/g, "").length < 7) return "Enter a valid phone number";
+      const phoneProblem = phoneError(contact.customerPhone);
+      if (phoneProblem) return phoneProblem;
       const email = contact.customerEmail.trim();
       if (!email) return "Enter your email so we can confirm";
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return "Enter a valid email address";
     }
-    if (stepIndex(step) >= stepIndex("safety")) {
+    if (step !== "services") {
       for (const item of items) {
         const w = safetyNeedsAttention(item);
         if (w) return `${item.label}: ${w.toLowerCase()}`;
@@ -2567,19 +2573,11 @@ export default function MultiServiceBookPage() {
   function goNext() {
     const reason = canContinueReason();
     if (reason) return;
-    const idx = STEPS.indexOf(step);
-    if (idx < STEPS.length - 1) {
-      const nextStep = STEPS[idx + 1];
-      setStep(nextStep === "safety" && !hasMovingService ? "review" : nextStep);
-    }
+    setStep(step === "services" ? "address" : "review");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
   function goBack() {
-    const idx = STEPS.indexOf(step);
-    if (idx > 0) {
-      const prevStep = STEPS[idx - 1];
-      setStep(prevStep === "safety" && !hasMovingService ? "contact" : prevStep);
-    }
+    setStep(step === "review" ? "address" : "services");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -2940,7 +2938,7 @@ export default function MultiServiceBookPage() {
       </div>
 
       <div className="max-w-6xl mx-auto px-4 pt-6 flex gap-6">
-        <div className="flex-1 min-w-0 space-y-6">
+        <div className="flex-1 min-w-0 space-y-6 [&_input]:min-h-12 [&_input]:text-base [&_select]:min-h-12 [&_select]:text-base [&_textarea]:text-base [&_button]:min-h-11">
           {isWorker && step !== "review" && (
             <section className="rounded-2xl border border-blue-500/25 bg-blue-500/10 p-4" data-testid="smart-start-card">
               <div className="flex flex-col gap-3">
@@ -3058,7 +3056,7 @@ export default function MultiServiceBookPage() {
                 <h2 className="text-xl font-black">{hasMovingService ? "Where do you need help?" : "Where are we going?"}</h2>
                 <p className="text-sm text-muted-foreground">
                   {hasMovingService
-                    ? "Use the pickup address for load-only or full moves. If it's a full move, you'll add the destination in the next step."
+                    ? "Use the pickup address for load-only or full moves. For a full move, add the destination below."
                     : "The address where the work will happen."}
                 </p>
               </header>
@@ -3082,10 +3080,10 @@ export default function MultiServiceBookPage() {
           )}
 
           {/* Step 3 — Configure each item (inline cards, no drawer) */}
-          {step === "configure" && (
+          {step === "address" && (
             <section data-testid="step-configure">
               <header className="mb-3">
-                <h2 className="text-xl font-black">Configure each service</h2>
+                <h2 className="text-xl font-black">Job details</h2>
                 <p className="text-sm text-muted-foreground">Pick a date, frequency, and scope for every item before continuing.</p>
               </header>
               <div className="space-y-3">
@@ -3094,11 +3092,10 @@ export default function MultiServiceBookPage() {
                     key={item.serviceCode}
                     item={item}
                     serviceAddress={serviceAddress}
-                    onServiceAddressChange={setServiceAddress}
                     onChange={updateItem}
                     onRemove={() => removeService(item.serviceCode)}
                     onRequestContinue={goNext}
-                    warning={itemNeedsAttention(item)}
+                    warning={itemNeedsAttention(item) || safetyNeedsAttention(item)}
                   />
                 ))}
               </div>
@@ -3106,7 +3103,7 @@ export default function MultiServiceBookPage() {
           )}
 
           {/* Step 4 - Contact info */}
-          {step === "contact" && (
+          {step === "review" && (
             <section data-testid="step-contact">
               <header className="mb-3">
                 <h2 className="text-xl font-black">How do we reach you?</h2>
@@ -3153,7 +3150,7 @@ export default function MultiServiceBookPage() {
                   <Textarea
                     value={contact.notes}
                     onChange={(e) => setContact(c => ({ ...c, notes: e.target.value }))}
-                    placeholder="Gate code, parking notes, anything we should know"
+                    placeholder="Anything not already covered in your service details"
                     rows={3}
                     data-testid="contact-notes"
                   />
@@ -3210,7 +3207,7 @@ export default function MultiServiceBookPage() {
           )}
 
           {/* Step 5 — Safety check */}
-          {step === "safety" && (
+          {step === "address" && hasMovingService && (
             <section data-testid="step-safety">
               <header className="mb-3">
                 <h2 className="text-xl font-black">Safety check</h2>
@@ -3449,6 +3446,7 @@ export default function MultiServiceBookPage() {
                 )}
               </div>
 
+              <PhoneRewardsEnrollment phone={contact.customerPhone} crew={isWorker} />
               {/* Task #181 — Wallet & JCMOVES token redemption */}
               {user && walletData && !hasApprovalOnlyQuoteItems && (() => {
                 const subtotalForCap = quote?.subtotal ?? 0;
