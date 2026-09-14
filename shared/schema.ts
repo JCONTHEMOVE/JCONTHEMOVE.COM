@@ -3497,6 +3497,35 @@ export const bookingServiceItems = pgTable("booking_service_items", {
   index("idx_booking_items_service").on(table.serviceCode),
 ]);
 
+// Resumable, staff-only conversational booking drafts. The normalized draft
+// is safe to resume across devices; raw microphone audio is never stored.
+export const quickBookingSessions = pgTable("quick_booking_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
+  status: text("status").notNull().default("draft"),
+  revision: integer("revision").notNull().default(1),
+  transcriptText: text("transcript_text"),
+  structuredDraft: jsonb("structured_draft").notNull().default("{}"),
+  fieldMeta: jsonb("field_meta").notNull().default("{}"),
+  missingFields: jsonb("missing_fields").notNull().default("[]"),
+  reviewReasons: jsonb("review_reasons").notNull().default("[]"),
+  pricingPreview: jsonb("pricing_preview"),
+  suggestedCrew: jsonb("suggested_crew").notNull().default("[]"),
+  assistantMessage: text("assistant_message"),
+  nextQuestion: text("next_question"),
+  suggestions: jsonb("suggestions").notNull().default("[]"),
+  agentMetadata: jsonb("agent_metadata").notNull().default("{}"),
+  metrics: jsonb("metrics").notNull().default("{}"),
+  bookingId: varchar("booking_id").references(() => bookings.id),
+  leadId: varchar("lead_id").references(() => leads.id),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  index("idx_quick_booking_sessions_creator").on(table.createdByUserId, table.updatedAt),
+  index("idx_quick_booking_sessions_status").on(table.status, table.updatedAt),
+]);
+
 // Task #130: admin override of an auto-applied bundle discount, with an audit
 // trail. Admin can change `bookings.discountTotal`; we snapshot the original
 // value once on the booking row and append an audit row per change.
