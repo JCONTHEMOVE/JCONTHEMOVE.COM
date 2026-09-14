@@ -373,7 +373,7 @@ export default function AshleyShop() {
     return item.postedBy === user.id;
   };
 
-  const { data: items = [], isLoading, isError: catalogError, refetch: retryCatalog } = useQuery<JewelryItem[]>({
+  const { data: items = [], isLoading, isLoadingError: catalogError, isRefetchError: catalogRefreshError, isFetching, refetch: retryCatalog } = useQuery<JewelryItem[]>({
     queryKey: ["/api/jewelry", { category: selectedCategory !== "all" ? selectedCategory : undefined, search: searchQuery }],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -1007,7 +1007,12 @@ export default function AshleyShop() {
             </div>
           </>
         )}
-
+        {catalogRefreshError && (
+          <div role="status" className="mb-4 flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-stone-700 sm:flex-row sm:items-center sm:justify-between">
+            <p>Could not refresh Ashley’s shop. Showing the last loaded results.</p>
+            <Button variant="outline" className="min-h-11 shrink-0" disabled={isFetching} onClick={() => void retryCatalog()}>Retry shop</Button>
+          </div>
+        )}
 
         {isLoading ? (
           <div className="text-center text-rose-400 py-16 font-serif italic">Loading beautiful pieces...</div>

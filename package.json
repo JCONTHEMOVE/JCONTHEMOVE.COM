@@ -16,6 +16,7 @@
     "production:doctor": "node scripts/check-production-deploy.mjs",
     "check": "cross-env NODE_OPTIONS=--max-old-space-size=8192 tsc --incremental false",
     "test:server": "node scripts/run-server-tests.mjs",
+    "test:store": "node --test scripts/store-ui.test.mjs",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
