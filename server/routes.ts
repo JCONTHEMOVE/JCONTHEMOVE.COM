@@ -8,6 +8,7 @@ import {
   sessionDraft,
   updateQuickBookSession,
 } from "./services/quickBookSessions";
+import { quickBookWorkOverlaps } from "./services/quickBookAvailability";
 import {
   QUICK_BOOK_DEFAULT_MODEL,
   QUICK_BOOK_DEFAULT_TRANSCRIPTION_MODEL,
@@ -723,30 +724,21 @@ type QuickBookState = {
   ready: boolean;
 };
 
-function arrivalWindowHour(value: string | null | undefined) {
-  const match = String(value || "").match(/^(\d{1,2}):00\s+(AM|PM)/i);
-  if (!match) return null;
-  let hour = Number(match[1]);
-  const period = match[2].toUpperCase();
-  if (period === "PM" && hour < 12) hour += 12;
-  if (period === "AM" && hour === 12) hour = 0;
-  return hour;
-}
-
 async function quickBookCrewConflicts(draft: QuickBookDraft, workerIds: string[], queryable: any = pool) {
   if (!draft.confirmedDate || workerIds.length === 0) return new Set<string>();
   const { rows } = await queryable.query(`
-    SELECT crew_members, arrival_window
+    SELECT crew_members, arrival_window, confirmed_hours
       FROM leads
      WHERE COALESCE(confirmed_date, move_date) = $1
        AND status NOT IN ('cancelled','completed','closed')
        AND COALESCE(crew_members, ARRAY[]::text[]) && $2::text[]
   `, [draft.confirmedDate, workerIds]);
-  const requestedHour = arrivalWindowHour(draft.arrivalWindow);
   const conflicts = new Set<string>();
   for (const row of rows) {
-    const existingHour = arrivalWindowHour(row.arrival_window);
-    if (requestedHour !== null && existingHour !== null && requestedHour !== existingHour) continue;
+    if (!quickBookWorkOverlaps(
+      { arrivalWindow: draft.arrivalWindow, hours: draft.estimatedHours },
+      { arrivalWindow: row.arrival_window, hours: row.confirmed_hours },
+    )) continue;
     for (const id of row.crew_members || []) if (workerIds.includes(id)) conflicts.add(id);
   }
   return conflicts;
@@ -1809,7 +1801,6 @@ async function findOrCreateGoogleUser(profile: {
 }
 
 export async function registerRoutes(app: Express, httpServer: Server = createServer(app)): Promise<Server> {
-  if (process.env.QUICK_BOOK_ENABLED === "true") await ensureQuickBookingSchema();
   try {
     const { registerAshleyShopRoutes } = await import("./routes/ashleyShop");
     await registerAshleyShopRoutes(app);
@@ -1823,7 +1814,9 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     await ensureRegionalAutomationSchema();
   } catch (error) {
     console.error("regional automation migration error (non-fatal):", error);
+    if (process.env.QUICK_BOOK_ENABLED === "true") throw error;
   }
+  if (process.env.QUICK_BOOK_ENABLED === "true") await ensureQuickBookingSchema();
   // Additive migration for existing deployments. The offer stays in the promo
   // row, keeping the promo toggle as the single source of activation state.
   try {
