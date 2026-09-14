@@ -1,3 +1,4 @@
+import { manualDispatchMissingSetup } from "@shared/manualDispatchReadiness";
 import { phoneRewardsRouter } from "./routes/phoneRewards";
 import { findPhoneRewardsCustomer, rewardsPhone } from "./services/phoneRewards";
 import {
@@ -31140,6 +31141,11 @@ Thank you for your business!
           console.error("[admin mark-paid] post-completion JCMOVES disbursement failed:", disbursementError);
           return res.json({ success: true, status: "completed", jcmoves: null, jcmovesPending: true });
         }
+      }
+
+      const missingSetup = manualDispatchMissingSetup(lead);
+      if (missingSetup.length) {
+        return res.status(409).json({ error: `Save ${missingSetup.join(", ")} before dispatching.`, missingSetup });
       }
 
       // Record 'paid' transition first, then 'dispatched'
