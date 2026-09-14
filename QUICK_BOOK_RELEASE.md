@@ -2,6 +2,8 @@
 
 ## Current release preparation — September 14
 
+Commit `efcdbc025afcdafeb591fccb8b199ae3997a5848` passed clean Quick Book CI run `34895459951` and training CI run `34895459842`. The migration check used isolated branch `br-billowing-art-arpx6qhc`, copied from current production on September 14. Actual quote, regional and Quick Book migrations passed three executions; rollback preserved all 216 table fingerprints and 63 sequence states. A subsequent application-service check committed the schema on that isolated branch, then saved and reloaded a labeled synthetic draft, confirmed its revision and rejected a stale update. All four table privileges passed separately; no booking or lead was created. Private evidence is retained outside Git. Production was not changed. Authenticated owner UI acceptance, current pricing comparison and deployment still remain required.
+
 Quick Book is being integrated on `release/quick-book-20260914` from production main `66072226`. The mobile job page (PR #14) and training (PR #13) are already included in that deployed commit. Live owner-browser checks verified 500 training requests and the mobile job page at 390px, with a working schedule shortcut and no horizontal overflow. No job fields or training answers were submitted.
 
 The isolated Quick Book actual-handler authorization matrix passes: disabled booking and unauthorized roles perform zero database calls. Integration, clean dependency/type/build checks, current-schema verification and the owner draft workflow below remain required. The September 10 database migration target is now production and must not be reused as a disposable restore/test target. Older production-commit statements below are historical.
