@@ -12,6 +12,7 @@ const readAsset = (url) => {
 
 const manifest = JSON.parse(readAsset("/manifest.json").toString("utf8"));
 assert.equal(manifest.name, "JC ON THE MOVE");
+assert.deepEqual(manifest.shortcuts.map(shortcut => shortcut.url), ["/crew-jobs", "/my-jobs"]);
 assert.ok(manifest.icons?.length > 0, "Manifest must declare icons");
 for (const icon of manifest.icons) {
   const bytes = readAsset(icon.src);
