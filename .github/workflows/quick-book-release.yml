@@ -23,5 +23,8 @@ jobs:
           cat quick-book-test.log
           grep -q 'Quick Book extraction, gate, and transaction guardrail tests passed' quick-book-test.log
           node --import tsx server/services/__tests__/quickBookRelease.test.ts
+          node --import tsx server/services/__tests__/quickBookAvailability.test.ts
+          node --import tsx server/services/__tests__/quickBookSchedule.test.ts
+          node --import tsx server/services/__tests__/quickBookCommit.test.ts
       - run: npm run test:server
       - run: npm run build

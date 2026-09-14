@@ -28,3 +28,24 @@ export function quickBookWorkOverlaps(requested: ScheduledWork, assigned: Schedu
   if (!a || !b) return true;
   return a[0] < b[1] && b[0] < a[1];
 }
+
+type AvailableHours = { start_hour: number | null; end_hour: number | null; is_available?: boolean };
+
+export function quickBookHoursCoverWork(work: ScheduledWork, weekly: AvailableHours[], overrides: AvailableHours[], blocked: boolean): boolean {
+  const requested = interval(work);
+  if (blocked || !requested || requested[1] > 24 * 60) return false;
+  // Date overrides replace weekly hours; a whole-day block always wins.
+  const hours = overrides.length ? overrides : weekly;
+  if (!hours.length) return true;
+  const ranges = hours.filter(row => row.is_available !== false && row.start_hour !== null && row.end_hour !== null)
+    .map(row => [Number(row.start_hour) * 60, Number(row.end_hour) * 60])
+    .filter(([start, end]) => Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end <= 1440 && end > start)
+    .sort((a, b) => a[0] - b[0]);
+  let coveredThrough = requested[0];
+  for (const [start, end] of ranges) {
+    if (start > coveredThrough) break;
+    coveredThrough = Math.max(coveredThrough, end);
+    if (coveredThrough >= requested[1]) return true;
+  }
+  return false;
+}

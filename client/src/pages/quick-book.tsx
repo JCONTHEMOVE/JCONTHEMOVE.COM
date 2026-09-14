@@ -44,6 +44,8 @@ import { SpeechInput } from "@/components/ai-elements/speech-input";
 import { JOB_SCHEDULE_OPTIONS } from "@shared/jcOperations";
 import { EMPTY_QUICK_BOOK_DRAFT, type QuickBookDraft, type QuickBookSessionResponse } from "@shared/quickBook";
 
+const QUICK_BOOK_SCHEDULE_OPTIONS = JOB_SCHEDULE_OPTIONS.filter(option => option.start);
+
 type Session = QuickBookSessionResponse & { canComplete: boolean };
 type ChatEntry = { id: string; role: "user" | "assistant"; text: string };
 type Delivery = {
@@ -64,8 +66,6 @@ type BookedResult = {
   customerMessageSent: false;
   squareInvoiceCreated: false;
 };
-
-const SESSION_KEY = "jc.quickBookSessionId.v1";
 
 function buildVisualFixtureSession(): Session {
   const now = new Date().toISOString();
@@ -192,7 +192,6 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
     sessionRef.current = next;
     setSession(next);
     setDraft(next.draft);
-    if (!visualFixture) localStorage.setItem(SESSION_KEY, next.id);
   }, [visualFixture]);
 
   const createSession = useCallback(async () => {
@@ -221,23 +220,15 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
           await createSession();
           return;
         }
-        const savedId = localStorage.getItem(SESSION_KEY);
-        if (savedId) {
-          const existing = await requestJson<Session>(`/api/quick-book/sessions/${encodeURIComponent(savedId)}`);
-          if (existing.status === "draft" || existing.status === "ready") {
-            applySession(existing);
-            setMessages([{ id: crypto.randomUUID(), role: "assistant", text: `Draft resumed.\n\n${existing.nextQuestion}` }]);
-            return;
-          }
+        const existing = await requestJson<Session | null>("/api/quick-book/sessions/current");
+        if (existing) {
+          applySession(existing);
+          setMessages([{ id: crypto.randomUUID(), role: "assistant", text: `Draft resumed.\n\n${existing.nextQuestion}` }]);
+          return;
         }
         await createSession();
       } catch (error) {
-        try {
-          localStorage.removeItem(SESSION_KEY);
-          await createSession();
-        } catch (retryError) {
-          toast({ title: "Quick Book could not start", description: retryError instanceof Error ? retryError.message : "Try again.", variant: "destructive" });
-        }
+        toast({ title: "Quick Book could not start", description: error instanceof Error ? error.message : "Try again.", variant: "destructive" });
       } finally {
         setLoading(false);
       }
@@ -359,7 +350,6 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
         body: JSON.stringify({ expectedRevision: current.revision, idempotencyKey: idempotencyRef.current }),
       });
       setBooked(result);
-      localStorage.removeItem(SESSION_KEY);
       toast({ title: "Job booked", description: "The tentative crew plan was saved and delivery results are ready." });
     } catch (error) {
       toast({ title: "Job was not booked", description: error instanceof Error ? error.message : "The draft is still safe.", variant: "destructive" });
@@ -507,7 +497,7 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
               <FieldShell label="Destination" missing={missing("complete destination address")}><Input value={draft.destinationAddress} onChange={(event) => setDraft({ ...draft, destinationAddress: event.target.value })} onBlur={() => void applyPatch({ destinationAddress: draft.destinationAddress })} className="h-11 border-slate-700 bg-black" placeholder="Required for load + unload" /></FieldShell>
               <FieldShell label="Confirmed job date" missing={missing("confirmed date")}><Input type="date" value={draft.confirmedDate} onChange={(event) => void applyPatch({ confirmedDate: event.target.value })} className="h-11 border-slate-700 bg-black" /></FieldShell>
               <FieldShell label="One-hour arrival window" missing={missing("one-hour arrival window")}>
-                <Select value={draft.arrivalWindow || undefined} onValueChange={(value) => void applyPatch({ arrivalWindow: value })}><SelectTrigger className="h-11 border-slate-700 bg-black"><SelectValue placeholder="Choose a window" /></SelectTrigger><SelectContent>{JOB_SCHEDULE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
+                <Select value={draft.arrivalWindow || undefined} onValueChange={(value) => void applyPatch({ arrivalWindow: value })}><SelectTrigger className="h-11 border-slate-700 bg-black"><SelectValue placeholder="Choose a window" /></SelectTrigger><SelectContent>{QUICK_BOOK_SCHEDULE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
               </FieldShell>
               <FieldShell label="Pickup access code"><Input value={draft.pickupAccessCode} onChange={(event) => setDraft({ ...draft, pickupAccessCode: event.target.value })} onBlur={() => void applyPatch({ pickupAccessCode: draft.pickupAccessCode })} className="h-11 border-slate-700 bg-black" placeholder="Encrypted when saved" /></FieldShell>
               <FieldShell label="Entry instructions"><Input value={draft.pickupInstructions} onChange={(event) => setDraft({ ...draft, pickupInstructions: event.target.value })} onBlur={() => void applyPatch({ pickupInstructions: draft.pickupInstructions })} className="h-11 border-slate-700 bg-black" placeholder="Gate, parking, contact" /></FieldShell>

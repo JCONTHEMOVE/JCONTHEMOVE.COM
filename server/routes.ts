@@ -3,12 +3,13 @@ import {
   createQuickBookSession,
   ensureQuickBookingSchema,
   getQuickBookSession,
+  getLatestQuickBookDraft,
   mergeQuickBookDraft,
   sealQuickBookDraft,
   sessionDraft,
   updateQuickBookSession,
 } from "./services/quickBookSessions";
-import { quickBookWorkOverlaps } from "./services/quickBookAvailability";
+import { quickBookWorkOverlaps, quickBookHoursCoverWork } from "./services/quickBookAvailability";
 import {
   QUICK_BOOK_DEFAULT_MODEL,
   QUICK_BOOK_DEFAULT_TRANSCRIPTION_MODEL,
@@ -744,40 +745,39 @@ async function quickBookCrewConflicts(draft: QuickBookDraft, workerIds: string[]
   return conflicts;
 }
 
-async function quickBookTransactionCrewUnavailable(queryable: any, draft: QuickBookDraft) {
-  if (!draft.confirmedDate || !draft.crewMemberIds.length) return new Set<string>();
+async function quickBookTransactionCrewUnavailable(queryable: any, draft: QuickBookDraft, workerIds = draft.crewMemberIds, lockWorkers = true) {
+  if (!draft.confirmedDate || !workerIds.length) return new Set<string>();
   const dayOfWeek = new Date(`${draft.confirmedDate}T12:00:00`).getDay();
   const { rows } = await queryable.query(`
     SELECT u.id,
            EXISTS (SELECT 1 FROM worker_day_blocks b WHERE b.user_id=u.id AND b.date=$2) AS blocked,
-           EXISTS (SELECT 1 FROM worker_schedule s
-                    WHERE s.user_id=u.id AND s.day_of_week=$3 AND s.is_available=false) AS weekly_unavailable,
-           EXISTS (SELECT 1 FROM worker_hour_overrides o WHERE o.user_id=u.id AND o.date=$2) AS has_override
+           COALESCE((SELECT jsonb_agg(jsonb_build_object('start_hour',s.start_hour,'end_hour',s.end_hour,'is_available',s.is_available))
+                       FROM worker_schedule s WHERE s.user_id=u.id AND s.day_of_week=$3), '[]'::jsonb) AS weekly,
+           COALESCE((SELECT jsonb_agg(jsonb_build_object('start_hour',o.start_hour,'end_hour',o.end_hour))
+                       FROM worker_hour_overrides o WHERE o.user_id=u.id AND o.date=$2), '[]'::jsonb) AS overrides
       FROM users u
      WHERE u.id=ANY($1::text[])
        AND u.is_approved=true
        AND (u.role='employee' OR (u.role IN ('admin','business_owner') AND COALESCE(u.capabilities,ARRAY[]::text[]) @> ARRAY['mover']::text[]))
      ORDER BY u.id
-     FOR UPDATE
-  `, [draft.crewMemberIds, draft.confirmedDate, dayOfWeek]);
+     ${lockWorkers ? 'FOR UPDATE' : ''}
+  `, [workerIds, draft.confirmedDate, dayOfWeek]);
   const validIds = new Set(rows.map((worker: any) => String(worker.id)));
-  const unavailable = new Set(draft.crewMemberIds.filter((id) => !validIds.has(id)));
+  const unavailable = new Set(workerIds.filter((id) => !validIds.has(id)));
   for (const worker of rows) {
-    if (worker.blocked || (worker.weekly_unavailable && !worker.has_override)) unavailable.add(String(worker.id));
+    if (!quickBookHoursCoverWork({arrivalWindow: draft.arrivalWindow, hours: draft.estimatedHours}, worker.weekly, worker.overrides, worker.blocked)) unavailable.add(String(worker.id));
   }
   return unavailable;
 }
 
 async function buildQuickBookCrewSuggestions(draft: QuickBookDraft): Promise<QuickBookCrewSuggestion[]> {
   const employees = await crewSuggestionService.getEmployeesWithStats();
-  const availability = draft.confirmedDate
-    ? await crewSuggestionService.batchCheckAvailability(employees.map((employee) => employee.id), draft.confirmedDate)
-    : new Map<string, { available: boolean; reason?: string }>();
+  const unavailable = await quickBookTransactionCrewUnavailable(pool, draft, employees.map(employee => employee.id), false);
   const conflicts = await quickBookCrewConflicts(draft, employees.map((employee) => employee.id));
   const hasSpecialItems = Object.entries(draft.specialItems).some(([key, value]) => key !== "notes" && value === true);
   const ranked = employees.map((employee) => {
     const score = crewSuggestionService.calculateEmployeeScore(employee, draft.serviceType, hasSpecialItems);
-    const calendar = availability.get(employee.id) || { available: true };
+    const calendar = { available: !unavailable.has(employee.id), reason: unavailable.has(employee.id) ? 'Unavailable for the full requested work period' : '' };
     const conflict = conflicts.has(employee.id);
     return {
       id: employee.id,
@@ -12361,6 +12361,21 @@ Thank you for your business!
     }
   });
 
+  app.get("/api/quick-book/sessions/current", isAuthenticated, async (req: any, res) => {
+    try {
+      const actor = await quickBookActor(req);
+      if (!actor) return res.status(403).json({ error: "Approved staff access required" });
+      if (process.env.QUICK_BOOK_ENABLED !== "true") return res.status(503).json({ error: "Quick Book is temporarily disabled" });
+      const row = await getLatestQuickBookDraft(actor.id);
+      if (!row) return res.json(null);
+      const state = await calculateQuickBookState(sessionDraft(row));
+      return res.json({ ...quickBookSessionResponse(row, state), canComplete: canCompleteQuickBooking(actor) });
+    } catch (error) {
+      console.error("[quick-book] resume lookup failed:", error);
+      return res.status(500).json({ error: "Could not find your saved Quick Book draft. Please retry." });
+    }
+  });
+
   app.get("/api/quick-book/sessions/:id", isAuthenticated, async (req: any, res) => {
     try {
       const actor = await quickBookActor(req);
@@ -12491,6 +12506,8 @@ Thank you for your business!
 
   app.post("/api/quick-book/sessions/:id/book", isAuthenticated, async (req: any, res) => {
     let client: any = null;
+    let savedBooking: Record<string, unknown> | null = null;
+    let savedStatus = 201;
     try {
       const actor = await quickBookActor(req);
       if (!actor) return res.status(403).json({ error: "Approved staff access required" });
@@ -12505,6 +12522,10 @@ Thank you for your business!
         : "";
       const eventId = `quick-book:${row.id}:${storedBookKey || input.idempotencyKey}`;
       if (row.status === "booked" && row.leadId) {
+        savedStatus = 200;
+        savedBooking = { success: true, alreadyBooked: true, bookingId: row.bookingId, leadId: row.leadId,
+          total: Number((row.pricingPreview as any)?.total || 0), rewardBasis: Number((row.pricingPreview as any)?.rewardEligibleTotal || 0),
+          customerMessageSent: false, squareInvoiceCreated: false, deliveries: [] };
         const bookedDraft = sessionDraft(row);
         const bookedLead = await storage.getLead(row.leadId);
         if (bookedLead) {
@@ -12704,6 +12725,9 @@ Thank you for your business!
       `, [row.id, input.expectedRevision, JSON.stringify(sealQuickBookDraft(draft)), JSON.stringify(quote), JSON.stringify(state.crewSuggestions), bookingId, leadId, JSON.stringify({ bookIdempotencyKey: input.idempotencyKey }), JSON.stringify({ completionSeconds: Math.max(0, Math.round((Date.now() - new Date(row.createdAt).getTime()) / 1000)), quoteParity: true, bookedAt: new Date().toISOString() })]);
       if (!sessionUpdate.rowCount) throw new Error("Quick Book revision changed while booking");
       await client.query("COMMIT");
+      savedBooking = { success: true, bookingId, leadId, orderNumber: lead.order_number ?? null,
+        total: quote.total, rewardBasis: quote.rewardEligibleTotal,
+        customerMessageSent: false, squareInvoiceCreated: false, deliveries: [] };
       client.release();
       client = null;
 
@@ -12743,6 +12767,12 @@ Thank you for your business!
         deliveries: deliveryResult.rows,
       });
     } catch (error) {
+      if (savedBooking) {
+        if (client) { try { client.release(); } catch { /* committed connection */ } client = null; }
+        console.error("[quick-book] booking saved, follow-up reporting failed:", error);
+        return res.status(savedStatus).json({ ...savedBooking, deliveryAuditUnavailable: true,
+          warning: "Job saved. Crew alert status could not be confirmed. Open the saved job before retrying alerts." });
+      }
       if (client) {
         try { await client.query("ROLLBACK"); } catch { /* already rolled back */ }
         client.release();
