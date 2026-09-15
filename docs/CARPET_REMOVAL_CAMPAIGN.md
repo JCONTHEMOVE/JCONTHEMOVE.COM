@@ -49,3 +49,11 @@ Review new project requests daily; contact customers, scope/price the work, conf
 - Merge through the normal production process; verify `/api/health` identifies the released commit and the campaign media endpoints load before distributing advertising links.
 
 The campaign tests cover durable photos and scope, rep-account resolution, invalid/inactive links, cross-site URL tags, original-source retention, failed-attribution rollback, repeated/concurrent requests, unchanged pricing/calendar state, private report protection, and counts after quote revisions. They use an isolated database and send no customer messages.
+
+### Additional photo-control review — September 15, 2026
+
+Browser checks of the campaign form confirmed that six JPEGs are rejected, five display successfully and disable further selection, and removing one re-enables the picker. An unsupported text file is rejected without losing the four existing photos. No live quote was submitted.
+
+The photo-removal button measured 24 CSS pixels before the fix and 44 afterward. Checkbox labels now also have a minimum 44-pixel touch height. These changes supplement the existing dark-mode file-button contrast fix and accessible photo help text.
+
+Final visual and release acceptance remain open. The current browser session did not reliably apply requested mobile viewport dimensions. The earlier deployment of 53129815 returned 404 at both its Vercel branch alias and immutable URL despite a successful build; that observation does not establish the status of newer deployments. Repeat desktop/mobile review on the final candidate, then verify production media, saved quote data and actual owner alert receipt before campaign promotion. Gmail access alone does not prove automated delivery is configured.
