@@ -390,7 +390,7 @@ function JCMOVESPanel({ item, onCheckoutWithDiscount }: { item: JewelryItem; onC
           Sign up free to earn <span className="font-bold">{tokensToEarn.toLocaleString()} JCMOVES</span> on this purchase
           ({EARN_RATE} per $1). Use tokens for discounts across all JC on the Move services.
         </p>
-        <Link href="/register">
+        <Link href={`/login?mode=register&redirect=${encodeURIComponent(`/handmade-jewels-by-ashley/${encodeURIComponent(item.id)}`)}`}>
           <Button size="sm" className="w-full bg-amber-500 hover:bg-amber-400 text-white font-bold text-xs">
             Create Account to Earn Rewards &rarr;
           </Button>

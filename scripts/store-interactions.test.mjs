@@ -18,6 +18,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 window.matchMedia = (query) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} });
 globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 HTMLElement.prototype.scrollIntoView = function () {};
+HTMLElement.prototype.scrollTo = function () {};
 const requests = [];
 globalThis.fetch = async (...args) => {
   requests.push(args);
@@ -42,6 +43,8 @@ await build({
     contents: [
       "export { default as AshleyShop } from './client/src/pages/nature-made-jewls';",
       "export { default as LoginPage } from './client/src/pages/login';",
+      "export { default as JewelryDetailPage } from './client/src/pages/jewelry-detail';",
+      "export { default as PaymentSuccessPage } from './client/src/pages/payment-success';",
       "export { CartProvider } from './client/src/hooks/useCart';",
     ].join("\n"), resolveDir: root, loader: "tsx",
   },
@@ -49,18 +52,18 @@ await build({
   platform: "node", format: "esm", jsx: "automatic",
   define: { "import.meta.env.VITE_API_BASE_URL": '""' },
 });
-const { AshleyShop, LoginPage, CartProvider } = await import(pathToFileURL(bundle).href);
+const { AshleyShop, LoginPage, JewelryDetailPage, PaymentSuccessPage, CartProvider } = await import(pathToFileURL(bundle).href);
 const catalogKey = ["/api/jewelry", { category: undefined, search: "" }];
 const pieces = [
   { id: "fixture-bracelet", title: "Fixture Copper Bracelet", price: "42.50", category: "bracelets", inStock: true, status: "active", createdAt: "2026-09-01", photos: ["/fixture-front.jpg", "/fixture-back.jpg"] },
   { id: "fixture-ring", title: "Fixture Sold Ring", price: "30.00", category: "rings", inStock: false, status: "sold", createdAt: "2026-09-01" },
 ];
 
-async function mount(t, role = "customer", width = 1200) {
+async function mount(t, role = "customer", width = 1200, initialPath = "/handmade-jewels-by-ashley") {
   requests.length = 0;
   localStorage.clear();
   window.innerWidth = width;
-  window.history.replaceState(null, "", "/handmade-jewels-by-ashley");
+  window.history.replaceState(null, "", initialPath);
   const client = new QueryClient({ defaultOptions: { queries: {
     queryFn: async () => { throw new Error("Unseeded fixture query"); },
     retry: false, refetchOnMount: false, staleTime: Infinity, gcTime: Infinity,
@@ -68,6 +71,7 @@ async function mount(t, role = "customer", width = 1200) {
   client.setQueryData(["/api/auth/user"], role ? { id: "fixture-user", role, status: "active" } : null);
   client.setQueryData(catalogKey, structuredClone(pieces));
   client.setQueryData(["/api/jewelry"], structuredClone(pieces));
+  client.setQueryData(["/api/jewelry", pieces[0].id], structuredClone(pieces[0]));
   client.setQueryData(["/api/ashley-shop/featured"], null);
   client.setQueryData(["/api/testimonials/stats"], null);
   client.setQueryData(["/api/wallet/balance"], { cashBalance: "0.00" });
@@ -77,7 +81,8 @@ async function mount(t, role = "customer", width = 1200) {
   await act(async () => reactRoot.render(h(QueryClientProvider, { client },
     h(Router, null, h(CartProvider, null, h(Switch, null,
       h(Route, { path: "/login", component: LoginPage }),
-      h(Route, { path: "/handmade-jewels-by-ashley/:id" }, h("p", null, "Mobile product destination")),
+      h(Route, { path: "/payment-success", component: PaymentSuccessPage }),
+      h(Route, { path: "/handmade-jewels-by-ashley/:id" }, initialPath === "/handmade-jewels-by-ashley" ? h("p", null, "Mobile product destination") : h(JewelryDetailPage)),
       h(Route, { component: AshleyShop }),
     ))))));
   t.after(async () => {
@@ -244,3 +249,21 @@ test("signup opens the existing registration form with a return path to Ashleyâ€
   assert.ok(screen.getByPlaceholderText("First name"));
   assert.ok(screen.getByRole("button", { name: /Create Account/i }));
 });
+
+for (const initialPath of [
+  "/handmade-jewels-by-ashley/fixture-bracelet",
+  "/payment-success?itemId=fixture-bracelet&orderId=fixture-order",
+]) {
+  test(`guest registration from ${initialPath} opens registration and preserves the product destination`, async (t) => {
+    const { user, interact } = await mount(t, null, 390, initialPath);
+    await interact(() => user.click(screen.getByRole("link", { name: /Create Account/ })));
+    assert.equal(window.location.pathname, "/login");
+    const params = new URLSearchParams(window.location.search);
+    assert.equal(params.get("mode"), "register");
+    assert.equal(params.get("redirect"), "/handmade-jewels-by-ashley/fixture-bracelet");
+    assert.ok(screen.getByPlaceholderText("First name"));
+    assert.ok(screen.getByRole("button", { name: /Create Account/i }));
+    assert.ok(!window.location.search.includes("fixture-order"));
+    assert.ok(!requests.some(([url]) => String(url).includes("payment-complete")));
+  });
+}
