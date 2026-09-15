@@ -20,8 +20,11 @@ globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} 
 HTMLElement.prototype.scrollIntoView = function () {};
 HTMLElement.prototype.scrollTo = function () {};
 const requests = [];
+let fixtureUser = null;
 globalThis.fetch = async (...args) => {
   requests.push(args);
+  // useAuth refreshes every minute; slow local runs must retain their fixture role.
+  if (String(args[0]) === "/api/auth/user") return { ok: true, status: fixtureUser ? 200 : 401, json: async () => fixtureUser };
   if (String(args[0]).startsWith("/api/commerce/cart")) return { ok: true, json: async () => ({ items: [] }) };
   throw new Error("Unexpected network request in store interaction test");
 };
@@ -68,7 +71,8 @@ async function mount(t, role = "customer", width = 1200, initialPath = "/handmad
     queryFn: async () => { throw new Error("Unseeded fixture query"); },
     retry: false, refetchOnMount: false, staleTime: Infinity, gcTime: Infinity,
   } } });
-  client.setQueryData(["/api/auth/user"], role ? { id: "fixture-user", role, status: "active" } : null);
+  fixtureUser = role ? { id: "fixture-user", role, status: "active" } : null;
+  client.setQueryData(["/api/auth/user"], fixtureUser);
   client.setQueryData(catalogKey, structuredClone(pieces));
   client.setQueryData(["/api/jewelry"], structuredClone(pieces));
   client.setQueryData(["/api/jewelry", pieces[0].id], structuredClone(pieces[0]));
@@ -92,6 +96,10 @@ async function mount(t, role = "customer", width = 1200, initialPath = "/handmad
     container.remove();
     // CartProvider reads and syncs its empty fixture cart on mount; all fetches are stubbed.
     for (const [url, options = {}] of requests) {
+      if (url === "/api/auth/user") {
+        assert.equal(options.method || "GET", "GET");
+        continue;
+      }
       assert.match(url, /^\/api\/commerce\/cart(?:\?|$)/, "No account, inventory, booking, payment, or reward requests");
       if (options.method) {
         assert.equal(options.method, "PUT");
