@@ -1,3 +1,5 @@
+import { CatalogImage } from "@/components/catalog-image";
+import { ShopSwitcher } from "@/components/shop-switcher";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -7,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogPortal, DialogOverlay } from "@/components/ui/dialog";
+import { Content as DialogSurface } from "@radix-ui/react-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
@@ -35,7 +38,7 @@ function MediaItem({ src, alt, className }: { src: string; alt: string; classNam
       />
     );
   }
-  return <img src={src} alt={alt} className={className} />;
+  return <CatalogImage src={src} alt={alt} className={className} />;
 }
 
 function MediaThumb({ src, alt, className }: { src: string; alt: string; className?: string }) {
@@ -50,7 +53,7 @@ function MediaThumb({ src, alt, className }: { src: string; alt: string; classNa
       />
     );
   }
-  return <img src={src} alt={alt} className={className} />;
+  return <CatalogImage src={src} alt={alt} className={className} />;
 }
 
 interface JewelryItem {
@@ -157,15 +160,17 @@ function WalletUsdBalanceBanner() {
   );
 }
 
-function WishlistHeart({ item, wishlist, onToggle }: { item: JewelryItem; wishlist: Set<string>; onToggle: (id: string) => void }) {
+function WishlistHeart({ item, wishlist, onToggle, floating = true }: { item: JewelryItem; wishlist: Set<string>; onToggle: (id: string) => void; floating?: boolean }) {
   const isWishlisted = wishlist.has(item.id);
   return (
     <button
       onClick={(e) => { e.stopPropagation(); onToggle(item.id); }}
-      className={`absolute top-2.5 right-2.5 z-10 w-8 h-8 rounded-full flex items-center justify-center shadow-md transition-all duration-200 ${
+      className={`${floating ? "absolute top-2.5 right-2.5 z-10" : "relative shrink-0"} w-8 h-8 rounded-full flex items-center justify-center shadow-md transition-all duration-200 ${
         isWishlisted ? "bg-rose-500 text-white" : "bg-white/90 text-rose-400 hover:bg-rose-50"
       }`}
-      aria-label={isWishlisted ? "Remove from wishlist" : "Add to wishlist"}
+      type="button"
+      aria-label={`${isWishlisted ? "Remove" : "Save"} ${item.title} ${isWishlisted ? "from" : "to"} wishlist`}
+      aria-pressed={isWishlisted}
     >
       <Heart className={`h-4 w-4 ${isWishlisted ? "fill-white" : ""}`} />
     </button>
@@ -192,6 +197,10 @@ export default function AshleyShop() {
     try { return new Set(JSON.parse(localStorage.getItem("ashley-wishlist") || "[]")); } catch { return new Set(); }
   });
   const [wishlistOpen, setWishlistOpen] = useState(false);
+  const wishlistButtonRef = useRef<HTMLButtonElement>(null);
+  const productOpenerRef = useRef<HTMLButtonElement | null>(null);
+  const customOrderOpenerRef = useRef<HTMLButtonElement | null>(null);
+  const chatButtonRef = useRef<HTMLButtonElement>(null);
   const [customOrderOpen, setCustomOrderOpen] = useState(false);
   const [customOrderForm, setCustomOrderForm] = useState({ name: "", description: "", materials: "", budget: "", contact: "" });
   const [customOrderSubmitting, setCustomOrderSubmitting] = useState(false);
@@ -209,17 +218,6 @@ export default function AshleyShop() {
   useEffect(() => {
     return () => { if (hoverTimeout.current) clearTimeout(hoverTimeout.current); };
   }, []);
-
-  useEffect(() => {
-    if (selectedItem) {
-      document.body.style.overflow = 'hidden';
-      const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelectedItem(null); };
-      window.addEventListener('keydown', handleEsc);
-      return () => { document.body.style.overflow = ''; window.removeEventListener('keydown', handleEsc); };
-    } else {
-      document.body.style.overflow = '';
-    }
-  }, [selectedItem]);
 
   const [newItem, setNewItem] = useState({
     title: "",
@@ -371,7 +369,7 @@ export default function AshleyShop() {
     return item.postedBy === user.id;
   };
 
-  const { data: items = [], isLoading } = useQuery<JewelryItem[]>({
+  const { data: items = [], isLoading, isLoadingError: catalogError, isRefetchError: catalogRefreshError, isFetching, refetch: retryCatalog } = useQuery<JewelryItem[]>({
     queryKey: ["/api/jewelry", { category: selectedCategory !== "all" ? selectedCategory : undefined, search: searchQuery }],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -571,10 +569,13 @@ export default function AshleyShop() {
 
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
 
-  const openItem = (item: JewelryItem) => {
+  const openItem = (item: JewelryItem, opener: HTMLButtonElement) => {
+    if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+    setHoveredItem(null);
     if (isMobile) {
       navigate(`/handmade-jewels-by-ashley/${item.id}`);
     } else {
+      productOpenerRef.current = opener;
       setSelectedItem(item);
       setCurrentPhotoIndex(0);
     }
@@ -635,7 +636,6 @@ export default function AshleyShop() {
       >
         <Card
           className="overflow-hidden cursor-pointer group hover:shadow-xl transition-all duration-300 border-0 bg-white shadow-md shadow-rose-100/60"
-          onClick={() => openItem(item)}
           onMouseEnter={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
             const viewportW = window.innerWidth;
@@ -707,6 +707,12 @@ export default function AshleyShop() {
             <h3 className="font-medium text-stone-800 text-sm line-clamp-1">{item.title}</h3>
             <p className="text-stone-400 text-xs line-clamp-1 mt-0.5">{item.shortDescription || item.category || "Handcrafted with love"}</p>
           </div>
+          <button
+            type="button"
+            aria-label={`View ${item.title}`}
+            onClick={(event) => openItem(item, event.currentTarget)}
+            className="absolute inset-0 rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-600"
+          />
         </Card>
 
         <WishlistHeart item={item} wishlist={wishlist} onToggle={toggleWishlist} />
@@ -724,14 +730,15 @@ export default function AshleyShop() {
   return (
     <div className="min-h-screen" style={{ background: "linear-gradient(160deg, #fdf6f0 0%, #fef1f2 40%, #fff8f0 100%)" }}>
 
+      <ShopSwitcher />
       {/* Header */}
       <header className="sticky top-0 z-50 backdrop-blur border-b border-rose-100/80 shadow-sm" style={{ background: "rgba(253,246,240,0.97)" }}>
         <div className="container mx-auto px-4 py-3 flex items-center justify-between">
-          <Link href="/">
-            <Button variant="ghost" size="sm" className="text-stone-500 hover:text-rose-500">
+          <Button asChild variant="ghost" size="sm" className="text-stone-500 hover:text-rose-500">
+            <Link href="/" aria-label="Back to home">
               <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
+            </Link>
+          </Button>
           <div className="flex items-center gap-2">
             <span className="text-rose-400">🌸</span>
             <h1 className="font-serif text-base md:text-lg font-bold text-stone-700 leading-tight text-center">
@@ -741,6 +748,7 @@ export default function AshleyShop() {
           </div>
           <div className="flex items-center gap-1.5">
             <button
+              ref={wishlistButtonRef}
               onClick={() => setWishlistOpen(true)}
               className="relative p-2 rounded-full hover:bg-rose-50 transition-colors"
               aria-label="Wishlist"
@@ -751,16 +759,16 @@ export default function AshleyShop() {
               )}
             </button>
             {!user && (
-              <Link href="/login?redirect=/handmade-jewels-by-ashley">
-                <Button variant="ghost" size="sm" className="text-rose-500 font-semibold text-xs">Login</Button>
-              </Link>
+              <Button asChild variant="ghost" size="sm" className="text-rose-500 font-semibold text-xs">
+                <Link href="/login?redirect=/handmade-jewels-by-ashley">Login</Link>
+              </Button>
             )}
-            <a href="mailto:ashleyseegert64@gmail.com">
-              <Button variant="ghost" size="sm"><Mail className="h-4 w-4 text-stone-500" /></Button>
-            </a>
-            <a href="tel:906-285-9312">
-              <Button variant="ghost" size="sm"><Phone className="h-4 w-4 text-stone-500" /></Button>
-            </a>
+            <Button asChild variant="ghost" size="sm">
+              <a href="mailto:ashleyseegert64@gmail.com" aria-label="Email Ashley"><Mail className="h-4 w-4 text-stone-500" /></a>
+            </Button>
+            <Button asChild variant="ghost" size="sm">
+              <a href="tel:906-285-9312" aria-label="Call Ashley"><Phone className="h-4 w-4 text-stone-500" /></a>
+            </Button>
           </div>
         </div>
       </header>
@@ -796,7 +804,7 @@ export default function AshleyShop() {
               </div>
               <div className="mt-4 flex gap-3 justify-center md:justify-start">
                 <Button
-                  onClick={() => setCustomOrderOpen(true)}
+                  onClick={(event) => { customOrderOpenerRef.current = event.currentTarget; setCustomOrderOpen(true); }}
                   className="bg-rose-500 hover:bg-rose-600 text-white rounded-full px-5 py-2 text-sm font-semibold shadow-md"
                 >
                   🎁 Request Custom Order
@@ -816,6 +824,7 @@ export default function AshleyShop() {
               <button
                 key={col.value}
                 onClick={() => setSelectedCategory(col.value)}
+                aria-pressed={selectedCategory === col.value}
                 className={`flex items-center gap-1.5 whitespace-nowrap px-3.5 py-1.5 rounded-full text-sm font-medium transition-all duration-200 ${
                   selectedCategory === col.value
                     ? "bg-rose-500 text-white shadow-md shadow-rose-300/40"
@@ -833,6 +842,7 @@ export default function AshleyShop() {
           <div className="relative flex-1 max-w-xs">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-stone-400" />
             <Input
+              aria-label="Search pieces"
               placeholder="Search pieces..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -843,6 +853,7 @@ export default function AshleyShop() {
             <div className="flex gap-2 ml-auto">
               {isAdmin && (
                 <Button
+                  ref={chatButtonRef}
                   onClick={() => setChatOpen(true)}
                   size="sm"
                   className="bg-gradient-to-r from-rose-400 to-amber-400 hover:from-rose-500 hover:to-amber-500 text-white rounded-full text-xs"
@@ -856,14 +867,14 @@ export default function AshleyShop() {
                     <Plus className="h-3.5 w-3.5 mr-1" /> Add Piece
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+                <DialogContent aria-describedby={undefined} className="max-w-md max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle className="font-serif">Add New Piece</DialogTitle>
                   </DialogHeader>
                   <div className="space-y-4">
                     <div>
-                      <Label>Title *</Label>
-                      <Input value={newItem.title} onChange={(e) => setNewItem({ ...newItem, title: e.target.value })} placeholder="e.g., Turquoise Drop Earrings" />
+                      <Label htmlFor="newItem-title">Title *</Label>
+                      <Input id="newItem-title" value={newItem.title} onChange={(e) => setNewItem({ ...newItem, title: e.target.value })} placeholder="e.g., Turquoise Drop Earrings" />
                     </div>
                     <div>
                       <Label>Photos & Videos</Label>
@@ -876,14 +887,14 @@ export default function AshleyShop() {
                               <img src={url} alt="" className="w-12 h-12 object-cover rounded" />
                             )}
                             <span className="text-sm text-stone-600 truncate flex-1">{url.split('/').pop()}</span>
-                            <Button type="button" variant="ghost" size="sm" onClick={() => setPhotoUrls(photoUrls.filter((_, i) => i !== index))}><X className="h-4 w-4" /></Button>
+                            <Button type="button" aria-label={`Remove photo or video ${index + 1}`} variant="ghost" size="sm" onClick={() => setPhotoUrls(photoUrls.filter((_, i) => i !== index))}><X className="h-4 w-4" /></Button>
                           </div>
                         ))}
                         <div className="flex gap-2">
-                          <Input value={newPhotoUrl} onChange={(e) => setNewPhotoUrl(e.target.value)} placeholder="Paste image URL..." onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (newPhotoUrl.trim() && photoUrls.length < 10) { setPhotoUrls([...photoUrls, newPhotoUrl.trim()]); setNewPhotoUrl(""); } } }} className="flex-1" />
-                          <Button type="button" variant="outline" onClick={() => { if (newPhotoUrl.trim() && photoUrls.length < 10) { setPhotoUrls([...photoUrls, newPhotoUrl.trim()]); setNewPhotoUrl(""); } }} disabled={!newPhotoUrl.trim() || photoUrls.length >= 10}><Plus className="h-4 w-4" /></Button>
+                          <Input aria-label="Photo or video URL" value={newPhotoUrl} onChange={(e) => setNewPhotoUrl(e.target.value)} placeholder="Paste image URL..." onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (newPhotoUrl.trim() && photoUrls.length < 10) { setPhotoUrls([...photoUrls, newPhotoUrl.trim()]); setNewPhotoUrl(""); } } }} className="flex-1" />
+                          <Button type="button" aria-label="Add photo or video URL" variant="outline" onClick={() => { if (newPhotoUrl.trim() && photoUrls.length < 10) { setPhotoUrls([...photoUrls, newPhotoUrl.trim()]); setNewPhotoUrl(""); } }} disabled={!newPhotoUrl.trim() || photoUrls.length >= 10}><Plus className="h-4 w-4" /></Button>
                           <label className={`inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 w-10 cursor-pointer ${photoUrls.length >= 10 || isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
-                            <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="image/*,video/mp4,video/webm,video/ogg,video/quicktime" multiple className="sr-only" />
+                            <input aria-label="Upload photos or videos" type="file" ref={fileInputRef} onChange={handleFileUpload} accept="image/*,video/mp4,video/webm,video/ogg,video/quicktime" multiple className="sr-only" />
                             {isUploading ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <ImagePlus className="h-4 w-4" />}
                           </label>
                         </div>
@@ -892,13 +903,13 @@ export default function AshleyShop() {
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <Label>Price</Label>
-                        <Input value={newItem.price} onChange={(e) => setNewItem({ ...newItem, price: e.target.value })} placeholder="25.00" />
+                        <Label htmlFor="newItem-price">Price</Label>
+                        <Input id="newItem-price" value={newItem.price} onChange={(e) => setNewItem({ ...newItem, price: e.target.value })} placeholder="25.00" />
                       </div>
                       <div>
                         <Label>Category</Label>
                         <Select value={newItem.category} onValueChange={(v) => setNewItem({ ...newItem, category: v })}>
-                          <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                          <SelectTrigger aria-label="Category"><SelectValue placeholder="Select" /></SelectTrigger>
                           <SelectContent>
                             {COLLECTIONS.filter(c => c.value !== "all").map((cat) => (
                               <SelectItem key={cat.value} value={cat.value}>{cat.emoji} {cat.label}</SelectItem>
@@ -908,20 +919,22 @@ export default function AshleyShop() {
                       </div>
                     </div>
                     <div>
-                      <Label>Short Description</Label>
-                      <Input value={newItem.shortDescription} onChange={(e) => setNewItem({ ...newItem, shortDescription: e.target.value })} placeholder="One line for thumbnail" />
+                      <Label htmlFor="newItem-shortDescription">Short Description</Label>
+                      <Input id="newItem-shortDescription" value={newItem.shortDescription} onChange={(e) => setNewItem({ ...newItem, shortDescription: e.target.value })} placeholder="One line for thumbnail" />
                     </div>
                     <div>
-                      <Label>Materials</Label>
-                      <Input value={newItem.materials} onChange={(e) => setNewItem({ ...newItem, materials: e.target.value })} placeholder="Sterling silver, turquoise..." />
+                      <Label htmlFor="newItem-materials">Materials</Label>
+                      <Input id="newItem-materials" value={newItem.materials} onChange={(e) => setNewItem({ ...newItem, materials: e.target.value })} placeholder="Sterling silver, turquoise..." />
                     </div>
                     <div>
-                      <Label>Full Description</Label>
-                      <Textarea value={newItem.description} onChange={(e) => setNewItem({ ...newItem, description: e.target.value })} placeholder="Tell the story of this piece..." rows={3} />
+                      <Label htmlFor="newItem-description">Full Description</Label>
+                      <Textarea id="newItem-description" value={newItem.description} onChange={(e) => setNewItem({ ...newItem, description: e.target.value })} placeholder="Tell the story of this piece..." rows={3} />
                     </div>
                     <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-50 border border-amber-200">
                       <button
                         type="button"
+                        aria-label="Mark as featured"
+                        aria-pressed={newItemFeatured}
                         onClick={() => setNewItemFeatured(!newItemFeatured)}
                         className={`w-10 h-6 rounded-full transition-colors flex-shrink-0 relative ${newItemFeatured ? "bg-amber-400" : "bg-stone-300"}`}
                       >
@@ -989,7 +1002,7 @@ export default function AshleyShop() {
             <span className="text-xl">🪙</span>
             <div className="flex-1">
               <p className="text-sm font-bold text-amber-800">Earn JCMOVES Rewards on Every Purchase!</p>
-              <p className="text-xs text-amber-700">Get 15 JCMOVES per $1 spent — usable on jewelry, moving, and more. <Link href="/register" className="underline font-semibold">Sign up free &rarr;</Link></p>
+              <p className="text-xs text-amber-700">Get 15 JCMOVES per $1 spent — usable on jewelry, moving, and more. <Link href="/login?mode=register&redirect=/handmade-jewels-by-ashley" className="underline font-semibold">Sign up free &rarr;</Link></p>
             </div>
           </div>
         ) : (
@@ -1004,10 +1017,20 @@ export default function AshleyShop() {
             </div>
           </>
         )}
-
+        {catalogRefreshError && (
+          <div role="status" className="mb-4 flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-stone-700 sm:flex-row sm:items-center sm:justify-between">
+            <p>Could not refresh Ashley’s shop. Showing the last loaded results.</p>
+            <Button variant="outline" className="min-h-11 shrink-0" disabled={isFetching} onClick={() => void retryCatalog()}>Retry shop</Button>
+          </div>
+        )}
 
         {isLoading ? (
           <div className="text-center text-rose-400 py-16 font-serif italic">Loading beautiful pieces...</div>
+        ) : catalogError ? (
+          <div role="alert" className="py-12 text-center text-stone-700">
+            <p>Could not load Ashley’s shop. Please try again.</p>
+            <Button variant="outline" className="mt-3 min-h-11" onClick={() => void retryCatalog()}>Retry shop</Button>
+          </div>
         ) : items.length === 0 ? (
           <div className="text-center py-16">
             <div className="text-5xl mb-4">🌸</div>
@@ -1096,7 +1119,7 @@ export default function AshleyShop() {
             </a>
           </div>
           <button
-            onClick={() => setCustomOrderOpen(true)}
+            onClick={(event) => { customOrderOpenerRef.current = event.currentTarget; setCustomOrderOpen(true); }}
             className="inline-flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-5 py-2 rounded-full text-sm font-semibold transition-colors"
           >
             🎁 Request a Custom Order
@@ -1105,15 +1128,19 @@ export default function AshleyShop() {
       </footer>
 
       {/* Wishlist Drawer */}
-      {wishlistOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setWishlistOpen(false)} />
-          <div className="relative z-50 w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl overflow-hidden max-h-[80vh] flex flex-col">
+      <Dialog open={wishlistOpen} onOpenChange={setWishlistOpen}>
+        <DialogPortal>
+          <DialogOverlay className="z-50 bg-black/50 backdrop-blur-sm" />
+          <DialogSurface
+            aria-describedby={undefined}
+            onCloseAutoFocus={(event) => { event.preventDefault(); wishlistButtonRef.current?.focus(); }}
+            className="fixed bottom-0 left-1/2 z-50 w-full -translate-x-1/2 sm:bottom-auto sm:top-1/2 sm:-translate-y-1/2 sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl overflow-hidden max-h-[80vh] flex flex-col"
+          >
             <div className="flex items-center justify-between p-4 border-b border-rose-100">
-              <h2 className="font-serif font-bold text-stone-800 flex items-center gap-2">
+              <DialogTitle className="font-serif font-bold text-stone-800 flex items-center gap-2">
                 <Heart className="h-5 w-5 text-rose-500 fill-rose-500" /> My Wishlist ({wishlist.size})
-              </h2>
-              <button onClick={() => setWishlistOpen(false)} className="text-stone-400 hover:text-stone-600"><X className="h-5 w-5" /></button>
+              </DialogTitle>
+              <button aria-label="Close wishlist" onClick={() => setWishlistOpen(false)} className="text-stone-400 hover:text-stone-600"><X className="h-5 w-5" /></button>
             </div>
             <div className="overflow-y-auto flex-1 p-4">
               {wishlistedItems.length === 0 ? (
@@ -1130,7 +1157,7 @@ export default function AshleyShop() {
                       <div key={item.id} className="flex items-center gap-3 p-2 rounded-xl hover:bg-rose-50 transition-colors">
                         <div className="w-16 h-16 rounded-lg overflow-hidden bg-rose-50 flex-shrink-0">
                           {photos.length > 0 ? (
-                            <img src={photos[0]} alt={item.title} className="w-full h-full object-cover" />
+                            <CatalogImage src={photos[0]} alt={item.title} className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center"><Gem className="h-6 w-6 text-rose-200" /></div>
                           )}
@@ -1140,8 +1167,8 @@ export default function AshleyShop() {
                           {item.price && <p className="text-rose-500 font-bold text-sm">${item.price}</p>}
                         </div>
                         <div className="flex items-center gap-1">
-                          <button onClick={() => openItem(item)} className="p-1.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-600 transition-colors"><ExternalLink className="h-3.5 w-3.5" /></button>
-                          <button onClick={() => toggleWishlist(item.id)} className="p-1.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-600 transition-colors"><X className="h-3.5 w-3.5" /></button>
+                          <button aria-label={`View ${item.title}`} onClick={(event) => openItem(item, event.currentTarget)} className="p-1.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-600 transition-colors"><ExternalLink className="h-3.5 w-3.5" /></button>
+                          <button aria-label={`Remove ${item.title} from wishlist`} onClick={() => toggleWishlist(item.id)} className="p-1.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-600 transition-colors"><X className="h-3.5 w-3.5" /></button>
                         </div>
                       </div>
                     );
@@ -1149,16 +1176,24 @@ export default function AshleyShop() {
                 </div>
               )}
             </div>
-          </div>
-        </div>
-      )}
+          </DialogSurface>
+        </DialogPortal>
+      </Dialog>
 
       {/* Product Detail Modal */}
-      {selectedItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setSelectedItem(null)} />
-          <div className="relative z-50 w-full h-full md:w-[95vw] md:max-w-5xl md:h-[90vh] md:rounded-2xl bg-white overflow-hidden flex flex-col md:flex-row">
+      <Dialog open={!!selectedItem} onOpenChange={(open) => { if (!open) setSelectedItem(null); }}>
+        {selectedItem && <DialogPortal>
+          <DialogOverlay className="z-50 bg-black/60 backdrop-blur-sm" />
+          <DialogSurface
+            aria-describedby={undefined}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              if (!customOrderOpen && !isEditOpen) productOpenerRef.current?.focus();
+            }}
+            className="fixed inset-0 z-50 w-full h-[100dvh] md:inset-auto md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:w-[95vw] md:max-w-5xl md:h-[90vh] md:rounded-2xl bg-white overflow-hidden flex flex-col md:flex-row"
+          >
             <button
+              aria-label="Close product details"
               onClick={() => setSelectedItem(null)}
               className="absolute top-3 right-3 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-2"
             >
@@ -1181,15 +1216,15 @@ export default function AshleyShop() {
                   <MediaItem src={getItemPhotos(selectedItem)[currentPhotoIndex]} alt={selectedItem.title} className="w-full h-full object-contain" />
                   {getItemPhotos(selectedItem).length > 1 && (
                     <>
-                      <button onClick={prevPhoto} className="absolute left-3 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white rounded-full p-2.5 shadow-lg">
+                      <button aria-label="Previous photo" onClick={prevPhoto} className="absolute left-3 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white text-stone-700 rounded-full p-2.5 shadow-lg">
                         <ChevronLeft className="h-6 w-6" />
                       </button>
-                      <button onClick={nextPhoto} className="absolute right-3 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white rounded-full p-2.5 shadow-lg">
+                      <button aria-label="Next photo" onClick={nextPhoto} className="absolute right-3 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white text-stone-700 rounded-full p-2.5 shadow-lg">
                         <ChevronRight className="h-6 w-6" />
                       </button>
                       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5">
                         {getItemPhotos(selectedItem).map((_, i) => (
-                          <button key={i} onClick={() => setCurrentPhotoIndex(i)} className={`w-2.5 h-2.5 rounded-full transition-colors shadow ${i === currentPhotoIndex ? 'bg-rose-500 scale-110' : 'bg-white/70'}`} />
+                          <button key={i} aria-label={`Show photo ${i + 1}`} aria-pressed={i === currentPhotoIndex} onClick={() => setCurrentPhotoIndex(i)} className={`w-2.5 h-2.5 rounded-full transition-colors shadow ${i === currentPhotoIndex ? 'bg-rose-500 scale-110' : 'bg-white/70'}`} />
                         ))}
                       </div>
                     </>
@@ -1200,10 +1235,10 @@ export default function AshleyShop() {
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+            <div className="flex-1 overflow-y-auto p-5 pt-14 space-y-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1">
-                  <h1 className="text-2xl font-serif font-bold text-stone-800">{selectedItem.title}</h1>
+                  <DialogTitle className="text-2xl font-serif font-bold text-stone-800">{selectedItem.title}</DialogTitle>
                   {selectedItem.category && <p className="text-rose-500 capitalize text-sm mt-0.5">{selectedItem.category}</p>}
                   {ratingStats?.averageRating && (
                     <div className="flex items-center gap-1.5 mt-1.5">
@@ -1218,7 +1253,7 @@ export default function AshleyShop() {
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => shareItem(selectedItem)} className="p-2 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-500 transition-colors" title="Share"><Share2 className="h-4 w-4" /></button>
-                  <WishlistHeart item={selectedItem} wishlist={wishlist} onToggle={toggleWishlist} />
+                  <WishlistHeart floating={false} item={selectedItem} wishlist={wishlist} onToggle={toggleWishlist} />
                 </div>
               </div>
 
@@ -1250,7 +1285,7 @@ export default function AshleyShop() {
               )}
 
               <button
-                onClick={() => { setSelectedItem(null); setCustomOrderOpen(true); }}
+                onClick={(event) => { customOrderOpenerRef.current = event.currentTarget; setSelectedItem(null); setCustomOrderOpen(true); }}
                 className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-600 text-sm font-semibold transition-colors"
               >
                 🎁 Request a Custom Order Like This
@@ -1292,24 +1327,24 @@ export default function AshleyShop() {
                 </div>
               )}
             </div>
-          </div>
-        </div>
-      )}
+          </DialogSurface>
+        </DialogPortal>}
+      </Dialog>
 
       {/* Edit Dialog */}
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogContent aria-describedby={undefined} onCloseAutoFocus={(event) => { event.preventDefault(); productOpenerRef.current?.focus(); }} className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-serif">Edit Piece</DialogTitle>
           </DialogHeader>
           {editItem && (
             <div className="space-y-4">
-              <div><Label>Title</Label><Input value={editItem.title} onChange={(e) => setEditItem({ ...editItem, title: e.target.value })} /></div>
-              <div><Label>Price</Label><Input value={editItem.price || ""} onChange={(e) => setEditItem({ ...editItem, price: e.target.value })} placeholder="25.00" /></div>
+              <div><Label htmlFor="editItem-title">Title</Label><Input id="editItem-title" value={editItem.title} onChange={(e) => setEditItem({ ...editItem, title: e.target.value })} /></div>
+              <div><Label htmlFor="editItem-price">Price</Label><Input id="editItem-price" value={editItem.price || ""} onChange={(e) => setEditItem({ ...editItem, price: e.target.value })} placeholder="25.00" /></div>
               <div>
                 <Label>Category</Label>
                 <Select value={editItem.category || ""} onValueChange={(v) => setEditItem({ ...editItem, category: v })}>
-                  <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
+                  <SelectTrigger aria-label="Category"><SelectValue placeholder="Select category" /></SelectTrigger>
                   <SelectContent>
                     {COLLECTIONS.filter(c => c.value !== "all").map((cat) => (
                       <SelectItem key={cat.value} value={cat.value}>{cat.emoji} {cat.label}</SelectItem>
@@ -1317,9 +1352,9 @@ export default function AshleyShop() {
                   </SelectContent>
                 </Select>
               </div>
-              <div><Label>Materials</Label><Input value={editItem.materials || ""} onChange={(e) => setEditItem({ ...editItem, materials: e.target.value })} /></div>
-              <div><Label>Short Description</Label><Input value={editItem.shortDescription || ""} onChange={(e) => setEditItem({ ...editItem, shortDescription: e.target.value })} /></div>
-              <div><Label>Full Description</Label><Textarea value={editItem.description || ""} onChange={(e) => setEditItem({ ...editItem, description: e.target.value })} rows={4} /></div>
+              <div><Label htmlFor="editItem-materials">Materials</Label><Input id="editItem-materials" value={editItem.materials || ""} onChange={(e) => setEditItem({ ...editItem, materials: e.target.value })} /></div>
+              <div><Label htmlFor="editItem-shortDescription">Short Description</Label><Input id="editItem-shortDescription" value={editItem.shortDescription || ""} onChange={(e) => setEditItem({ ...editItem, shortDescription: e.target.value })} /></div>
+              <div><Label htmlFor="editItem-description">Full Description</Label><Textarea id="editItem-description" value={editItem.description || ""} onChange={(e) => setEditItem({ ...editItem, description: e.target.value })} rows={4} /></div>
               <div>
                 <Label>Photos</Label>
                 <div className="space-y-2">
@@ -1331,14 +1366,14 @@ export default function AshleyShop() {
                         <img src={url} alt="" className="w-12 h-12 object-cover rounded" />
                       )}
                       <span className="text-sm text-stone-600 truncate flex-1">{url.split('/').pop()}</span>
-                      <Button type="button" variant="ghost" size="sm" onClick={() => setEditPhotoUrls(editPhotoUrls.filter((_, i) => i !== index))}><X className="h-4 w-4" /></Button>
+                      <Button type="button" aria-label={`Remove photo or video ${index + 1}`} variant="ghost" size="sm" onClick={() => setEditPhotoUrls(editPhotoUrls.filter((_, i) => i !== index))}><X className="h-4 w-4" /></Button>
                     </div>
                   ))}
                   <div className="flex gap-2">
-                    <Input value={editPhotoUrl} onChange={(e) => setEditPhotoUrl(e.target.value)} placeholder="Paste image URL..." className="flex-1" />
-                    <Button type="button" variant="outline" onClick={() => { if (editPhotoUrl.trim() && editPhotoUrls.length < 10) { setEditPhotoUrls([...editPhotoUrls, editPhotoUrl.trim()]); setEditPhotoUrl(""); } }}><Plus className="h-4 w-4" /></Button>
+                    <Input aria-label="Photo or video URL" value={editPhotoUrl} onChange={(e) => setEditPhotoUrl(e.target.value)} placeholder="Paste image URL..." className="flex-1" />
+                    <Button type="button" aria-label="Add photo or video URL" variant="outline" onClick={() => { if (editPhotoUrl.trim() && editPhotoUrls.length < 10) { setEditPhotoUrls([...editPhotoUrls, editPhotoUrl.trim()]); setEditPhotoUrl(""); } }}><Plus className="h-4 w-4" /></Button>
                     <label className={`inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 w-10 cursor-pointer ${editPhotoUrls.length >= 10 || isEditUploading ? 'opacity-50 pointer-events-none' : ''}`}>
-                      <input type="file" ref={editFileInputRef} onChange={handleEditFileUpload} accept="image/*,video/mp4,video/webm,video/ogg,video/quicktime" multiple className="sr-only" />
+                      <input aria-label="Upload photos or videos" type="file" ref={editFileInputRef} onChange={handleEditFileUpload} accept="image/*,video/mp4,video/webm,video/ogg,video/quicktime" multiple className="sr-only" />
                       {isEditUploading ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <ImagePlus className="h-4 w-4" />}
                     </label>
                   </div>
@@ -1347,6 +1382,8 @@ export default function AshleyShop() {
               <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-50 border border-amber-200">
                 <button
                   type="button"
+                  aria-label="Mark as featured"
+                  aria-pressed={!!editItem.featured}
                   onClick={() => setEditItem({ ...editItem, featured: !editItem.featured })}
                   className={`w-10 h-6 rounded-full transition-colors flex-shrink-0 relative ${editItem.featured ? "bg-amber-400" : "bg-stone-300"}`}
                 >
@@ -1381,17 +1418,21 @@ export default function AshleyShop() {
 
       {/* Custom Order Dialog */}
       <Dialog open={customOrderOpen} onOpenChange={setCustomOrderOpen}>
-        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogContent aria-describedby={undefined} onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          const opener = customOrderOpenerRef.current;
+          (opener?.isConnected ? opener : productOpenerRef.current)?.focus();
+        }} className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-serif text-stone-800">Request a Custom Order</DialogTitle>
           </DialogHeader>
           <p className="text-stone-500 text-sm -mt-2">Describe what you'd love - Ashley will reach out to discuss the details and pricing.</p>
           <form onSubmit={handleCustomOrderSubmit} className="space-y-4">
-            <div><Label>Your Name *</Label><Input required value={customOrderForm.name} onChange={(e) => setCustomOrderForm({ ...customOrderForm, name: e.target.value })} placeholder="Your full name" /></div>
-            <div><Label>What would you like? *</Label><Textarea required value={customOrderForm.description} onChange={(e) => setCustomOrderForm({ ...customOrderForm, description: e.target.value })} placeholder="Describe the piece - style, size, occasion..." rows={4} /></div>
-            <div><Label>Preferred Materials</Label><Input value={customOrderForm.materials} onChange={(e) => setCustomOrderForm({ ...customOrderForm, materials: e.target.value })} placeholder="e.g. copper wire, rose quartz, sterling silver..." /></div>
-            <div><Label>Budget Range</Label><Input value={customOrderForm.budget} onChange={(e) => setCustomOrderForm({ ...customOrderForm, budget: e.target.value })} placeholder="e.g. $25-$75" /></div>
-            <div><Label>Contact (email or phone) *</Label><Input required value={customOrderForm.contact} onChange={(e) => setCustomOrderForm({ ...customOrderForm, contact: e.target.value })} placeholder="Best email or phone number" /></div>
+            <div><Label htmlFor="customOrderForm-name">Your Name *</Label><Input id="customOrderForm-name" required value={customOrderForm.name} onChange={(e) => setCustomOrderForm({ ...customOrderForm, name: e.target.value })} placeholder="Your full name" /></div>
+            <div><Label htmlFor="customOrderForm-description">What would you like? *</Label><Textarea id="customOrderForm-description" required value={customOrderForm.description} onChange={(e) => setCustomOrderForm({ ...customOrderForm, description: e.target.value })} placeholder="Describe the piece - style, size, occasion..." rows={4} /></div>
+            <div><Label htmlFor="customOrderForm-materials">Preferred Materials</Label><Input id="customOrderForm-materials" value={customOrderForm.materials} onChange={(e) => setCustomOrderForm({ ...customOrderForm, materials: e.target.value })} placeholder="e.g. copper wire, rose quartz, sterling silver..." /></div>
+            <div><Label htmlFor="customOrderForm-budget">Budget Range</Label><Input id="customOrderForm-budget" value={customOrderForm.budget} onChange={(e) => setCustomOrderForm({ ...customOrderForm, budget: e.target.value })} placeholder="e.g. $25-$75" /></div>
+            <div><Label htmlFor="customOrderForm-contact">Contact (email or phone) *</Label><Input id="customOrderForm-contact" required value={customOrderForm.contact} onChange={(e) => setCustomOrderForm({ ...customOrderForm, contact: e.target.value })} placeholder="Best email or phone number" /></div>
             <Button type="submit" disabled={customOrderSubmitting} className="w-full bg-rose-500 hover:bg-rose-600">
               {customOrderSubmitting ? "Sending..." : "Send Request"}
             </Button>
@@ -1400,17 +1441,21 @@ export default function AshleyShop() {
       </Dialog>
 
       {/* AI Listing Chat */}
-      {chatOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
-          <div className="fixed inset-0 bg-black/60" onClick={() => setChatOpen(false)} />
-          <div className="relative z-50 w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col" style={{ height: '80vh' }}>
+      <Dialog open={chatOpen} onOpenChange={setChatOpen}>
+        <DialogPortal>
+          <DialogOverlay className="bg-black/60 z-50" />
+          <DialogSurface
+            aria-describedby={undefined}
+            onCloseAutoFocus={(event) => { event.preventDefault(); chatButtonRef.current?.focus(); }}
+            className="fixed bottom-0 left-1/2 z-50 w-full -translate-x-1/2 sm:bottom-auto sm:top-1/2 sm:-translate-y-1/2 sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col h-[80vh]"
+          >
             <div className="flex items-center gap-3 px-4 py-3 border-b border-rose-100" style={{ background: "linear-gradient(135deg, #fdf2f8, #fff8f0)" }}>
               <div className="w-8 h-8 rounded-full bg-rose-100 flex items-center justify-center"><Bot className="h-4 w-4 text-rose-500" /></div>
               <div>
-                <p className="font-semibold text-stone-800 text-sm">Ashley Shop Assistant</p>
+                <DialogTitle className="font-semibold text-stone-800 text-sm">Ashley Shop Assistant</DialogTitle>
                 <p className="text-rose-400 text-[10px]">AI Listing Creator</p>
               </div>
-              <button onClick={() => { setChatOpen(false); setChatMessages([]); setChatStep('photos'); }} className="ml-auto text-stone-400 hover:text-stone-600"><X className="h-5 w-5" /></button>
+              <button aria-label="Close listing assistant" onClick={() => { setChatOpen(false); setChatMessages([]); setChatStep('photos'); }} className="ml-auto text-stone-400 hover:text-stone-600"><X className="h-5 w-5" /></button>
             </div>
 
             <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -1443,13 +1488,14 @@ export default function AshleyShop() {
             <div className="border-t border-rose-100 p-3 flex gap-2">
               {chatStep === 'photos' && (
                 <label className={`flex items-center justify-center gap-1 px-3 h-10 rounded-full bg-rose-100 text-rose-500 cursor-pointer hover:bg-rose-200 transition-colors flex-shrink-0 ${chatUploading ? 'opacity-50 pointer-events-none' : ''}`}>
-                  <input type="file" ref={chatFileRef} onChange={(e) => handleChatUpload(e.target.files)} accept="image/*,video/mp4,video/webm,video/ogg,video/quicktime" multiple className="sr-only" />
+                  <input aria-label="Upload listing photos or videos" type="file" ref={chatFileRef} onChange={(e) => handleChatUpload(e.target.files)} accept="image/*,video/mp4,video/webm,video/ogg,video/quicktime" multiple className="sr-only" />
                   {chatUploading
                     ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                     : (<><ImagePlus className="h-4 w-4" /><Video className="h-4 w-4" /></>)}
                 </label>
               )}
               <Input
+                aria-label="Reply to listing assistant"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleChatSend(); } }}
@@ -1458,6 +1504,7 @@ export default function AshleyShop() {
                 disabled={chatStep === 'photos' || chatStep === 'category'}
               />
               <button
+                aria-label="Send reply"
                 onClick={handleChatSend}
                 disabled={chatStep === 'photos' || chatStep === 'category' || !chatInput.trim()}
                 className="w-10 h-10 rounded-full bg-rose-500 hover:bg-rose-600 text-white flex items-center justify-center flex-shrink-0 disabled:opacity-40 transition-colors"
@@ -1465,9 +1512,9 @@ export default function AshleyShop() {
                 <Send className="h-4 w-4" />
               </button>
             </div>
-          </div>
-        </div>
-      )}
+          </DialogSurface>
+        </DialogPortal>
+      </Dialog>
 
       <ShopConcierge />
     </div>

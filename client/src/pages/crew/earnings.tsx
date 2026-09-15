@@ -1,3 +1,4 @@
+import { TaskDetails } from "@/components/task-ui";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -638,15 +639,17 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
         </p>
       </div>
 
-      {marketingMode && (
+      {marketingMode && (<TaskDetails title="Help">
         <ProcessFlowCard
           title="Create, post, recover"
           description="A simple loop for any local opportunity: start with a useful post, progress by replying fast, finish by turning attention into a booked job card."
           steps={marketingFlowSteps}
-        />
+        /></TaskDetails>
       )}
 
-      {marketingMode && <MarketingLaunchCard />}
+      {marketingMode && <TaskDetails title="Bot setup and missions" defaultOpen><MarketingLaunchCard /></TaskDetails>}
+      {!marketingMode&&<a className="inline-flex min-h-11 items-center text-blue-300 underline" href="/crew/marketing">Marketing tools</a>}
+      {marketingMode&&<>
 
       {marketingMode && marketingRep?.slug.toLowerCase() === "matt" && <MarketingBotRepCard />}
 
@@ -698,7 +701,7 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
         </div>
       </div>
 
-      <div id="ad-builder" className="rounded-2xl border border-blue-500/25 bg-blue-500/10 p-4">
+      <TaskDetails title="Create an ad"><div id="ad-builder" className="rounded-2xl border border-blue-500/25 bg-blue-500/10 p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-blue-300">1-2-3 ad builder</p>
@@ -1077,7 +1080,7 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
         )}
       </div>
 
-      <div className="rounded-2xl border border-slate-700/40 bg-slate-900/50 p-4">
+      </TaskDetails><TaskDetails title="Ad performance"><div className="rounded-2xl border border-slate-700/40 bg-slate-900/50 p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-slate-400">My ad results</p>
@@ -1159,7 +1162,7 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
         )}
       </div>
 
-      {marketingMode && (
+      </TaskDetails><TaskDetails title="More marketing tools">{marketingMode && (
         <MarketplaceProcessGuide
           source="facebook"
           audience="worker"
@@ -1177,6 +1180,7 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
         />
       )}
 
+      </TaskDetails></>}
       {!marketingMode && (
         <>
       {/* Crew Capabilities (read-only) */}

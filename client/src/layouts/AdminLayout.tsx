@@ -1,3 +1,4 @@
+import { canLeaveTask } from "@/components/task-ui";
 import { useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import {
@@ -63,7 +64,6 @@ const TASKS = [
   { label: "Chief of Staff", icon: Bot, path: "/admin/chief-of-staff" },
   { label: "Ops Board", icon: ClipboardList, path: "/admin/ops-board" },
   { label: "Dispatch", icon: Radio, path: "/admin/dispatch" },
-  { label: "Jobs", icon: Briefcase, path: "/admin/schedule" },
 ];
 
 const OPTIONS = [
@@ -124,8 +124,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
       ? (location === "/admin" || location === "/admin/")
       : (location === path || location.startsWith(`${path}/`));
 
-  const go = (p: string) => { setLocation(p); setMobileOpen(false); };
+  const go = (p: string) => { if (canLeaveTask()) setLocation(p); setMobileOpen(false); };
   const setCrewView = (enabled: boolean) => {
+    if (!canLeaveTask()) return;
     setCrewPreview(enabled);
     if (enabled) {
       setLocation("/crew");

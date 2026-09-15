@@ -237,7 +237,7 @@ export function SpinWheelDialog({ open, onClose, redemptionId }: QuantumSpinProp
         setAnimState("result");
 
         // Track tokens earned this session
-        const earnedThisSpin = data.tokens + (data.jackpotAmountWon || 0);
+        const earnedThisSpin = data.tokens;
         setSessionEarned(prev => prev + earnedThisSpin);
 
         // Only refresh wallet every 5 spins to prevent flicker
@@ -249,6 +249,7 @@ export function SpinWheelDialog({ open, onClose, redemptionId }: QuantumSpinProp
         queryClient.invalidateQueries({ queryKey: ["/api/reward-shop/jackpots"] });
         queryClient.invalidateQueries({ queryKey: ["/api/reward-shop/activity-feed"] });
         queryClient.invalidateQueries({ queryKey: ["/api/reward-shop/free-spins"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/reward-shop/daily-spin"] });
 
         // Silently mark daily quantum spin task done (check-in) so the daily checklist updates
         apiRequest("POST", "/api/gamification/checkin", {}).catch(() => {})
