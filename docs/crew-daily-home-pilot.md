@@ -10,12 +10,17 @@
 - Save outreach proof in `marketing_action_assignments` under `crew-fall-2026:<day>:reach`. The row stores the approved caption, variant/revision, destination note, proof URL/note, and submission timestamp. Copying is not completion.
 - In the same transaction, create its future follow-up in that table. Show the oldest due assigned follow-up belonging to the worker. Saving an outcome can create one subsequent follow-up. Retries do not overwrite evidence or create duplicate actions.
 - Worker submissions have `submitted` status. The existing owner-only action review endpoint can mark submitted daily rows completed while retaining proof. The legacy worker completion endpoint cannot complete daily rows. These actions issue no XP, money, wallet credit, notifications, or outreach.
+- The owner board keeps daily actions outside launch counts and the launch checklist. Its dedicated daily review section displays the submitted public URL/note, Central-time submission timestamp, campaign/follow-up context and due date before “Approve proof.” Assigned follow-ups show “Awaiting crew submission” and have no completion button; reviewed daily rows are read-only.
 
 The additive, retryable migration adds `due_on`, `campaign_variant_id`, `campaign_revision`, `submitted_at`, and a due-action index to the existing assignments table. Existing campaign and training tables remain authoritative. No campaign rows are seeded.
 
 ## Verification
 
 Run `node node_modules/tsx/dist/cli.mjs server/routes/__tests__/crewDailyHome.test.ts` on Node 20. The test uses isolated PGlite SQL and HTTP requests, covering ownership, role rejection, independent training state, approval withdrawal/revision, unsafe or mismatched tracking, Chicago midnight, campaign dates, overdue selection, duplicate requests, and transaction rollback.
+
+`server/routes/__tests__/marketingActionReview.test.ts` checks mixed launch/daily aggregation, the actual review component's rendered evidence and button states, safe proof links, submitted-only owner completion, and retention of proof in PostgreSQL. Both test files run in the standard server test suite and CI.
+
+The full owner board was also checked with isolated submitted-proof and future-follow-up fixtures at 360 CSS pixels: evidence and context appeared before approval, the future action had no completion button, approval retained the evidence, and launch totals stayed unchanged. No browser console errors or horizontal overflow occurred.
 
 The actual React component was checked in a temporary, isolated browser fixture at 360 CSS pixels: no horizontal overflow or console errors; copying left progress unchanged; outreach proof and follow-up outcome each incremented progress and collapsed to “Submitted for review.” The fixture had no external side effects and is not shipped.
 

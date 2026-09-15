@@ -9,6 +9,8 @@ import { smsService } from "../services/sms";
 import { getAppUrl } from "../appUrl";
 import { ROUTE_DAY_SCHEDULE } from "@shared/routeDays";
 import { createCrewDailyHomeRouter } from './crewDailyHome';
+import { splitMarketingActions, marketingLaunchProgress } from '@shared/marketingActionReview';
+import { completeMarketingAction } from '../services/marketingActionReview';
 import { ensureWorkerBotSetup, workerBotReadiness, workerBotSetupSchema } from '../services/marketingWorkerSetup';
 import { ensureMarketingBotSchema } from '../services/marketingBot';
 import { ensureWorkerAvatars } from '../services/workerAvatars';
@@ -298,12 +300,14 @@ async function overviewPayload() {
           : !eligibleRoles.has(matchingAccount.role || "")
             ? `Approve or upgrade ${name}'s crew access, then link this profile.`
             : `Link ${name}'s existing crew account and promo code.`;
+    const { launch: launchActions, daily: dailyActions } = splitMarketingActions(actionMap.get(rep.id) || []);
     return {
       ...rep,
       accountLinked,
       attributionLinked,
       onboardingTask,
-      actions: actionMap.get(rep.id) || [],
+      actions: launchActions,
+      dailyActions,
       profileUrl: `${getAppUrl()}/network/${rep.slug}`,
     };
   });
@@ -380,17 +384,7 @@ async function overviewPayload() {
       role: row.role,
       status: row.status,
     })),
-    launch: {
-      total: actions.rows.length,
-      completed: actions.rows.filter((action) => {
-        const rep = enrichedReps.find((candidate) => candidate.id === action.rep_id);
-        return action.status === "completed" && rep?.attributionLinked;
-      }).length,
-      pendingAttribution: actions.rows.filter((action) => {
-        const rep = enrichedReps.find((candidate) => candidate.id === action.rep_id);
-        return action.status === "completed" && !rep?.attributionLinked;
-      }).length,
-    },
+    launch: marketingLaunchProgress(actions.rows, enrichedReps),
   };
 }
 
@@ -532,12 +526,7 @@ export async function createMarketingExecutionRouter() {
   router.post("/admin/marketing-execution/actions/:id/complete", requireOwner, async (req, res) => {
     try {
       const parsed = actionUpdateSchema.parse(req.body || {});
-      const result = await pool.query(`
-        UPDATE marketing_action_assignments
-        SET status = 'completed', proof_url = COALESCE(NULLIF($1, ''), proof_url), proof_notes = COALESCE($2, proof_notes), completed_at = NOW(), updated_at = NOW()
-        WHERE id = $3 AND (action_key NOT LIKE 'crew-fall-2026:%' OR status = 'submitted')
-        RETURNING *
-      `, [parsed.proofUrl || "", parsed.proofNotes || null, req.params.id]);
+      const result = await completeMarketingAction(pool.query.bind(pool), req.params.id, parsed.proofUrl || '', parsed.proofNotes || null);
       if (!result.rows[0]) return res.status(404).json({ error: "Marketing action not found" });
       return res.json(result.rows[0]);
     } catch (error) {
