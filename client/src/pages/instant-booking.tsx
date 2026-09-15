@@ -1,3 +1,4 @@
+import { PhoneRewardsEnrollment } from "@/components/phone-rewards-enrollment";
 import { type FormEvent, type ReactNode, useMemo, useState } from "react";
 import { CalendarClock, CheckCircle2, Clock3, PhoneCall, ShieldCheck, Truck, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -225,6 +226,7 @@ export default function InstantBookingPage() {
             <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-400" />
             <h1 className="mt-4 text-2xl font-black">You’re all set</h1>
             <p className="mt-3 text-muted-foreground">{complete.message}</p>
+            <div className="mt-4 text-left"><PhoneRewardsEnrollment phone={form.customerPhone} /></div>
             {complete.kind === "hold" && (
               <p className="mt-3 rounded-lg bg-background/70 p-3 text-sm">
                 {complete.status === "awaiting_deposit"

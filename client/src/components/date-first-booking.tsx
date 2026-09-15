@@ -1,4 +1,5 @@
 import { TaskStepNav, TaskActionBar, TaskDetails, useUnsavedTask, canLeaveTask } from "@/components/task-ui";
+import { PhoneRewardsEnrollment } from "@/components/phone-rewards-enrollment";
 import { useMemo, useState, useRef, type FormEvent } from "react";
 import { CalendarClock, CheckCircle2, Clock3, Home, MapPin, ShieldCheck, Truck, Users } from "lucide-react";
 import { estimateJobDuration, JOB_SCHEDULE_OPTIONS, type SizingBasis, type TruckSize } from "@shared/jcOperations";
@@ -190,6 +191,7 @@ export function DateFirstBooking({ onChooseCallback, onDetailedBooking }: { onCh
         <TaskDetails title="Additional notes"><Field label="Notes"><Textarea value={notes} onChange={e=>setNotes(e.target.value)}/></Field></TaskDetails>
       </section>
       <section hidden={step!=='review'} className="space-y-3" aria-label="Review request">
+        <PhoneRewardsEnrollment phone={phone} />
         <dl className="grid gap-3 rounded-xl border p-3 text-sm [overflow-wrap:anywhere]"><div><dt>Customer</dt><dd>{name} · {email} · {phone}</dd></div><div><dt>Service / location</dt><dd>{service.replace('_',' ')} · {address} · {zip}</dd><dd>{workScope}</dd></div><div><dt>Schedule / crew</dt><dd>{date} · {time} Central · {selectedCrew} movers · {estimate.planningHours} hours</dd></div></dl>
               <Card className="border-emerald-500/30 bg-emerald-500/[0.06] text-slate-100">
         <CardContent className="grid gap-4 p-5 sm:grid-cols-[1fr_auto] sm:items-center">

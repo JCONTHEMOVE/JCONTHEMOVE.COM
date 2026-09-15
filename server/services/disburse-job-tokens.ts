@@ -1,3 +1,4 @@
+import { findPhoneRewardsCustomer } from "./phoneRewards";
 /**
  * disburseJobTokens — Idempotent JCMOVES token disbursement service
  *
@@ -320,7 +321,7 @@ async function disburseRateCardJcMoves(leadId: string, lead: Lead & { crewLeadUs
   const customerLookup = lead.email
     ? await pool.query<{ id: string; email: string }>("SELECT id, email FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1", [lead.email.trim()])
     : { rows: [] as Array<{ id: string; email: string }> };
-  const customer = customerLookup.rows[0] || null;
+  const customer = await findPhoneRewardsCustomer(lead.phone) || customerLookup.rows[0] || null;
 
   async function writeLedger(input: {
     recipientType: "customer" | "crew";
@@ -575,13 +576,13 @@ export async function disburseJobTokens(leadId: string): Promise<DisbursementSum
     // ── B. CUSTOMER rewards (flat completion bonus + per-dollar earn) ─────────
     try {
       const customerEmail = lead.email;
-      if (customerEmail) {
+      if (customerEmail || lead.phone) {
         // Case-insensitive email lookup to avoid mismatch issues
         const emailLookup = await pool.query(
           `SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
-          [customerEmail.trim()]
+          [(customerEmail || "").trim()]
         );
-        const customer = emailLookup.rows[0] || null;
+        const customer = await findPhoneRewardsCustomer(lead.phone) || emailLookup.rows[0] || null;
 
         if (customer) {
           const jobPrice   = parseFloat(lead.totalPrice || lead.basePrice || "0");

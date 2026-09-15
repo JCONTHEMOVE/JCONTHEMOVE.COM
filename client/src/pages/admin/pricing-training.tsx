@@ -1,4 +1,5 @@
-import { TrainingJobSnapshot, decisionIcons, difficultyIcons, reasonIcons, Check, sectionIcons } from '@/components/training-job-snapshot';
+import { TrainingJobSnapshot, decisionIcons, reasonIcons, Check, sectionIcons } from '@/components/training-job-snapshot';
+import { DifficultyChoice, difficultyOptions } from '@/components/difficulty-choice';
 import type { LucideIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -79,7 +80,7 @@ export function ScenarioTest({scenario,saved,ownerId,onSaved,onNavigate,index,co
     <fieldset disabled={saving||!!olderDraft} className="min-w-0 space-y-6 disabled:opacity-60">
       {current==="Decision"&&<>
         <Choice icons={decisionIcons} label="How would you handle this request?" value={answer.decision} onChange={v=>set("decision",v)} options={[{value:"quote",label:"I can price this job"},{value:"information",label:"Need more information"},{value:"specialist",label:"Specialist / site review"},{value:"decline",label:"Decline this job"}]}/>
-        <Choice icons={difficultyIcons} label="How difficult is this job?" value={answer.difficulty} onChange={v=>set("difficulty",v)} options={[{value:"low",label:"Low"},{value:"moderate",label:"Moderate"},{value:"high",label:"High"},{value:"unknown",label:"Cannot tell yet"}]}/>
+        <DifficultyChoice value={answer.difficulty} onChange={v=>set("difficulty",v)}/>
       </>}
       {current==="Crew"&&<>
         <p className="text-sm text-slate-300">Count trained JC workers. Extra hours do not make an unsafe crew size acceptable.</p>
@@ -101,7 +102,7 @@ export function ScenarioTest({scenario,saved,ownerId,onSaved,onNavigate,index,co
         <label className="block space-y-2"><span className="font-semibold">Your explanation (optional)</span><Textarea value={answer.notes} onChange={e=>set("notes",e.target.value)} rows={4} maxLength={8000} placeholder="Example: I need 3 movers because of the stairs. The two-hour charge still applies even if it takes less time." className="border-slate-600 bg-slate-900"/></label>
         <label className="block space-y-2"><span>Equipment or skills needed (optional)</span><Textarea value={answer.equipment} onChange={e=>set("equipment",e.target.value)} maxLength={2000} rows={2} className="border-slate-600 bg-slate-900"/></label>
         <label className="block space-y-2"><span>What would you ask the customer? (optional)</span><Textarea value={answer.followUp} onChange={e=>set("followUp",e.target.value)} maxLength={2000} rows={2} className="border-slate-600 bg-slate-900"/></label>
-        <div className="rounded-xl bg-slate-900 p-4 text-sm"><strong>Your answer</strong><p className="mt-2">{answer.decision??"No decision"} · {answer.difficulty??"No difficulty"}</p>{answer.decision==="quote"&&<p>Minimum {answer.minimumCrew??"?"} workers; recommend {answer.recommendedCrew??"?"}. Schedule at least {answer.minimumScheduledHours??"?"} hours; bill at least {answer.minimumBillableHours??"?"}. Expected {answer.expectedElapsedHours??"?"} hours. Price ${answer.price??"?"}.</p>}</div>
+        <div className="rounded-xl bg-slate-900 p-4 text-sm"><strong>Your answer</strong><p className="mt-2">{answer.decision??"No decision"} · {difficultyOptions.find(option=>option.value===answer.difficulty)?.label??"No difficulty"}</p>{answer.decision==="quote"&&<p>Minimum {answer.minimumCrew??"?"} workers; recommend {answer.recommendedCrew??"?"}. Schedule at least {answer.minimumScheduledHours??"?"} hours; bill at least {answer.minimumBillableHours??"?"}. Expected {answer.expectedElapsedHours??"?"} hours. Price ${answer.price??"?"}.</p>}</div>
       </>}
     </fieldset>
     {error&&<p role="alert" className="rounded-lg bg-red-950 p-3 text-sm text-red-200">{error}</p>}

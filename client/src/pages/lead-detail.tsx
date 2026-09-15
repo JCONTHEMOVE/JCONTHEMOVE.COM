@@ -1,3 +1,5 @@
+import { manualDispatchMissingSetup } from "@shared/manualDispatchReadiness";
+import { customerNotesFromDetails } from "@shared/leadDetails";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, Link, useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -302,6 +304,10 @@ type PackageDraft = {
   minPrice: number | null;
   maxPrice: number | null;
   priceLabel?: string | null;
+  description?: string | null;
+  pricingType?: string | null;
+  depositRequired?: boolean | null;
+  duration?: string | null;
   source: "quoteSnapshot" | "details" | "requestedItem";
 };
 
@@ -336,6 +342,11 @@ function packageDraftFromUnknown(raw: unknown, source: PackageDraft["source"]): 
     minPrice: numericValue(obj.minPrice ?? obj.basePrice ?? obj.unitPrice ?? nestedDetails.minPrice ?? nestedDetails.basePrice),
     maxPrice: numericValue(obj.maxPrice ?? obj.totalPrice ?? obj.price ?? nestedDetails.maxPrice ?? nestedDetails.totalPrice),
     priceLabel: stringValue(obj.priceLabel ?? nestedDetails.priceLabel),
+    description: stringValue(obj.desc ?? obj.description ?? nestedDetails.desc ?? nestedDetails.description),
+    pricingType: stringValue(obj.pricingType ?? obj.tag ?? nestedDetails.pricingType ?? nestedDetails.tag),
+    depositRequired: typeof (obj.depositRequired ?? nestedDetails.depositRequired) === "boolean"
+      ? (obj.depositRequired ?? nestedDetails.depositRequired) as boolean : null,
+    duration: stringValue(obj.duration ?? nestedDetails.duration),
     source,
   };
 }
@@ -931,7 +942,7 @@ export default function LeadDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id, "history"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id, "jcmoves-status"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs/planner"] });
-      toast({ title: "Dispatched!", description: "Job marked as paid and crew SMS sent." });
+      toast({ title: "Dispatched!", description: "Job marked as paid and dispatched. Notification delivery is tracked separately." });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message || "Failed to dispatch", variant: "destructive" });
@@ -1281,7 +1292,7 @@ export default function LeadDetailPage() {
       schedule: [date, arrivalWindow].filter(Boolean).join(" · ") || "TBD",
       crewSize,
       expectedHours,
-      notesPreview: String(lead.details || "").trim() || null,
+      notesPreview: customerNotesFromDetails(lead.details) || null,
       photos: lead.photos || [],
     };
   })();
@@ -1290,6 +1301,7 @@ export default function LeadDetailPage() {
     || offlineCloseoutMutation.isPending
     || sendQuoteMutation.isPending
     || applyPackageDraftMutation.isPending;
+  const dispatchMissingSetup = manualDispatchMissingSetup(lead);
   const nextStep = (() => {
     if (canCloseOutPastJob) {
       return {
@@ -1341,8 +1353,10 @@ export default function LeadDetailPage() {
     if (statusKey === "paid" || ((statusKey === "quoted" || statusKey === "available") && quoteSent)) {
       return {
         key: "dispatch",
-        title: "Payment is ready",
-        detail: "Mark paid and dispatch assigned crew. This sends the crew/customer dispatch notifications.",
+        title: dispatchMissingSetup.length ? "Finish dispatch setup" : "Confirm payment & dispatch",
+        detail: dispatchMissingSetup.length
+          ? `Save ${dispatchMissingSetup.join(", ")} in Job Setup before dispatching.`
+          : "Only continue after confirming full payment was received. This records payment and requests dispatch notifications.",
         button: "Mark Paid & Dispatch",
         icon: Zap,
       };
@@ -1389,6 +1403,7 @@ export default function LeadDetailPage() {
         openOfflineCloseout();
         break;
       case "dispatch":
+        if (dispatchMissingSetup.length) return;
         markAsPaidMutation.mutate();
         break;
       case "start":
@@ -1422,7 +1437,7 @@ export default function LeadDetailPage() {
     <Button
       size="sm"
       onClick={handleNextStep}
-      disabled={actionPending || nextStep.key === "done" || (nextStep.key === "send_quote" && !leadHasQuote)}
+      disabled={actionPending || nextStep.key === "done" || (nextStep.key === "send_quote" && !leadHasQuote) || (nextStep.key === "dispatch" && dispatchMissingSetup.length > 0)}
       className="bg-cyan-500 font-bold text-slate-950 hover:bg-cyan-400"
       data-testid="button-job-ticket-next-step"
     >
@@ -1546,7 +1561,7 @@ export default function LeadDetailPage() {
               </div>
               <Button
                 onClick={handleNextStep}
-                disabled={actionPending || nextStep.key === "done" || (nextStep.key === "send_quote" && !leadHasQuote)}
+                disabled={actionPending || nextStep.key === "done" || (nextStep.key === "send_quote" && !leadHasQuote) || (nextStep.key === "dispatch" && dispatchMissingSetup.length > 0)}
                 className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white"
                 data-testid="button-primary-next-step"
               >
@@ -1567,6 +1582,34 @@ export default function LeadDetailPage() {
             )}
           </CardContent>
         </Card>
+
+        {packageDraft && (
+          <details className="mb-4 rounded-xl border" data-testid="selected-package-summary"><summary className="min-h-12 cursor-pointer px-4 py-3 text-sm font-medium">Customer-selected package</summary><Card className="border-0 shadow-none">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Customer-selected package</CardTitle>
+              <p className="min-w-0 font-medium [overflow-wrap:anywhere]">{packageDraft.label}</p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                <div className="min-w-0"><dt className="text-muted-foreground">Selected price</dt>
+                  <dd className="font-medium [overflow-wrap:anywhere]">{packageDraft.priceLabel || (
+                    packageDraft.minPrice != null && packageDraft.maxPrice != null && packageDraft.minPrice !== packageDraft.maxPrice
+                      ? `${formatMoney(packageDraft.minPrice)}–${formatMoney(packageDraft.maxPrice)}`
+                      : formatMoney(packageDraft.maxPrice ?? packageDraft.minPrice))}</dd></div>
+                <div><dt className="text-muted-foreground">Duration</dt><dd className="font-medium">{packageDraft.duration || (
+                  packageDraft.hours && packageDraft.hours > 0 ? `${packageDraft.hours} hour${packageDraft.hours === 1 ? "" : "s"}` : "To be confirmed")}</dd></div>
+                <div><dt className="text-muted-foreground">Pricing type</dt><dd className="font-medium">{
+                  /hourly/i.test(packageDraft.pricingType || "") ? "Hourly"
+                    : /flat[ -]?rate/i.test(packageDraft.pricingType || "") ? "Flat rate" : "To be confirmed"}</dd></div>
+                <div><dt className="text-muted-foreground">Deposit</dt><dd className="font-medium">{
+                  (packageDraft.depositRequired ?? lead.depositRequired) === true ? "Required"
+                    : (packageDraft.depositRequired ?? lead.depositRequired) === false ? "Not required" : "To be confirmed"}</dd></div>
+              </dl>
+              {packageDraft.description && <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">{packageDraft.description}</p>}
+              <p className="text-xs text-muted-foreground">Customer selection. Review the saved quote for the agreed job total.</p>
+            </CardContent>
+          </Card></details>
+        )}
 
         {showJobSetup && (
           <div ref={jobSetupRef}>
@@ -1802,9 +1845,9 @@ export default function LeadDetailPage() {
 
         {/* === 4-Tab Interface === */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-2 mb-6">
-            <TabsTrigger value="notes">Notes & Media</TabsTrigger>
-            <TabsTrigger value="history">Timeline & Rewards</TabsTrigger>
+          <TabsList className="mb-6 grid h-auto w-full grid-cols-2">
+            <TabsTrigger className="min-h-11 text-sm" value="notes">Notes & Media</TabsTrigger>
+            <TabsTrigger className="min-h-11 text-sm" value="history">Timeline & Rewards</TabsTrigger>
           </TabsList>
 
           {/* ─────────── TAB: QUOTE & SEND ─────────── */}
@@ -2120,14 +2163,20 @@ export default function LeadDetailPage() {
                 <CardTitle className="text-base">Notes</CardTitle>
               </CardHeader>
               <CardContent>
+                {customerNotesFromDetails(lead.details) && (
+                  <div className="mb-3 rounded-lg bg-muted p-3">
+                    <p className="mb-1 text-xs text-muted-foreground">Customer notes</p>
+                    <p className="whitespace-pre-wrap break-words text-sm">{customerNotesFromDetails(lead.details)}</p>
+                  </div>
+                )}
                 {lead.quoteNotes ? (
                   <div className="p-3 bg-muted rounded-lg">
                     <p className="text-xs text-muted-foreground mb-1">Quote Notes</p>
                     <p className="text-sm whitespace-pre-wrap">{lead.quoteNotes}</p>
                   </div>
-                ) : (
+                ) : !customerNotesFromDetails(lead.details) ? (
                   <p className="text-sm text-muted-foreground italic text-center py-4">No notes added yet. Notes from the quote builder will appear here.</p>
-                )}
+                ) : null}
               </CardContent>
             </Card>
 
