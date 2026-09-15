@@ -8,6 +8,7 @@ import { sendNotificationEmail } from "../services/email";
 import { smsService } from "../services/sms";
 import { getAppUrl } from "../appUrl";
 import { ROUTE_DAY_SCHEDULE } from "@shared/routeDays";
+import { createCrewDailyHomeRouter } from './crewDailyHome';
 import { ensureWorkerBotSetup, workerBotReadiness, workerBotSetupSchema } from '../services/marketingWorkerSetup';
 import { ensureMarketingBotSchema } from '../services/marketingBot';
 import { ensureWorkerAvatars } from '../services/workerAvatars';
@@ -412,6 +413,7 @@ export async function createMarketingExecutionRouter() {
   await startReviewCelebrations();
   await ensureWorkerBotSetup();
   const router = Router();
+  router.use('/crew/marketing/daily-home', createCrewDailyHomeRouter(requireEmployee, pool, getAppUrl()));
   router.use('/crew/avatar',workerAvatarsRouter(requireEmployee));
   router.get('/crew/review-celebrations/:reviewId',requireEmployee,async(req,res)=>{
     try {
@@ -532,8 +534,8 @@ export async function createMarketingExecutionRouter() {
       const parsed = actionUpdateSchema.parse(req.body || {});
       const result = await pool.query(`
         UPDATE marketing_action_assignments
-        SET status = 'completed', proof_url = NULLIF($1, ''), proof_notes = $2, completed_at = NOW(), updated_at = NOW()
-        WHERE id = $3
+        SET status = 'completed', proof_url = COALESCE(NULLIF($1, ''), proof_url), proof_notes = COALESCE($2, proof_notes), completed_at = NOW(), updated_at = NOW()
+        WHERE id = $3 AND (action_key NOT LIKE 'crew-fall-2026:%' OR status = 'submitted')
         RETURNING *
       `, [parsed.proofUrl || "", parsed.proofNotes || null, req.params.id]);
       if (!result.rows[0]) return res.status(404).json({ error: "Marketing action not found" });
@@ -619,7 +621,7 @@ export async function createMarketingExecutionRouter() {
       `, [req.marketingActor?.id]);
       if (!rep) return res.json({ rep: null, actions: [], tutorialStepsDone: Number(completedTutorial.rows[0]?.count || 0), discordInviteUrl: DISCORD_INVITE_URL });
       const actions = await pool.query(`
-        SELECT * FROM marketing_action_assignments WHERE rep_id = $1 ORDER BY created_at, title
+        SELECT * FROM marketing_action_assignments WHERE rep_id = $1 AND action_key NOT LIKE 'crew-fall-2026:%' ORDER BY created_at, title
       `, [rep.id]);
       return res.json({
         rep: { ...rep, profileUrl: `${getAppUrl()}/network/${rep.slug}` },
@@ -640,6 +642,7 @@ export async function createMarketingExecutionRouter() {
         SET status = 'completed', proof_url = NULLIF($1, ''), proof_notes = $2, completed_at = NOW(), updated_at = NOW()
         FROM marketing_reps mr
         WHERE a.id = $3 AND a.rep_id = mr.id AND mr.user_id = $4
+          AND a.action_key NOT LIKE 'crew-fall-2026:%'
         RETURNING a.*
       `, [parsed.proofUrl || "", parsed.proofNotes || null, req.params.id, req.marketingActor?.id]);
       if (!result.rows[0]) return res.status(404).json({ error: "Marketing action not found for your profile" });

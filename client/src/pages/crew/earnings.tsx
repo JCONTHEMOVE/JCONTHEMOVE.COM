@@ -22,6 +22,7 @@ import MarketplaceActionMatrix from "@/components/MarketplaceActionMatrix";
 import MarketplaceProcessGuide from "@/components/MarketplaceProcessGuide";
 import { WalletChoiceModal } from "@/components/WalletChoiceModal";
 import { MarketingLaunchCard } from "@/components/MarketingLaunchCard";
+import { CrewDailyHome } from '@/components/CrewDailyHome';
 import { MarketingBotRepCard } from "@/components/MarketingBotRepCard";
 import {
   ROUTE_DAY_PROMO_PACKAGES,
@@ -638,6 +639,7 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
         </p>
       </div>
 
+      {marketingMode && <CrewDailyHome />}
       {marketingMode && (<TaskDetails title="Help">
         <ProcessFlowCard
           title="Create, post, recover"
@@ -646,7 +648,7 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
         /></TaskDetails>
       )}
 
-      {marketingMode && <TaskDetails title="Bot setup and missions" defaultOpen><MarketingLaunchCard /></TaskDetails>}
+      {marketingMode && <TaskDetails title="Setup and launch checklist"><MarketingLaunchCard /></TaskDetails>}
       {!marketingMode&&<a className="inline-flex min-h-11 items-center text-blue-300 underline" href="/crew/marketing">Marketing tools</a>}
       {marketingMode&&<>
 
