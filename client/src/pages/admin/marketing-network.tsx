@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { MarketingExecutionBoard } from "@/components/MarketingExecutionBoard";
+import { HomeProjectCampaignPanel } from "@/components/HomeProjectCampaignPanel";
 import { MarketingGrowthReview } from '@/components/MarketingGrowthReview';
 
 const REFERRAL_COMMISSION_RATE = 0.05;
@@ -322,6 +323,7 @@ export default function AdminMarketingNetworkPage() {
           ))}
         </div>
 
+        <HomeProjectCampaignPanel reps={reps} />
         {tab === "plan" && <><MarketingGrowthReview/><MarketingExecutionBoard /></>}
 
         {tab === "performance" && (
