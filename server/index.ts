@@ -1124,8 +1124,9 @@ server.listen(port, '0.0.0.0', () => {
       }
     }));
 
-    // Serve video files from workspace root with proper MIME types
-    app.get('/*.mp4', (req, res) => {
+    // Only legacy root-level videos live in the workspace. Nested public videos
+    // must reach Vite/static serving (for example the carpet campaign slideshow).
+    app.get(/^\/[^/]+\.mp4$/, (req, res) => {
       const videoPath = path.resolve(process.cwd(), req.path.substring(1));
       res.setHeader('Content-Type', 'video/mp4');
       res.setHeader('Accept-Ranges', 'bytes');
