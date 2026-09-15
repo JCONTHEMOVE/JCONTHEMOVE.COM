@@ -55,4 +55,3 @@ test("redirects must retain booking campaign and referral parameters", async () 
     assert.match(result.error, /query/);
   }
 });
-
