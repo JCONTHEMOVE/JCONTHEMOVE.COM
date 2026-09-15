@@ -16,6 +16,7 @@
     "production:doctor": "node scripts/check-production-deploy.mjs",
     "check": "cross-env NODE_OPTIONS=--max-old-space-size=8192 tsc --incremental false",
     "test:server": "node scripts/run-server-tests.mjs",
+    "test:store": "node --test scripts/store-*.test.mjs",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
@@ -146,7 +147,10 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^7.4.4",
-    "@electric-sql/pglite": "^0.5.8"
+    "@electric-sql/pglite": "^0.5.8",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/user-event": "14.6.1",
+    "jsdom": "26.1.0"
   },
   "overrides": {
     "fast-xml-parser": "5.11.1",

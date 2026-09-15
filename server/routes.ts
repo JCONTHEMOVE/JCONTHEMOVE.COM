@@ -175,6 +175,8 @@ import { toLegacyPricingConfig } from "@shared/canonicalPricing";
 import { getWeeklyCrewRuleForDate, normalizeCrewName } from "@shared/weeklyCrewSchedule";
 import { getAppUrl } from "./appUrl";
 import { buildMarketingRepQrDestination } from "@shared/marketingTracking";
+import { createHomeProjectRouter, homeProjectStatsHandler } from "./routes/homeProjects";
+import { HOME_PROJECT_CAMPAIGN } from "@shared/homeProjectCampaign";
 import { smsService } from "./services/sms";
 import {
   BTC_LIGHTNING_JOB_REFERENCE_TYPE,
@@ -5787,6 +5789,20 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     });
   }
 
+  app.use("/api/home-projects", ipRateLimit({
+    scope: "home_project_request", windowMs: 10 * 60_000, maxHits: 12,
+    message: "Too many project requests. Please wait a few minutes or call us.",
+  }), createHomeProjectRouter(pool, async (leadId) => {
+    const [lead] = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
+    if (!lead) throw new Error("Saved project lead unavailable");
+    await emitJobEvent("quote_requested", lead, {
+      actorId: null, source: "home_project_campaign", ownerReviewOnly: true,
+      extra: { marketingCampaignId: HOME_PROJECT_CAMPAIGN.id, displayOrderNumber: formatOrderNumber(lead.orderNumber) },
+    });
+    await notifyAdminNewLead({ customerName: lead.firstName + " " + lead.lastName, serviceType: lead.serviceType,
+      phone: lead.phone, email: lead.email, createdBy: "Carpet removal / home project campaign" });
+  }));
+
   const quickRequestSchema = z.object({
     requestType: z.enum(["callback", "scheduled"]).optional().default("callback"),
     firstName: z.string().trim().min(1).max(80),
@@ -6702,6 +6718,8 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       res.status(500).json({ message: "Access control error" });
     }
   };
+
+  app.get("/api/admin/marketing-network/home-projects", isAuthenticated, requireBusinessOwner, homeProjectStatsHandler(pool));
 
   const crewAnnouncementSchema = z.object({
     title: z.string().trim().min(1).max(140),
@@ -10173,7 +10191,9 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         const repByPromo = new Map(repRows.map((rep) => [rep.promoCode, rep]));
 
         for (const row of attributionRows) {
-          if (!row.leadId || attributionByLead.has(row.leadId)) continue;
+          // Preserve the earliest campaign source even after later quote edits.
+          // Rows arrive newest first; older campaign attribution takes precedence.
+          if (!row.leadId || (attributionByLead.has(row.leadId) && row.attributionType !== "home_project_campaign")) continue;
           const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {};
           const marketingTracking = metadata.marketingTracking && typeof metadata.marketingTracking === "object"
             ? metadata.marketingTracking as Record<string, unknown>
