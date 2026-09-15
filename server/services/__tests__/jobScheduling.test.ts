@@ -29,7 +29,7 @@ assert.doesNotMatch(setupSource, /driverUserId:/);
 
 const leadDetailSource = readFileSync(resolve(process.cwd(), "client/src/pages/lead-detail.tsx"), "utf8");
 assert.doesNotMatch(leadDetailSource, /showInlineScheduler|Crew & Service Plan/);
-assert.match(leadDetailSource, /openJobSetup\("job-setup-schedule"\)/);
+assert.match(leadDetailSource, /openJobSetup\("schedule"\)/);
 
 const routesSource = readFileSync(resolve(process.cwd(), "server/routes.ts"), "utf8");
 assert.doesNotMatch(routesSource, /app\.patch\("\/api\/leads\/:id\/schedule"/);

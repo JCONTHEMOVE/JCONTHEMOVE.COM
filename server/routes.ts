@@ -1,4 +1,41 @@
+import { manualDispatchMissingSetup } from "@shared/manualDispatchReadiness";
+import { phoneRewardsRouter } from "./routes/phoneRewards";
+import { findPhoneRewardsCustomer, rewardsPhone } from "./services/phoneRewards";
+import {
+  appendQuickBookTranscript,
+  createQuickBookSession,
+  ensureQuickBookingSchema,
+  getQuickBookSession,
+  getLatestQuickBookDraft,
+  mergeQuickBookDraft,
+  sealQuickBookDraft,
+  sessionDraft,
+  updateQuickBookSession,
+} from "./services/quickBookSessions";
+import { quickBookWorkOverlaps, quickBookHoursCoverWork } from "./services/quickBookAvailability";
+import {
+  QUICK_BOOK_DEFAULT_MODEL,
+  QUICK_BOOK_DEFAULT_TRANSCRIPTION_MODEL,
+  extractQuickBookMessage,
+  isQuickBookAiConfigured,
+  transcribeQuickBookAudio,
+} from "./services/quickBookAi";
+import {
+  EMPTY_QUICK_BOOK_DRAFT,
+  evaluateQuickBookReadiness,
+  quickBookDraftSchema,
+  quickBookInventorySchema,
+  quickBookSpecialItemsSchema,
+  quickBookTruckSizeSchema,
+  type QuickBookCrewSuggestion,
+  type QuickBookDraft,
+  type QuickBookFieldMeta,
+  type QuickBookSessionResponse,
+} from "@shared/quickBook";
 import type { Express, Request, Response } from "express";
+import { createPricingTrainingRouter } from "./routes/pricingTraining";
+import { createPricingTrainingTeamRouter } from "./routes/pricingTrainingTeam";
+import { rewardTrainingContribution, thankTrainingContributor } from "./services/pricingTrainingTeam";
 import { createServer, type Server } from "http";
 import { createRequire } from "module";
 import crypto from "crypto";
@@ -72,7 +109,7 @@ import { notificationService } from "./services/notification";
 import { buildJobFlowRecords, jobBelongsToCrew, toCrewBoardFlow } from "./services/jobFlow";
 import { projectWorkerOrder, type WorkerOrderContext } from "./services/workerOrderVisibility";
 import { calculateLaborBooking, normalizeLaborWorkScope } from "@shared/laborBooking";
-import { isHourlyJobArrivalWindow } from "@shared/jcOperations";
+import { isHourlyJobArrivalWindow, JOB_SCHEDULE_OPTIONS } from "@shared/jcOperations";
 import {
   allAddressesRecognizedIronwoodLocal,
   IRONWOOD_LOCAL_ZONE_CODE,
@@ -138,6 +175,8 @@ import { toLegacyPricingConfig } from "@shared/canonicalPricing";
 import { getWeeklyCrewRuleForDate, normalizeCrewName } from "@shared/weeklyCrewSchedule";
 import { getAppUrl } from "./appUrl";
 import { buildMarketingRepQrDestination } from "@shared/marketingTracking";
+import { createHomeProjectRouter, homeProjectStatsHandler } from "./routes/homeProjects";
+import { HOME_PROJECT_CAMPAIGN } from "@shared/homeProjectCampaign";
 import { smsService } from "./services/sms";
 import {
   BTC_LIGHTNING_JOB_REFERENCE_TYPE,
@@ -679,6 +718,180 @@ async function calculateJobQuoteWithPromo(input: JobPromoQuoteInput): Promise<Jo
       && evaluation.quote.promotion.includesCompanyTruck
       ? { truckConfig: "company_truck", trailerRequested: Boolean(evaluation.quote.promotion.includesTrailer) }
       : undefined,
+  };
+}
+
+type QuickBookState = {
+  draft: QuickBookDraft;
+  quote: JobPromoQuoteResult | null;
+  crewSuggestions: QuickBookCrewSuggestion[];
+  missingFields: string[];
+  reviewReasons: string[];
+  ready: boolean;
+};
+
+async function quickBookCrewConflicts(draft: QuickBookDraft, workerIds: string[], queryable: any = pool) {
+  if (!draft.confirmedDate || workerIds.length === 0) return new Set<string>();
+  const { rows } = await queryable.query(`
+    SELECT crew_members, arrival_window, confirmed_hours
+      FROM leads
+     WHERE COALESCE(confirmed_date, move_date) = $1
+       AND status NOT IN ('cancelled','completed','closed')
+       AND COALESCE(crew_members, ARRAY[]::text[]) && $2::text[]
+  `, [draft.confirmedDate, workerIds]);
+  const conflicts = new Set<string>();
+  for (const row of rows) {
+    if (!quickBookWorkOverlaps(
+      { arrivalWindow: draft.arrivalWindow, hours: draft.estimatedHours },
+      { arrivalWindow: row.arrival_window, hours: row.confirmed_hours },
+    )) continue;
+    for (const id of row.crew_members || []) if (workerIds.includes(id)) conflicts.add(id);
+  }
+  return conflicts;
+}
+
+async function quickBookTransactionCrewUnavailable(queryable: any, draft: QuickBookDraft, workerIds = draft.crewMemberIds, lockWorkers = true) {
+  if (!draft.confirmedDate || !workerIds.length) return new Set<string>();
+  const dayOfWeek = new Date(`${draft.confirmedDate}T12:00:00`).getDay();
+  const { rows } = await queryable.query(`
+    SELECT u.id,
+           EXISTS (SELECT 1 FROM worker_day_blocks b WHERE b.user_id=u.id AND b.date=$2) AS blocked,
+           COALESCE((SELECT jsonb_agg(jsonb_build_object('start_hour',s.start_hour,'end_hour',s.end_hour,'is_available',s.is_available))
+                       FROM worker_schedule s WHERE s.user_id=u.id AND s.day_of_week=$3), '[]'::jsonb) AS weekly,
+           COALESCE((SELECT jsonb_agg(jsonb_build_object('start_hour',o.start_hour,'end_hour',o.end_hour))
+                       FROM worker_hour_overrides o WHERE o.user_id=u.id AND o.date=$2), '[]'::jsonb) AS overrides
+      FROM users u
+     WHERE u.id=ANY($1::text[])
+       AND u.is_approved=true
+       AND (u.role='employee' OR (u.role IN ('admin','business_owner') AND COALESCE(u.capabilities,ARRAY[]::text[]) @> ARRAY['mover']::text[]))
+     ORDER BY u.id
+     ${lockWorkers ? 'FOR UPDATE' : ''}
+  `, [workerIds, draft.confirmedDate, dayOfWeek]);
+  const validIds = new Set(rows.map((worker: any) => String(worker.id)));
+  const unavailable = new Set(workerIds.filter((id) => !validIds.has(id)));
+  for (const worker of rows) {
+    if (!quickBookHoursCoverWork({arrivalWindow: draft.arrivalWindow, hours: draft.estimatedHours}, worker.weekly, worker.overrides, worker.blocked)) unavailable.add(String(worker.id));
+  }
+  return unavailable;
+}
+
+async function buildQuickBookCrewSuggestions(draft: QuickBookDraft): Promise<QuickBookCrewSuggestion[]> {
+  const employees = await crewSuggestionService.getEmployeesWithStats();
+  const unavailable = await quickBookTransactionCrewUnavailable(pool, draft, employees.map(employee => employee.id), false);
+  const conflicts = await quickBookCrewConflicts(draft, employees.map((employee) => employee.id));
+  const hasSpecialItems = Object.entries(draft.specialItems).some(([key, value]) => key !== "notes" && value === true);
+  const ranked = employees.map((employee) => {
+    const score = crewSuggestionService.calculateEmployeeScore(employee, draft.serviceType, hasSpecialItems);
+    const calendar = { available: !unavailable.has(employee.id), reason: unavailable.has(employee.id) ? 'Unavailable for the full requested work period' : '' };
+    const conflict = conflicts.has(employee.id);
+    return {
+      id: employee.id,
+      name: `${employee.firstName} ${employee.lastName}`.trim() || employee.email,
+      score: score.score,
+      available: calendar.available && !conflict,
+      reason: conflict ? "Already assigned in this arrival window" : (calendar.reason ? `${score.reason} • ${calendar.reason}` : score.reason),
+      recommended: false,
+    } satisfies QuickBookCrewSuggestion;
+  }).sort((a, b) => Number(b.available) - Number(a.available) || b.score - a.score);
+  const recommendedIds = new Set(ranked.filter((worker) => worker.available).slice(0, draft.crewSize || 0).map((worker) => worker.id));
+  return ranked.slice(0, 12).map((worker) => ({ ...worker, recommended: recommendedIds.has(worker.id) }));
+}
+
+async function calculateQuickBookState(draftInput: unknown): Promise<QuickBookState> {
+  const draft = quickBookDraftSchema.parse(draftInput || EMPTY_QUICK_BOOK_DRAFT);
+  let quote: JobPromoQuoteResult | null = null;
+  const reviewReasons: string[] = [];
+  const quoteInputsComplete = Boolean(
+    draft.crewSize
+    && draft.estimatedHours
+    && draft.workScope
+    && draft.truckConfig
+    && draft.stairsFlights !== null
+    && draft.hasElevator !== null
+    && draft.pickupAddress.trim().length >= 4,
+  );
+  if (quoteInputsComplete) {
+    quote = await calculateJobQuoteWithPromo({
+      promoCode: draft.promoCode || null,
+      serviceType: draft.serviceType,
+      crewSize: draft.crewSize!,
+      confirmedHours: draft.estimatedHours!,
+      workScope: draft.workScope,
+      truckConfig: draft.truckConfig,
+      trailerRequested: false,
+      stairsFlights: draft.stairsFlights,
+      hasElevator: draft.hasElevator,
+      fromAddress: draft.pickupAddress,
+      toAddress: draft.destinationAddress,
+    });
+    if (!Number.isFinite(quote.total) || quote.total <= 0) reviewReasons.push("The pricing service did not return a positive exact total.");
+    if (draft.promoCode && !quote.promo?.applied) reviewReasons.push(quote.promo?.reason || "The requested promo could not be applied.");
+  }
+  const crewSuggestions = draft.confirmedDate ? await buildQuickBookCrewSuggestions(draft) : [];
+  if (draft.crewConfirmed) {
+    const availability = new Map(crewSuggestions.map((worker) => [worker.id, worker.available]));
+    if (draft.crewMemberIds.some((id) => availability.get(id) !== true)) {
+      reviewReasons.push("A selected mover is unavailable or ineligible; choose and reconfirm the named crew.");
+    }
+  }
+  const readiness = evaluateQuickBookReadiness(draft, {
+    quoteReady: Boolean(quote && Number.isFinite(quote.total) && quote.total > 0),
+    quoteReviewReasons: reviewReasons,
+  });
+  return { draft, quote, crewSuggestions, ...readiness };
+}
+
+function quickBookNextPrompt(state: QuickBookState) {
+  const first = state.missingFields[0];
+  const prompts: Record<string, { question: string; suggestions: string[] }> = {
+    "customer name": { question: "What is the customer's full name?", suggestions: [] },
+    "10-digit phone": { question: "What is the customer's 10-digit phone number?", suggestions: [] },
+    "text-message consent": { question: "Did the customer explicitly agree to text messages?", suggestions: ["Yes, customer agreed", "No text messages"] },
+    "complete pickup address": { question: "What is the complete pickup or service address, including city/state or ZIP?", suggestions: [] },
+    "complete destination address": { question: "What is the complete destination address?", suggestions: [] },
+    "confirmed date": { question: "What date is the job confirmed for?", suggestions: ["Tomorrow", "This Friday"] },
+    "one-hour arrival window": { question: "Choose the one-hour Central arrival window.", suggestions: JOB_SCHEDULE_OPTIONS.slice(0, 5).map((option) => option.value) },
+    "work scope": { question: "Is the crew loading, unloading, or doing both?", suggestions: ["Load only", "Unload only", "Load and unload"] },
+    "truck or equipment choice": { question: "Whose truck or equipment will be used?", suggestions: ["Customer truck", "Rental U-Haul", "JC company truck", "No truck"] },
+    stairs: { question: "How many flights of stairs are involved?", suggestions: ["No stairs", "1 flight", "2 flights"] },
+    elevator: { question: "Is an elevator involved?", suggestions: ["No elevator", "Yes, elevator"] },
+    "special-item check": { question: "Any piano, safe, hot tub, pool table, or other large specialty item?", suggestions: ["No special items", "Yes, special item"] },
+    "crew size": { question: "How many movers are needed?", suggestions: ["2 movers", "3 movers", "4 movers"] },
+    "estimated hours": { question: "How many hours should be quoted?", suggestions: ["2 hours", "3 hours", "4 hours"] },
+    "confirmed named crew": { question: "Select the named crew, then confirm the assignment.", suggestions: [] },
+    "confirmed crew lead": { question: "Choose one selected mover as crew lead.", suggestions: [] },
+  };
+  if (first && prompts[first]) return prompts[first];
+  if (state.reviewReasons.length) return { question: state.reviewReasons[0], suggestions: [] };
+  return state.ready
+    ? { question: "Everything is ready. Review the exact quote, then book and alert the crew.", suggestions: [] }
+    : { question: "Add the remaining job details.", suggestions: [] };
+}
+
+function quickBookSessionResponse(row: any, state: QuickBookState): QuickBookSessionResponse {
+  const prompt = quickBookNextPrompt(state);
+  const agent = row.agentMetadata && typeof row.agentMetadata === "object"
+    ? row.agentMetadata
+    : { provider: "deterministic", model: "not-run", fallbackUsed: false };
+  return {
+    id: row.id,
+    status: row.status,
+    revision: row.revision,
+    draft: state.draft,
+    fieldMeta: (row.fieldMeta || {}) as QuickBookFieldMeta,
+    missingFields: state.missingFields,
+    reviewReasons: state.reviewReasons,
+    readiness: { ready: state.ready, missingFields: state.missingFields, reviewReasons: state.reviewReasons },
+    quote: state.quote as unknown as Record<string, unknown> | null,
+    crewSuggestions: state.crewSuggestions,
+    assistantMessage: row.assistantMessage || "Quick Book is ready for your job details.",
+    nextQuestion: prompt.question,
+    suggestions: prompt.suggestions,
+    agent,
+    bookingId: row.bookingId || null,
+    leadId: row.leadId || null,
+    startedAt: new Date(row.createdAt).toISOString(),
+    updatedAt: new Date(row.updatedAt).toISOString(),
   };
 }
 
@@ -1606,7 +1819,9 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     await ensureRegionalAutomationSchema();
   } catch (error) {
     console.error("regional automation migration error (non-fatal):", error);
+    if (process.env.QUICK_BOOK_ENABLED === "true") throw error;
   }
+  if (process.env.QUICK_BOOK_ENABLED === "true") await ensureQuickBookingSchema();
   // Additive migration for existing deployments. The offer stays in the promo
   // row, keeping the promo toggle as the single source of activation state.
   try {
@@ -3710,7 +3925,20 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       }
 
       // Check if email already exists
-      const existingUser = await findUserByEmail(data.email);
+      let existingUser = await findUserByEmail(data.email);
+      const enrollment = (req.session as any).phoneRewardsEnrollment;
+      let upgradingPhoneRewards = false;
+      if (!existingUser && rewardsPhone(data.phoneNumber)) {
+        const phoneMember = await findPhoneRewardsCustomer(data.phoneNumber);
+        const candidate = phoneMember ? await storage.getUser(phoneMember.id) : undefined;
+        if (candidate?.role === "customer" && candidate.status === "rewards_only" && !candidate.email && !candidate.passwordHash) {
+          if (!(enrollment?.expiresAt > Date.now()) || enrollment.userId !== candidate.id || enrollment.phone !== rewardsPhone(data.phoneNumber)) {
+            return res.status(400).json({ error: "Please verify this phone again in the booking rewards step, then finish signup in the same browser so your rewards stay together." });
+          }
+          existingUser = candidate;
+          upgradingPhoneRewards = true;
+        }
+      }
 
       const passwordHash = await bcrypt.hash(data.password, 10);
       let newUser;
@@ -3720,6 +3948,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         const [updatedUser] = await db
           .update(users)
           .set({
+            ...(upgradingPhoneRewards ? { email: data.email, status: "active" } : {}),
             passwordHash,
             firstName: data.firstName,
             lastName: data.lastName,
@@ -3728,8 +3957,13 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
             tosAccepted: data.tosAccepted ?? existingUser.tosAccepted,
             tosAcceptedAt: data.tosAccepted && !existingUser.tosAccepted ? new Date() : existingUser.tosAcceptedAt,
           })
-          .where(eq(users.id, existingUser.id))
+          .where(upgradingPhoneRewards
+            ? and(eq(users.id, existingUser.id), eq(users.role, "customer"), eq(users.status, "rewards_only"), sql`${users.email} IS NULL AND ${users.passwordHash} IS NULL`)
+            : eq(users.id, existingUser.id))
           .returning();
+        if (upgradingPhoneRewards && !updatedUser) {
+          return res.status(409).json({ error: "This rewards account was already updated. Please sign in or verify your phone again." });
+        }
         newUser = updatedUser;
       } else if (existingUser) {
         return res.status(400).json({ error: "Email already registered. Please sign in." });
@@ -4019,7 +4253,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       }
 
       // Always return success to prevent user enumeration attacks
-      if (!matchedUser) {
+      if (!matchedUser || matchedUser.status === "rewards_only") {
         console.log(`⚠️ Recovery request for unknown ${method}: ${value}`);
         return res.json({ success: true, method, masked: method === 'email' ? value.replace(/(.{2}).*(@.*)/, '$1***$2') : value.slice(-4) });
       }
@@ -5555,6 +5789,20 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     });
   }
 
+  app.use("/api/home-projects", ipRateLimit({
+    scope: "home_project_request", windowMs: 10 * 60_000, maxHits: 12,
+    message: "Too many project requests. Please wait a few minutes or call us.",
+  }), createHomeProjectRouter(pool, async (leadId) => {
+    const [lead] = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
+    if (!lead) throw new Error("Saved project lead unavailable");
+    await emitJobEvent("quote_requested", lead, {
+      actorId: null, source: "home_project_campaign", ownerReviewOnly: true,
+      extra: { marketingCampaignId: HOME_PROJECT_CAMPAIGN.id, displayOrderNumber: formatOrderNumber(lead.orderNumber) },
+    });
+    await notifyAdminNewLead({ customerName: lead.firstName + " " + lead.lastName, serviceType: lead.serviceType,
+      phone: lead.phone, email: lead.email, createdBy: "Carpet removal / home project campaign" });
+  }));
+
   const quickRequestSchema = z.object({
     requestType: z.enum(["callback", "scheduled"]).optional().default("callback"),
     firstName: z.string().trim().min(1).max(80),
@@ -6470,6 +6718,8 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       res.status(500).json({ message: "Access control error" });
     }
   };
+
+  app.get("/api/admin/marketing-network/home-projects", isAuthenticated, requireBusinessOwner, homeProjectStatsHandler(pool));
 
   const crewAnnouncementSchema = z.object({
     title: z.string().trim().min(1).max(140),
@@ -9941,7 +10191,9 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         const repByPromo = new Map(repRows.map((rep) => [rep.promoCode, rep]));
 
         for (const row of attributionRows) {
-          if (!row.leadId || attributionByLead.has(row.leadId)) continue;
+          // Preserve the earliest campaign source even after later quote edits.
+          // Rows arrive newest first; older campaign attribution takes precedence.
+          if (!row.leadId || (attributionByLead.has(row.leadId) && row.attributionType !== "home_project_campaign")) continue;
           const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata as Record<string, unknown> : {};
           const marketingTracking = metadata.marketingTracking && typeof metadata.marketingTracking === "object"
             ? metadata.marketingTracking as Record<string, unknown>
@@ -11023,13 +11275,15 @@ Thank you for your business!
       handyman: "Handyman", demolition: "Light Demolition", flooring: "Flooring", painting: "Painting",
     };
     const employees = await getReviewCrewMembers(lead);
+    const { publicWorkerAvatars } = await import('./services/workerAvatars');
+    const avatars = await publicWorkerAvatars(employees.map(employee=>employee.id));
     return {
       jobId: lead.id,
       customerName: `${lead.firstName}`,
       serviceType: lead.serviceType,
       serviceLabel: serviceLabels[lead.serviceType] || lead.serviceType,
       completedDate: lead.createdAt ? new Date(lead.createdAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : null,
-      assignedEmployees: employees,
+      assignedEmployees: employees.map(employee=>({...employee,...avatars.get(employee.id)})),
       crewSize: lead.crewSize || 2,
     };
   }
@@ -11235,6 +11489,12 @@ Thank you for your business!
       authenticatedUserId: string | null;
     },
   ) {
+    const thanks=z.array(z.string().min(1).max(100)).max(20).parse(args.body?.thanksWorkerIds||[]);
+    const assigned=new Set(getReviewCrewIds(args.lead));
+    if(thanks.some(id=>!assigned.has(id)))throw new ReviewTipError(400,'Send thanks only to movers assigned to this job');
+    for(const id of new Set(thanks)) {
+      await tx.execute(sql`INSERT INTO review_worker_thanks(review_id,worker_id) VALUES(${args.review.id},${id}) ON CONFLICT DO NOTHING`);
+    }
     const method = normalizeTipMethod(args.body?.tipMethod);
     if (!method) {
       return { method: null, status: "none", allocations: [], totalUsd: 0, totalTokens: 0 };
@@ -12068,6 +12328,503 @@ Thank you for your business!
     pricingSource: z.enum(["rate_card_auto", "manual_override"]).optional(),
   });
 
+  // ── 60-second staff Quick Book ──────────────────────────────────────────
+  // AI only extracts facts. Pricing, crew availability, persistence and crew
+  // alerts remain server-owned and meet at the final transactional boundary.
+  async function quickBookActor(req: any) {
+    let actor = req.currentUser || req.user || null;
+    if (!actor && (req.session as any)?.userId) actor = await storage.getUser((req.session as any).userId);
+    if (process.env.QUICK_BOOK_OWNER_ONLY !== "false" && actor?.role !== "business_owner") return null;
+    const approvedEmployee = process.env.QUICK_BOOK_STAFF_DRAFT_ENABLED === "true"
+      && actor?.role === "employee"
+      && (actor.isApproved || actor.status === "approved" || actor.status === "active");
+    return actor && (["admin", "business_owner"].includes(actor.role) || approvedEmployee) ? actor : null;
+  }
+
+  function canCompleteQuickBooking(actor: any) {
+    return process.env.QUICK_BOOK_ENABLED === "true"
+      && process.env.QUICK_BOOK_LIVE_BOOKING_ENABLED === "true"
+      && (actor?.role === "admin" || actor?.role === "business_owner");
+  }
+
+  function canReadQuickBookSession(actor: any, row: any) {
+    return canCompleteQuickBooking(actor) || row.createdByUserId === actor?.id;
+  }
+
+  app.get("/api/quick-book/health", isAuthenticated, async (req: any, res) => {
+    const actor = await quickBookActor(req);
+    if (!actor) return res.status(403).json({ error: "Approved staff access required" });
+    return res.json({
+      ok: true,
+      enabled: process.env.QUICK_BOOK_ENABLED === "true",
+      canComplete: canCompleteQuickBooking(actor),
+      rollout: {
+        ownerOnly: process.env.QUICK_BOOK_OWNER_ONLY !== "false",
+        staffDrafts: process.env.QUICK_BOOK_STAFF_DRAFT_ENABLED === "true",
+        liveBooking: process.env.QUICK_BOOK_LIVE_BOOKING_ENABLED === "true",
+      },
+      ai: {
+        configured: isQuickBookAiConfigured(),
+        model: process.env.QUICK_BOOK_MODEL || QUICK_BOOK_DEFAULT_MODEL,
+        transcriptionModel: process.env.QUICK_BOOK_TRANSCRIPTION_MODEL || QUICK_BOOK_DEFAULT_TRANSCRIPTION_MODEL,
+        fallback: "shared/quick-book-parser",
+      },
+      guardrails: {
+        quoteAuthority: "server_job_rate_card",
+        aiCanPersist: false,
+        aiCanAssignCrew: false,
+        aiCanNotify: false,
+        customerMessageOnBook: false,
+        squareInvoiceOnBook: false,
+      },
+    });
+  });
+
+  app.post("/api/quick-book/sessions", isAuthenticated, async (req: any, res) => {
+    try {
+      const actor = await quickBookActor(req);
+      if (!actor) return res.status(403).json({ error: "Approved staff access required" });
+      if (process.env.QUICK_BOOK_ENABLED !== "true") return res.status(503).json({ error: "Quick Book is temporarily disabled" });
+      const startInput = z.object({ abandonSessionId: z.string().uuid().optional() }).parse(req.body || {});
+      if (startInput.abandonSessionId) {
+        await pool.query(`
+          UPDATE quick_booking_sessions
+             SET status='abandoned', transcript_text=NULL, updated_at=NOW(),
+                 metrics=COALESCE(metrics,'{}'::jsonb) || jsonb_build_object('abandonedAt',NOW())
+           WHERE id=$1 AND created_by_user_id=$2 AND status IN ('draft','ready')
+        `, [startInput.abandonSessionId, actor.id]);
+      }
+      const row = await createQuickBookSession(actor.id);
+      const state = await calculateQuickBookState(sessionDraft(row));
+      return res.status(201).json({ ...quickBookSessionResponse(row, state), canComplete: canCompleteQuickBooking(actor) });
+    } catch (error) {
+      console.error("[quick-book] create session failed:", error);
+      return res.status(500).json({ error: "Could not start Quick Book" });
+    }
+  });
+
+  app.get("/api/quick-book/sessions/current", isAuthenticated, async (req: any, res) => {
+    try {
+      const actor = await quickBookActor(req);
+      if (!actor) return res.status(403).json({ error: "Approved staff access required" });
+      if (process.env.QUICK_BOOK_ENABLED !== "true") return res.status(503).json({ error: "Quick Book is temporarily disabled" });
+      const row = await getLatestQuickBookDraft(actor.id);
+      if (!row) return res.json(null);
+      const state = await calculateQuickBookState(sessionDraft(row));
+      return res.json({ ...quickBookSessionResponse(row, state), canComplete: canCompleteQuickBooking(actor) });
+    } catch (error) {
+      console.error("[quick-book] resume lookup failed:", error);
+      return res.status(500).json({ error: "Could not find your saved Quick Book draft. Please retry." });
+    }
+  });
+
+  app.get("/api/quick-book/sessions/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const actor = await quickBookActor(req);
+      if (!actor) return res.status(403).json({ error: "Approved staff access required" });
+      if (process.env.QUICK_BOOK_ENABLED !== "true") return res.status(503).json({ error: "Quick Book is temporarily disabled" });
+      const row = await getQuickBookSession(req.params.id);
+      if (!row) return res.status(404).json({ error: "Quick Book draft not found" });
+      if (!canReadQuickBookSession(actor, row)) return res.status(403).json({ error: "This draft belongs to another staff member" });
+      const state = await calculateQuickBookState(sessionDraft(row));
+      return res.json({ ...quickBookSessionResponse(row, state), canComplete: canCompleteQuickBooking(actor) });
+    } catch (error) {
+      console.error("[quick-book] load session failed:", error);
+      return res.status(500).json({ error: "Could not load Quick Book draft" });
+    }
+  });
+
+  const quickBookMessageSchema = z.object({
+    expectedRevision: z.number().int().min(1),
+    message: z.string().trim().min(1).max(6000).optional(),
+    source: z.enum(["voice", "typed", "tap"]).default("typed"),
+    patch: z.record(z.unknown()).optional(),
+  }).refine((value) => Boolean(value.message || value.patch), "Enter a message or a field update");
+
+  app.post("/api/quick-book/sessions/:id/message", isAuthenticated, async (req: any, res) => {
+    try {
+      const actor = await quickBookActor(req);
+      if (!actor) return res.status(403).json({ error: "Approved staff access required" });
+      if (process.env.QUICK_BOOK_ENABLED !== "true") return res.status(503).json({ error: "Quick Book is temporarily disabled" });
+      const input = quickBookMessageSchema.parse(req.body);
+      const row = await getQuickBookSession(req.params.id);
+      if (!row) return res.status(404).json({ error: "Quick Book draft not found" });
+      if (!canReadQuickBookSession(actor, row)) return res.status(403).json({ error: "This draft belongs to another staff member" });
+      if (row.status === "booked") return res.status(409).json({ error: "This Quick Book session is already booked", leadId: row.leadId });
+      if (row.revision !== input.expectedRevision) return res.status(409).json({ error: "This draft changed on another screen. Reload it before continuing." });
+
+      let draft = sessionDraft(row);
+      let fieldMeta = (row.fieldMeta || {}) as QuickBookFieldMeta;
+      let assistantMessage = input.source === "tap" ? "Updated. I checked the job card again." : "I captured that update.";
+      let agentMetadata: Record<string, unknown> = row.agentMetadata && typeof row.agentMetadata === "object" ? row.agentMetadata as Record<string, unknown> : {};
+      let transcriptText = row.transcriptText;
+      const metrics: Record<string, number | boolean | string> = row.metrics && typeof row.metrics === "object"
+        ? { ...(row.metrics as Record<string, number | boolean | string>) }
+        : {};
+
+      if (input.message && input.source !== "tap") {
+        const extractionStartedAt = Date.now();
+        const extraction = await extractQuickBookMessage({ message: input.message, currentDraft: draft });
+        const merged = mergeQuickBookDraft({
+          current: draft,
+          patch: { ...extraction.patch, __confidence: extraction.fieldConfidence },
+          source: input.source,
+          currentMeta: fieldMeta,
+        });
+        draft = merged.draft;
+        fieldMeta = merged.fieldMeta;
+        assistantMessage = extraction.assistantMessage;
+        agentMetadata = extraction.agent;
+        transcriptText = appendQuickBookTranscript(row.transcriptText, input.message, input.source);
+        metrics.messageCount = Number(metrics.messageCount || 0) + 1;
+        metrics.clarificationCount = Number(metrics.clarificationCount || 0) + 1;
+        metrics.totalAiLatencyMs = Number(metrics.totalAiLatencyMs || 0) + (Date.now() - extractionStartedAt);
+        if (extraction.agent.fallbackUsed) metrics.fallbackUseCount = Number(metrics.fallbackUseCount || 0) + 1;
+      }
+      if (input.patch) {
+        metrics.staffCorrectionCount = Number(metrics.staffCorrectionCount || 0)
+          + Object.keys(input.patch).filter((key) => Boolean(fieldMeta[key])).length;
+        metrics.fieldTapCount = Number(metrics.fieldTapCount || 0) + 1;
+        const merged = mergeQuickBookDraft({ current: draft, patch: input.patch, source: "tap", currentMeta: fieldMeta });
+        draft = merged.draft;
+        fieldMeta = merged.fieldMeta;
+      }
+
+      const state = await calculateQuickBookState(draft);
+      const prompt = quickBookNextPrompt(state);
+      const updated = await updateQuickBookSession({
+        id: row.id,
+        expectedRevision: input.expectedRevision,
+        values: {
+          status: state.ready ? "ready" : "draft",
+          transcriptText,
+          structuredDraft: state.draft,
+          fieldMeta,
+          missingFields: state.missingFields,
+          reviewReasons: state.reviewReasons,
+          pricingPreview: state.quote,
+          suggestedCrew: state.crewSuggestions,
+          assistantMessage,
+          nextQuestion: prompt.question,
+          suggestions: prompt.suggestions,
+          agentMetadata,
+          metrics,
+        },
+      });
+      if (!updated) return res.status(409).json({ error: "This draft changed on another screen. Reload it before continuing." });
+      return res.json({ ...quickBookSessionResponse(updated, state), canComplete: canCompleteQuickBooking(actor) });
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.issues[0]?.message || "Invalid Quick Book update" });
+      console.error("[quick-book] message failed:", error);
+      return res.status(500).json({ error: "Could not update Quick Book" });
+    }
+  });
+
+  app.post("/api/quick-book/transcribe", isAuthenticated, async (req: any, res) => {
+    try {
+      const actor = await quickBookActor(req);
+      if (!actor) return res.status(403).json({ error: "Approved staff access required" });
+      if (process.env.QUICK_BOOK_ENABLED !== "true") return res.status(503).json({ error: "Quick Book is temporarily disabled" });
+      if (!isQuickBookAiConfigured()) return res.status(503).json({ error: "Voice transcription is not configured; type the job instead." });
+      const multer = (await import("multer")).default;
+      const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } }).single("audio");
+      await new Promise<void>((resolve, reject) => upload(req, res as any, (error: any) => error ? reject(error) : resolve()));
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file || !file.mimetype.startsWith("audio/")) return res.status(400).json({ error: "Provide one audio recording" });
+      const result = await transcribeQuickBookAudio(file.buffer);
+      if (Number(result.durationInSeconds || 0) > 61) return res.status(400).json({ error: "Quick Book recordings are limited to 60 seconds" });
+      return res.json({ text: result.text, model: result.model, durationInSeconds: result.durationInSeconds, rawAudioStored: false });
+    } catch (error: any) {
+      if (error?.code === "LIMIT_FILE_SIZE") return res.status(413).json({ error: "Recording is too long. Keep Quick Book recordings under 60 seconds." });
+      console.error("[quick-book] transcription failed:", error);
+      return res.status(500).json({ error: "Could not transcribe the recording. Type the job details instead." });
+    }
+  });
+
+  const quickBookFinalizeSchema = z.object({
+    expectedRevision: z.number().int().min(1),
+    idempotencyKey: z.string().trim().min(8).max(120),
+  });
+
+  app.post("/api/quick-book/sessions/:id/book", isAuthenticated, async (req: any, res) => {
+    let client: any = null;
+    let savedBooking: Record<string, unknown> | null = null;
+    let savedStatus = 201;
+    try {
+      const actor = await quickBookActor(req);
+      if (!actor) return res.status(403).json({ error: "Approved staff access required" });
+      if (process.env.QUICK_BOOK_ENABLED !== "true") return res.status(503).json({ error: "Quick Book is temporarily disabled" });
+      if (!canCompleteQuickBooking(actor)) return res.status(403).json({ error: "An owner or administrator must complete live Quick Book jobs. This draft is safely saved." });
+      const input = quickBookFinalizeSchema.parse(req.body);
+      const row = await getQuickBookSession(req.params.id);
+      if (!row) return res.status(404).json({ error: "Quick Book draft not found" });
+      if (!canReadQuickBookSession(actor, row)) return res.status(403).json({ error: "This draft belongs to another staff member" });
+      const storedBookKey = row.agentMetadata && typeof row.agentMetadata === "object"
+        ? String((row.agentMetadata as any).bookIdempotencyKey || "")
+        : "";
+      const eventId = `quick-book:${row.id}:${storedBookKey || input.idempotencyKey}`;
+      if (row.status === "booked" && row.leadId) {
+        savedStatus = 200;
+        savedBooking = { success: true, alreadyBooked: true, bookingId: row.bookingId, leadId: row.leadId,
+          total: Number((row.pricingPreview as any)?.total || 0), rewardBasis: Number((row.pricingPreview as any)?.rewardEligibleTotal || 0),
+          customerMessageSent: false, squareInvoiceCreated: false, deliveries: [] };
+        const bookedDraft = sessionDraft(row);
+        const bookedLead = await storage.getLead(row.leadId);
+        if (bookedLead) {
+          await emitJobEvent("crew_plan_saved", bookedLead, {
+            actorId: actor.id,
+            source: "staff_quick_book_retry",
+            eventId,
+            status: "assigned",
+            recipientUserIds: bookedDraft.crewMemberIds,
+            note: "Tentative Quick Book crew plan saved",
+          });
+        }
+        const deliveries = await pool.query(`
+          SELECT d.recipient_user_id AS "recipientUserId", COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''),u.email,'Crew member') AS "recipientName",
+                 d.channel,d.status,d.error_message AS "error",d.attempts
+            FROM job_alert_deliveries d LEFT JOIN users u ON u.id=d.recipient_user_id
+           WHERE d.event_id=$1 ORDER BY d.recipient_user_id,d.channel
+        `, [eventId]);
+        const savedQuote = row.pricingPreview as any;
+        return res.json({
+          success: true,
+          alreadyBooked: true,
+          bookingId: row.bookingId,
+          leadId: row.leadId,
+          orderNumber: bookedLead?.orderNumber ?? null,
+          total: Number(savedQuote?.total || bookedLead?.totalPrice || 0),
+          rewardBasis: Number(savedQuote?.rewardEligibleTotal || bookedLead?.jcmovesRewardBase || 0),
+          customerMessageSent: false,
+          squareInvoiceCreated: false,
+          deliveries: deliveries.rows,
+        });
+      }
+      if (row.revision !== input.expectedRevision) return res.status(409).json({ error: "This draft changed on another screen. Reload it before booking." });
+
+      client = await pool.connect();
+      await client.query("BEGIN");
+      const abortBooking = async (status: number, payload: Record<string, unknown>) => {
+        await client.query("ROLLBACK");
+        client.release();
+        client = null;
+        return res.status(status).json(payload);
+      };
+      const locked = await client.query(`SELECT status, revision, booking_id, lead_id FROM quick_booking_sessions WHERE id=$1 FOR UPDATE`, [row.id]);
+      const lockedRow = locked.rows[0];
+      if (!lockedRow || lockedRow.revision !== input.expectedRevision || lockedRow.status === "booked") {
+        return await abortBooking(409, { error: "This Quick Book session was already changed or booked", bookingId: lockedRow?.booking_id, leadId: lockedRow?.lead_id });
+      }
+
+      // Recompute every final gate while the session and selected workers are
+      // locked. No quote, booking row, assignment, or alert is accepted from
+      // the conversational extraction itself.
+      const state = await calculateQuickBookState(sessionDraft(row));
+      if (!state.ready || !state.quote) {
+        return await abortBooking(409, { error: "Quick Book is not ready", missingFields: state.missingFields, reviewReasons: state.reviewReasons });
+      }
+      const previousTotal = Number((row.pricingPreview as any)?.total);
+      if (!Number.isFinite(previousTotal) || Math.abs(previousTotal - state.quote.total) > 0.001) {
+        return await abortBooking(409, { error: "The exact server quote changed. Review the refreshed draft before booking.", previousTotal: Number.isFinite(previousTotal) ? previousTotal : null, currentTotal: state.quote.total });
+      }
+      const draft = state.draft;
+      const selectedSuggestions = new Map(state.crewSuggestions.map((worker) => [worker.id, worker]));
+      const invalidCrew = draft.crewMemberIds.filter((id) => !selectedSuggestions.get(id)?.available);
+      if (invalidCrew.length) return await abortBooking(409, { error: "One or more selected movers are unavailable in this arrival window", workerIds: invalidCrew });
+      const unavailableCrew = await quickBookTransactionCrewUnavailable(client, draft);
+      if (unavailableCrew.size) return await abortBooking(409, { error: "A selected mover is unavailable or no longer eligible for this date", workerIds: Array.from(unavailableCrew) });
+      const conflicts = await quickBookCrewConflicts(draft, draft.crewMemberIds, client);
+      if (conflicts.size) return await abortBooking(409, { error: "A selected mover was just assigned to another job in this arrival window", workerIds: Array.from(conflicts) });
+
+      const payoutSettings = rowToProfitShareSettings(await getDefaultPayoutSettings());
+      const profiles = draft.crewMemberIds.length
+        ? await db.select().from(workerProfiles).where(inArray(workerProfiles.userId, draft.crewMemberIds))
+        : [];
+      const profileByWorker = new Map(profiles.map((profile) => [profile.userId, profile]));
+      const quote = state.quote;
+      const nameParts = draft.customerName.trim().split(/\s+/);
+      const firstName = nameParts.shift() || "Customer";
+      const lastName = nameParts.join(" ") || "Customer";
+      const syntheticEmail = `quick-book+${draft.customerPhone.replace(/\D/g, "")}-${crypto.randomUUID()}@jconthemove.local`;
+      const customerEmail = draft.customerEmail || syntheticEmail;
+      const effectiveTruckConfig = quote.reservedEquipment?.truckConfig || draft.truckConfig;
+      const effectiveTrailerRequested = Boolean(quote.reservedEquipment?.trailerRequested);
+      const truckProvider = effectiveTruckConfig === "company_truck" ? "jc_on_the_move"
+        : effectiveTruckConfig === "customer_truck" ? "customer"
+          : effectiveTruckConfig === "rental_truck" ? "rental_uhaul" : "none";
+      const lineItems = [
+        { code: "moving_labor", label: `${draft.crewSize} movers × ${draft.estimatedHours} hours`, amount: quote.labor },
+        ...(quote.packagePrice ? [{ code: "fixed_package", label: quote.promotion?.description || "Fixed moving package", amount: quote.packagePrice }] : []),
+        ...(quote.truck ? [{ code: "company_truck", label: "JC company truck", amount: quote.truck }] : []),
+        ...(quote.trailer ? [{ code: "trailer", label: "Trailer", amount: quote.trailer }] : []),
+        ...(quote.stairs ? [{ code: "stairs", label: `${draft.stairsFlights} flights of stairs`, amount: quote.stairs }] : []),
+        ...(quote.elevator ? [{ code: "elevator", label: "Elevator access", amount: quote.elevator }] : []),
+        ...(quote.discountAmount ? [{ code: "promotion", label: quote.promotion?.code || "Promotion", amount: -quote.discountAmount }] : []),
+      ];
+      const jobPlanDetails = {
+        stairsFlights: draft.stairsFlights,
+        hasElevator: draft.hasElevator,
+        workScope: draft.workScope,
+        specialItemsNotes: draft.specialItems.notes,
+        additionalStops: draft.additionalStops,
+        propertySize: draft.propertySize,
+        bedrooms: draft.bedrooms,
+        inventory: draft.inventory,
+        specialItems: draft.specialItems,
+        truckSize: draft.truckSize,
+        truckConfig: effectiveTruckConfig,
+        trailerRequested: effectiveTrailerRequested,
+        quickBookSessionId: row.id,
+      };
+      const encryptedAccess = encryptJobAccessDetails({
+        accessCode: [draft.pickupAccessCode && `Pickup: ${draft.pickupAccessCode}`, draft.destinationAccessCode && `Destination: ${draft.destinationAccessCode}`].filter(Boolean).join("\n"),
+        entryInstructions: [draft.pickupInstructions && `Pickup: ${draft.pickupInstructions}`, draft.destinationInstructions && `Destination: ${draft.destinationInstructions}`].filter(Boolean).join("\n"),
+      });
+
+      const bookingResult = await client.query(`
+        INSERT INTO bookings
+          (customer_name, customer_email, customer_phone, service_address, notes, subtotal, discount_total, final_total,
+           token_estimate, reward_earn_rate_snapshot, reward_bonus_multiplier_snapshot, pricing_snapshot, status, source)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,$11::jsonb,'booked','staff_quick_book')
+        RETURNING id
+      `, [
+        draft.customerName, customerEmail, draft.customerPhone, draft.pickupAddress, draft.notes || null,
+        Number(quote.preDiscountTotal ?? quote.rewardEligibleTotal).toFixed(2), Number(quote.discountAmount || 0).toFixed(2), quote.total.toFixed(2),
+        quote.projectedCustomerJcMoves, quote.rateCard.jcmovesPerDollar.toFixed(4), JSON.stringify(quote),
+      ]);
+      const bookingId = String(bookingResult.rows[0].id);
+      const accessJson = JSON.stringify(jobPlanDetails);
+      const quoteSnapshot = JSON.stringify({
+        source: "staff_quick_book",
+        sessionId: row.id,
+        capturedAt: new Date().toISOString(),
+        quote,
+        request: {
+          ...draft,
+          pickupAccessCode: draft.pickupAccessCode ? "[ENCRYPTED]" : "",
+          destinationAccessCode: draft.destinationAccessCode ? "[ENCRYPTED]" : "",
+          pickupInstructions: draft.pickupInstructions ? "[ENCRYPTED]" : "",
+          destinationInstructions: draft.destinationInstructions ? "[ENCRYPTED]" : "",
+        },
+        lineItems,
+        customerMessageSent: false,
+        squareInvoiceCreated: false,
+      });
+      const leadResult = await client.query(`
+        INSERT INTO leads
+          (first_name,last_name,email,phone,service_type,from_address,to_address,move_date,property_size,details,source,status,
+           assigned_to_user_id,created_by_user_id,truck_config,trailer_requested,job_plan_details,access_instructions_ciphertext,
+           truck_provider,truck_size,crew_size,confirmed_date,base_price,jcmoves_reward_base,financial_status,crew_members,
+           crew_lead_user_id,total_special_items_fee,total_price,confirmed_hours,order_line_items,quote_notes,last_quote_updated_at,
+           arrival_window,sms_consent,sms_consent_recorded_at,sms_consent_source,sms_consent_recorded_by,promo_code,booking_id,
+           quote_snapshot,zone_snapshot,is_quote_only)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'staff_quick_book','assigned',
+                $11,$12,$13,$36,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,'quote',$22::text[],
+                $23,'0.00',$24,$25,$26::jsonb,$27,NOW(),$28,$29,$30,'staff_quick_book_explicit',$31,$32,$33,
+                $34::jsonb,$35::jsonb,false)
+        RETURNING *
+      `, [
+        firstName, lastName, customerEmail, draft.customerPhone, draft.serviceType === "moving" ? "residential" : "labor",
+        draft.pickupAddress, draft.destinationAddress || null, draft.confirmedDate, draft.propertySize || null,
+        ["[STAFF QUICK BOOK]", draft.notes].filter(Boolean).join("\n"), draft.crewLeadUserId, actor.id,
+        effectiveTruckConfig, accessJson, encryptedAccess, truckProvider, draft.truckSize, draft.crewSize,
+        draft.confirmedDate, quote.total.toFixed(2), quote.rewardEligibleTotal.toFixed(2), draft.crewMemberIds,
+        draft.crewLeadUserId, quote.total.toFixed(2), draft.estimatedHours, JSON.stringify(lineItems), draft.notes || null,
+        draft.arrivalWindow, draft.smsConsent, new Date(), actor.id,
+        quote.promo?.applied ? quote.promo.requestedCode : null, bookingId, quoteSnapshot,
+        JSON.stringify(quote.location), effectiveTrailerRequested,
+      ]);
+      const lead = leadResult.rows[0];
+      const leadId = String(lead.id);
+      await client.query(`
+        INSERT INTO booking_service_items
+          (booking_id,service_code,service_label,quantity,unit_price,line_subtotal,price_mode,details,status,assigned_to_user_id,crew_members,scheduled_at)
+        VALUES ($1,$7,$8,1,$2,$2,'fixed',$3::jsonb,'scheduled',$4,$5::text[],$6::date)
+      `, [bookingId, quote.total.toFixed(2), JSON.stringify({ ...jobPlanDetails, destinationAddress: draft.destinationAddress }), draft.crewLeadUserId, draft.crewMemberIds, draft.confirmedDate, draft.serviceType, draft.serviceType === "moving" ? "Moving labor" : "Labor-only moving help"]);
+      for (const workerId of draft.crewMemberIds) {
+        const profile = profileByWorker.get(workerId);
+        const roleOnJob = workerId === draft.crewLeadUserId ? "lead_mover" : normalizePayoutRole(profile?.payoutClassification);
+        const hourlyRate = defaultHourlyRateForRole(roleOnJob, payoutSettings);
+        const bonusWeight = profile && normalizePayoutRole(profile.payoutClassification) === roleOnJob
+          ? numberFrom(profile.defaultBonusWeight, defaultBonusWeightForRole(roleOnJob, payoutSettings))
+          : defaultBonusWeightForRole(roleOnJob, payoutSettings);
+        await client.query(`
+          INSERT INTO job_assignments
+            (lead_id,worker_id,role_on_job,hourly_rate,scheduled_hours,hours_worked,bonus_weight,is_driver_for_job,driver_hourly_premium)
+          VALUES ($1,$2,$3,$4,$5,$5,$6,false,$7)
+          ON CONFLICT (lead_id,worker_id) DO NOTHING
+        `, [leadId, workerId, roleOnJob, dbMoney(hourlyRate), dbMoney(draft.estimatedHours!), dbRatio(bonusWeight), dbMoney(payoutSettings.driverHourlyPremium)]);
+      }
+      const sessionUpdate = await client.query(`
+        UPDATE quick_booking_sessions
+           SET status='booked', revision=revision+1, structured_draft=$3::jsonb, pricing_preview=$4::jsonb,
+               suggested_crew=$5::jsonb, missing_fields='[]'::jsonb, review_reasons='[]'::jsonb,
+               booking_id=$6, lead_id=$7, completed_at=NOW(), updated_at=NOW(),
+               agent_metadata=COALESCE(agent_metadata,'{}'::jsonb) || $8::jsonb,
+               metrics=COALESCE(metrics,'{}'::jsonb) || $9::jsonb
+         WHERE id=$1 AND revision=$2 AND status IN ('draft','ready')
+         RETURNING revision
+      `, [row.id, input.expectedRevision, JSON.stringify(sealQuickBookDraft(draft)), JSON.stringify(quote), JSON.stringify(state.crewSuggestions), bookingId, leadId, JSON.stringify({ bookIdempotencyKey: input.idempotencyKey }), JSON.stringify({ completionSeconds: Math.max(0, Math.round((Date.now() - new Date(row.createdAt).getTime()) / 1000)), quoteParity: true, bookedAt: new Date().toISOString() })]);
+      if (!sessionUpdate.rowCount) throw new Error("Quick Book revision changed while booking");
+      await client.query("COMMIT");
+      savedBooking = { success: true, bookingId, leadId, orderNumber: lead.order_number ?? null,
+        total: quote.total, rewardBasis: quote.rewardEligibleTotal,
+        customerMessageSent: false, squareInvoiceCreated: false, deliveries: [] };
+      client.release();
+      client = null;
+
+      await writeLeadHistory(leadId, null, "assigned", actor.id, `Quick Book saved; assigned crew notified of tentative plan for ${draft.confirmedDate}, ${draft.arrivalWindow}.`).catch(() => undefined);
+      await emitJobEvent("crew_plan_saved", lead, {
+        actorId: actor.id,
+        source: "staff_quick_book",
+        eventId,
+        status: "assigned",
+        recipientUserIds: draft.crewMemberIds,
+        note: "Tentative Quick Book crew plan saved",
+        extra: { confirmedHours: draft.estimatedHours, quotedTotal: quote.total },
+      });
+      const deliveryResult = await pool.query(`
+        SELECT d.recipient_user_id AS "recipientUserId", COALESCE(NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),''),u.email,'Crew member') AS "recipientName",
+               d.channel, d.status, d.error_message AS "error", d.attempts
+          FROM job_alert_deliveries d
+          LEFT JOIN users u ON u.id=d.recipient_user_id
+         WHERE d.event_id=$1
+         ORDER BY d.recipient_user_id,d.channel
+      `, [eventId]);
+      const deliveryCounts = deliveryResult.rows.reduce((counts: Record<string, number>, delivery: any) => {
+        const key = `notification_${String(delivery.status || "unknown")}`;
+        counts[key] = (counts[key] || 0) + 1;
+        return counts;
+      }, {});
+      await pool.query(`UPDATE quick_booking_sessions SET metrics=COALESCE(metrics,'{}'::jsonb) || $2::jsonb WHERE id=$1`, [row.id, JSON.stringify(deliveryCounts)]).catch(() => undefined);
+      return res.status(201).json({
+        success: true,
+        bookingId,
+        leadId,
+        orderNumber: lead.order_number ?? null,
+        total: quote.total,
+        rewardBasis: quote.rewardEligibleTotal,
+        customerMessageSent: false,
+        squareInvoiceCreated: false,
+        deliveries: deliveryResult.rows,
+      });
+    } catch (error) {
+      if (savedBooking) {
+        if (client) { try { client.release(); } catch { /* committed connection */ } client = null; }
+        console.error("[quick-book] booking saved, follow-up reporting failed:", error);
+        return res.status(savedStatus).json({ ...savedBooking, deliveryAuditUnavailable: true,
+          warning: "Job saved. Crew alert status could not be confirmed. Open the saved job before retrying alerts." });
+      }
+      if (client) {
+        try { await client.query("ROLLBACK"); } catch { /* already rolled back */ }
+        client.release();
+      }
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.issues[0]?.message || "Invalid Quick Book request" });
+      console.error("[quick-book] final booking failed:", error);
+      return res.status(500).json({ error: "Quick Book could not save this job. The draft remains available and no crew alert was sent." });
+    }
+  });
+
   const jobPlanDetailsSchema = z.object({
     accessCode: z.string().trim().max(1000).optional().default(""),
     entryInstructions: z.string().trim().max(4000).optional().default(""),
@@ -12857,7 +13614,11 @@ Thank you for your business!
       const { getJobRateCard } = await import("./services/jobRateCard");
       const rateCard = await getJobRateCard();
       const rewardEligibleTotal = Number(paymentRows[0]?.jcmoves_reward_base || lead.totalPrice || lead.basePrice || 0);
+      res.setHeader("Cache-Control", "no-store");
       res.json({
+        // This shortcut supports the existing receipt/award endpoints only.
+        // A future canonical release must explicitly integrate its own workflow.
+        paymentWorkflow: process.env.JOB_PAYMENT_LEDGER_ENABLED === "true" ? "canonical" : "legacy",
         state,
         paidInFull,
         completed: lead.status === "completed",
@@ -14463,7 +15224,7 @@ Thank you for your business!
         stats,
         acceptedJobTypes,
         notificationPreference,
-        discordInviteUrl: "https://discord.gg/G6dcwFY4E",
+        discordInviteUrl: "https://discord.gg/8zVq5dxKQ",
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -14564,7 +15325,7 @@ Thank you for your business!
       res.json({
         success: true,
         notificationPreference: preference,
-        discordInviteUrl: "https://discord.gg/G6dcwFY4E",
+        discordInviteUrl: "https://discord.gg/8zVq5dxKQ",
       });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -28468,6 +29229,17 @@ Thank you for your business!
   });
 
   // ── Public jackpot status ───────────────────────────────────────────────────
+  const {DAILY_SPIN_SCHEMA,createDailySpin}=await import('./services/dailySpin');
+  await pool.query(DAILY_SPIN_SCHEMA);
+  const dailySpin=createDailySpin(pool);
+  app.get('/api/reward-shop/daily-spin',isAuthenticated,async(req:any,res)=>{
+    try{return res.json(await dailySpin.status(req.session.userId));}
+    catch{return res.status(500).json({error:'Unable to check your daily spin'});}
+  });
+  app.post('/api/reward-shop/daily-spin/claim',isAuthenticated,async(req:any,res)=>{
+    try{return res.json(await dailySpin.claim(req.session.userId));}
+    catch(error){return res.status(400).json({error:error instanceof Error?error.message:'Unable to claim your daily spin'});}
+  });
   app.get("/api/reward-shop/jackpots", async (_req, res) => {
     try {
       const { rows } = await pool.query(`SELECT * FROM jackpots ORDER BY type`);
@@ -28478,307 +29250,8 @@ Thank you for your business!
   });
 
   // ── Quantum Spin: perform spin ───────────────────────────────────────────────
-  app.post("/api/reward-shop/spin", isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = (req.session as any).userId;
-      const { redemptionId, useFreeSpinEntitlementId } = req.body;
-
-      // Check enabled
-      const { rows: cfgRows } = await pool.query(`SELECT setting_key, setting_value FROM spin_config`);
-      const cfg: Record<string, string> = {};
-      for (const row of cfgRows) cfg[row.setting_key] = row.setting_value;
-      if (cfg['spin_wheel_enabled'] === 'false') {
-        return res.status(403).json({ error: "Quantum Spin is temporarily disabled." });
-      }
-
-      // Determine payment: free spin entitlement → marketplace redemption → wallet deduction
-      let usedFreeSpinId: number | null = null;
-      if (useFreeSpinEntitlementId) {
-        // Decrement spin count; only mark as 'used' when the last spin is consumed
-        await pool.query(
-          `UPDATE reward_entitlements
-           SET value_json = CASE
-             WHEN (value_json->>'spins')::int <= 1
-               THEN value_json
-               ELSE jsonb_set(value_json, '{spins}', to_jsonb((value_json->>'spins')::int - 1))
-             END,
-             status = CASE
-               WHEN (value_json->>'spins')::int <= 1 THEN 'used' ELSE status
-             END,
-             expires_at = CASE
-               WHEN (value_json->>'spins')::int <= 1 THEN NOW() ELSE expires_at
-             END
-           WHERE id=$1 AND user_id=$2 AND entitlement_type='spin_credit' AND status='active'`,
-          [useFreeSpinEntitlementId, userId]
-        );
-        usedFreeSpinId = useFreeSpinEntitlementId;
-      } else if (!redemptionId) {
-        const spinCost = parseInt(cfg['spin_cost_tokens'] || '100');
-        try {
-          await storage.debitWalletTokens(userId, spinCost);
-        } catch {
-          return res.status(400).json({ error: `You need ${spinCost} JCMOVES to spin.` });
-        }
-      }
-
-      // ── Quantum Spin prize table ───────────────────────────────────────────
-      // Diversified Treasury Version — avg token return ~62 JCMOVES per 100-JCMOVES spin
-      // Spread across 16 outcomes. "Nada" adds drama. Big prizes appear often enough to feel real.
-      // Total: 22.1+20+15+12+8+5+4+3.5+2.5+1.5+0.8+0.4+0.2+1.5+0.3+1.0+0.2+2.0 = 100.000
-      // EV (tokens): ~62 JCMOVES | House edge: ~38% | Treasury healthy.
-      const PRIZES = [
-        { label: "Nada",       tokens: 0,     probability: 22.100, type: "tokens"           }, // no tokens — adds suspense
-        { label: "10",         tokens: 10,    probability: 20.000, type: "tokens"           },
-        { label: "25",         tokens: 25,    probability: 15.000, type: "tokens"           },
-        { label: "50",         tokens: 50,    probability: 12.000, type: "tokens"           },
-        { label: "75",         tokens: 75,    probability:  8.000, type: "tokens"           },
-        { label: "100",        tokens: 100,   probability:  5.000, type: "tokens"           },
-        { label: "150",        tokens: 150,   probability:  4.000, type: "tokens"           },
-        { label: "250",        tokens: 250,   probability:  3.500, type: "tokens"           },
-        { label: "500",        tokens: 500,   probability:  2.500, type: "tokens"           },
-        { label: "1,000",      tokens: 1000,  probability:  1.500, type: "tokens"           },
-        { label: "2,500",      tokens: 2500,  probability:  0.800, type: "tokens"           },
-        { label: "5,000",      tokens: 5000,  probability:  0.400, type: "tokens"           },
-        { label: "10,000",     tokens: 10000, probability:  0.200, type: "tokens"           },
-        { label: "Mystery Box",tokens: 0,     probability:  1.500, type: "mystery"          },
-        { label: "$5 Coffee",  tokens: 0,     probability:  0.300, type: "gift_card_coffee" },
-        { label: "10% Off",    tokens: 0,     probability:  1.000, type: "coupon_10pct"     },
-        { label: "25% Off",    tokens: 0,     probability:  0.200, type: "coupon_25pct"     },
-        { label: "Free Spin",  tokens: 100,   probability:  2.000, type: "tokens"           }, // refunds the spin cost
-        // Note: jackpot overlays (mini / major) apply independently on top of any prize
-      ];
-
-      // Server-side weighted random pick
-      const rand = Math.random() * 100;
-      let cumulative = 0, prizeIndex = 0;
-      for (let i = 0; i < PRIZES.length; i++) {
-        cumulative += PRIZES[i].probability;
-        if (rand <= cumulative) { prizeIndex = i; break; }
-      }
-      const prize = PRIZES[prizeIndex];
-
-      // ── Load user info for activity feed ──────────────────────────────────
-      const [userRow] = await db.select({ firstName: users.firstName, lastName: users.lastName, username: users.username })
-        .from(users).where(eq(users.id, userId)).limit(1);
-      const displayName = userRow?.username
-        || (userRow?.firstName
-          ? `${userRow.firstName} ${(userRow.lastName || '').charAt(0)}.`
-          : 'Someone');
-
-      // ── Jackpot contributions + win checks ─────────────────────────────────
-      const { rows: jRows } = await pool.query(`SELECT * FROM jackpots ORDER BY type`);
-      let jackpotTypeWon: string | null = null;
-      let jackpotAmountWon: number | null = null;
-      let jackpotBonusTokens = 0;
-
-      for (const jp of jRows) {
-        const newVal = jp.current_value + jp.contribution_per_spin;
-        const winRoll = Math.random() * 100;
-        const winPct = parseFloat(jp.win_probability_pct);
-        if (winRoll < winPct) {
-          jackpotTypeWon = jp.type;
-          jackpotAmountWon = newVal;
-          jackpotBonusTokens += newVal;
-          const winnerName = userRow?.username || `${userRow?.firstName || ''} ${userRow?.lastName || ''}`.trim() || 'Lucky Winner';
-          await pool.query(
-            `UPDATE jackpots SET current_value=$1, last_won_at=NOW(), last_winner_id=$2, last_winner_name=$3, last_won_amount=$4, updated_at=NOW() WHERE type=$5`,
-            [jp.starting_value, userId, winnerName, newVal, jp.type]
-          );
-          // Log jackpot win
-          await pool.query(
-            `INSERT INTO jackpot_wins (user_id, jackpot_type, amount) VALUES ($1,$2,$3)`,
-            [userId, jp.type, newVal]
-          );
-          // Activity feed
-          await pool.query(
-            `INSERT INTO activity_feed_events (user_id, event_type, message, metadata) VALUES ($1,'jackpot_win',$2,$3)`,
-            [userId, `🏆 ${displayName} hit the ${jp.type === 'major' ? 'Major' : 'Mini'} Jackpot (${newVal.toLocaleString()} JCMOVES)!`, JSON.stringify({ type: jp.type, amount: newVal })]
-          );
-          console.log(`🏆 JACKPOT! ${jp.type.toUpperCase()} jackpot of ${newVal} JCMOVES won by ${winnerName}`);
-        } else {
-          await pool.query(`UPDATE jackpots SET current_value=$1, updated_at=NOW() WHERE type=$2`, [newVal, jp.type]);
-        }
-      }
-
-      // ── Coupon prizes ──────────────────────────────────────────────────────
-      let couponCode: string | null = null;
-      let couponExpiry: Date | null = null;
-      const rand6 = () => Math.random().toString(36).substring(2, 8).toUpperCase();
-
-      if (prize.type === 'coupon_10pct') {
-        const expiryDays = parseInt(cfg['coupon_10pct_expiry_days'] || '90');
-        couponExpiry = new Date(Date.now() + expiryDays * 86400000);
-        couponCode = `QS10-${rand6()}`;
-        await pool.query(
-          `INSERT INTO promo_codes (id, code, description, discount_percent, discount_percent_jewelry, reward_tokens, referral_reward_tokens, max_uses, is_active, expires_at)
-           VALUES (gen_random_uuid(),$1,$2,'10.00','0.00','0.00','0.00',1,true,$3)`,
-          [couponCode, `10% off (max $25) — Quantum Spin prize. Min 2 movers 2hrs. Expires ${couponExpiry.toLocaleDateString()}`, couponExpiry]
-        );
-        await pool.query(
-          `INSERT INTO activity_feed_events (user_id, event_type, message, metadata) VALUES ($1,'coupon_won',$2,$3)`,
-          [userId, `🎫 ${displayName} unlocked a 10% Off coupon`, JSON.stringify({ couponCode })]
-        );
-      } else if (prize.type === 'coupon_25pct') {
-        const expiryDays = parseInt(cfg['coupon_25pct_expiry_days'] || '30');
-        couponExpiry = new Date(Date.now() + expiryDays * 86400000);
-        couponCode = `QS25-${rand6()}`;
-        await pool.query(
-          `INSERT INTO promo_codes (id, code, description, discount_percent, discount_percent_jewelry, reward_tokens, referral_reward_tokens, max_uses, is_active, expires_at)
-           VALUES (gen_random_uuid(),$1,$2,'25.00','0.00','0.00','0.00',1,true,$3)`,
-          [couponCode, `25% off labor (max 50K JCMOVES eq.) — Quantum Spin prize. Min 2 movers 2hrs. Expires ${couponExpiry.toLocaleDateString()}`, couponExpiry]
-        );
-        await pool.query(
-          `INSERT INTO activity_feed_events (user_id, event_type, message, metadata) VALUES ($1,'coupon_won',$2,$3)`,
-          [userId, `🎫 ${displayName} unlocked a 25% Off coupon`, JSON.stringify({ couponCode })]
-        );
-      } else if (prize.type === 'gift_card_coffee') {
-        const expiryDays = parseInt(cfg['coffee_card_expiry_days'] || '90');
-        couponExpiry = new Date(Date.now() + expiryDays * 86400000);
-        couponCode = `COFFEE-${rand6()}`;
-        await pool.query(
-          `INSERT INTO promo_codes (id, code, description, discount_percent, discount_percent_jewelry, reward_tokens, referral_reward_tokens, max_uses, is_active, expires_at)
-           VALUES (gen_random_uuid(),$1,$2,'0.00','0.00','0.00','0.00',1,true,$3)`,
-          [couponCode, `$5 coffee gift card — Quantum Spin prize. Pending fulfillment. Expires ${couponExpiry.toLocaleDateString()}`, couponExpiry]
-        );
-        await pool.query(
-          `INSERT INTO activity_feed_events (user_id, event_type, message, metadata) VALUES ($1,'coffee_won',$2,$3)`,
-          [userId, `☕ ${displayName} won a $5 Coffee Gift Card`, JSON.stringify({ couponCode })]
-        );
-      }
-
-      // ── Mystery Box: secondary server-side resolution ──────────────────────
-      let mysteryResult: any = null;
-      let mysteryTokens = 0;
-      let mysteryExtra: any = {};
-      if (prize.type === 'mystery') {
-        const MYSTERY_POOL = [
-          { type: 'tokens',          value: 300,  weight: 35 },
-          { type: 'tokens',          value: 500,  weight: 25 },
-          { type: 'tokens',          value: 1000, weight: 15 },
-          { type: 'tokens',          value: 2000, weight: 10 },
-          { type: 'gift_card_coffee',value: 5,    weight: 5  },
-          { type: 'coupon_10pct',    value: 0,    weight: 5  },
-          { type: 'free_spin',       value: 1,    weight: 5  },
-        ];
-        const total = MYSTERY_POOL.reduce((s, p) => s + p.weight, 0);
-        let mRand = Math.random() * total;
-        let pick = MYSTERY_POOL[0];
-        for (const p of MYSTERY_POOL) { mRand -= p.weight; if (mRand <= 0) { pick = p; break; } }
-
-        mysteryResult = pick;
-        if (pick.type === 'tokens') {
-          mysteryTokens = pick.value;
-        } else if (pick.type === 'gift_card_coffee') {
-          const expiryDays = parseInt(cfg['coffee_card_expiry_days'] || '90');
-          const mCoffeeExpiry = new Date(Date.now() + expiryDays * 86400000);
-          const mCode = `MYSTERY-COFFEE-${rand6()}`;
-          await pool.query(
-            `INSERT INTO promo_codes (id, code, description, discount_percent, discount_percent_jewelry, reward_tokens, referral_reward_tokens, max_uses, is_active, expires_at)
-             VALUES (gen_random_uuid(),$1,$2,'0.00','0.00','0.00','0.00',1,true,$3)`,
-            [mCode, `$5 coffee gift card — Quantum Spin Mystery Box. Expires ${mCoffeeExpiry.toLocaleDateString()}`, mCoffeeExpiry]
-          );
-          mysteryExtra = { couponCode: mCode, couponExpiry: mCoffeeExpiry };
-        } else if (pick.type === 'coupon_10pct') {
-          const expiryDays = parseInt(cfg['coupon_10pct_expiry_days'] || '90');
-          const mCouponExpiry = new Date(Date.now() + expiryDays * 86400000);
-          const mCode = `MYSTERY10-${rand6()}`;
-          await pool.query(
-            `INSERT INTO promo_codes (id, code, description, discount_percent, discount_percent_jewelry, reward_tokens, referral_reward_tokens, max_uses, is_active, expires_at)
-             VALUES (gen_random_uuid(),$1,$2,'10.00','0.00','0.00','0.00',1,true,$3)`,
-            [mCode, `10% off (max $25) — Quantum Spin Mystery Box. Expires ${mCouponExpiry.toLocaleDateString()}`, mCouponExpiry]
-          );
-          mysteryExtra = { couponCode: mCode, couponExpiry: mCouponExpiry };
-        } else if (pick.type === 'free_spin') {
-          // Issue a free spin entitlement (expires in 30 days)
-          const freeSpinExpiry = new Date(Date.now() + 30 * 86400000);
-          await pool.query(
-            `INSERT INTO reward_entitlements (user_id, item_id, entitlement_type, value_json, status, expires_at)
-             VALUES ($1, 0, 'spin_credit', '{"spins":1}', 'active', $2)`,
-            [userId, freeSpinExpiry]
-          );
-          mysteryExtra = { freeSpin: true };
-        }
-
-        // Log mystery box result
-        const spinResultId = null; // Will be updated below
-        await pool.query(
-          `INSERT INTO mystery_box_results (user_id, reward_type, reward_value, coupon_code) VALUES ($1,$2,$3,$4)`,
-          [userId, pick.type, pick.value.toString(), mysteryExtra.couponCode || null]
-        );
-        // Activity feed
-        const mysteryMsg = pick.type === 'tokens'
-          ? `🎁 ${displayName} opened a Mystery Box and got ${pick.value} JCMOVES`
-          : pick.type === 'free_spin'
-          ? `🎁 ${displayName} opened a Mystery Box and got a Free Spin`
-          : `🎁 ${displayName} opened a Mystery Box and unlocked a special reward`;
-        await pool.query(
-          `INSERT INTO activity_feed_events (user_id, event_type, message, metadata) VALUES ($1,'mystery_box',$2,$3)`,
-          [userId, mysteryMsg, JSON.stringify({ type: pick.type, value: pick.value })]
-        );
-      }
-
-      // ── Credit all tokens ──────────────────────────────────────────────────
-      const totalTokens = (prize.tokens || 0) + mysteryTokens + jackpotBonusTokens;
-      if (totalTokens > 0) {
-        await storage.creditWalletTokens(userId, totalTokens);
-      }
-
-      // ── Mark marketplace redemption completed ──────────────────────────────
-      if (redemptionId) {
-        await db.update(rewardRedemptions)
-          .set({ status: "completed", fulfilledAt: new Date(), adminNotes: `Quantum Spin: ${prize.label}` })
-          .where(and(eq(rewardRedemptions.id, parseInt(redemptionId)), eq(rewardRedemptions.userId, userId)));
-      }
-
-      // ── Insert spin result record ──────────────────────────────────────────
-      const { rows: spinInsert } = await pool.query(
-        `INSERT INTO spin_results (user_id, redemption_id, prize_index, prize_label, prize_tokens, prize_type, jackpot_type_won, jackpot_amount_won, coupon_code, fulfillment_status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'fulfilled') RETURNING id`,
-        [userId, redemptionId || null, prizeIndex, prize.label, totalTokens, prize.type, jackpotTypeWon, jackpotAmountWon, couponCode]
-      );
-      const spinResultId = spinInsert[0]?.id;
-
-      // ── Reward record ──────────────────────────────────────────────────────
-      if (totalTokens > 0) {
-        await db.insert(rewards).values({
-          userId,
-          rewardType: jackpotTypeWon ? `${jackpotTypeWon}_jackpot_win` : "quantum_spin_win",
-          tokenAmount: totalTokens.toString(),
-          cashValue: (totalTokens * 0.00000508432).toFixed(4),
-          status: "confirmed",
-          metadata: { spinResultId, prizeIndex, label: prize.label, prizeType: prize.type, jackpotTypeWon },
-        });
-      }
-
-      // ── Activity feed: token wins ──────────────────────────────────────────
-      if (prize.type === 'tokens' && prize.tokens > 0) {
-        await pool.query(
-          `INSERT INTO activity_feed_events (user_id, event_type, message, metadata) VALUES ($1,'spin_win',$2,$3)`,
-          [userId, `🔥 ${displayName} won ${prize.label} JCMOVES`, JSON.stringify({ tokens: prize.tokens })]
-        );
-      }
-
-      console.log(`⚡ Quantum Spin: ${displayName} → ${prize.label} (${prize.type})${jackpotTypeWon ? ` + ${jackpotTypeWon.toUpperCase()} JACKPOT ${jackpotAmountWon}` : ''}`);
-
-      res.json({
-        prizeIndex,
-        tokens: totalTokens,
-        label: prize.label,
-        prizeType: prize.type,
-        jackpotTypeWon,
-        jackpotAmountWon,
-        couponCode: couponCode || mysteryExtra?.couponCode || null,
-        couponExpiry: couponExpiry ? couponExpiry.toISOString() : null,
-        mysteryResult: mysteryResult ? { type: mysteryResult.type, value: mysteryResult.value, ...mysteryExtra } : null,
-        spinResultId,
-        usedFreeSpinId,
-      });
-    } catch (e: any) {
-      console.error("Quantum Spin error:", e);
-      res.status(500).json({ error: e.message || "Spin failed" });
-    }
-  });
-
+  const {createQuantumSpinHandler}=await import('./services/quantumSpin');
+  app.post('/api/reward-shop/spin',isAuthenticated,createQuantumSpinHandler(pool));
   // ── Spin Streak Bonus ────────────────────────────────────────────────────────
   app.post("/api/reward-shop/streak-bonus", isAuthenticated, async (req: any, res) => {
     try {
@@ -28851,7 +29324,7 @@ Thank you for your business!
     try {
       const userId = (req.session as any).userId;
       const { rows } = await pool.query(
-        `SELECT id, value_json, expires_at FROM reward_entitlements WHERE user_id=$1 AND entitlement_type='spin_credit' AND status='active' AND (expires_at IS NULL OR expires_at > NOW()) LIMIT 5`,
+        `SELECT id, value_json, expires_at FROM reward_entitlements WHERE user_id=$1 AND entitlement_type='spin_credit' AND status='active' AND (expires_at IS NULL OR expires_at > NOW()) AND COALESCE((value_json->>'spins')::int,1)>0 ORDER BY expires_at ASC NULLS LAST,id LIMIT 5`,
         [userId]
       );
       res.json(rows);
@@ -30688,6 +31161,11 @@ Thank you for your business!
           console.error("[admin mark-paid] post-completion JCMOVES disbursement failed:", disbursementError);
           return res.json({ success: true, status: "completed", jcmoves: null, jcmovesPending: true });
         }
+      }
+
+      const missingSetup = manualDispatchMissingSetup(lead);
+      if (missingSetup.length) {
+        return res.status(409).json({ error: `Save ${missingSetup.join(", ")} before dispatching.`, missingSetup });
       }
 
       // Record 'paid' transition first, then 'dispatched'
@@ -32912,7 +33390,10 @@ Thank you for your business!
   // pricing engine, and the catalog/bundle merchandising endpoints used by
   // the upcoming /book page. Mounted at root so paths read /api/bookings,
   // /api/bookings/quote, /api/bundles/featured, /api/service-catalog.
+  app.use("/api/admin/pricing-training", createPricingTrainingRouter(isAuthenticated, requireBusinessOwner, pool));
+  app.use("/api/pricing-training-team", createPricingTrainingTeamRouter(isAuthenticated, requireEmployee, requireBusinessOwner, pool, { reward: rewardTrainingContribution, thank: thankTrainingContributor }));
   app.use("/api", bookingsRouter);
+  app.use("/api/rewards/phone", phoneRewardsRouter);
   app.use("/api", quotesRouter);
   app.use("/api", pricingV2Router);
   app.use("/api", commerceCatalogRouter);
@@ -33946,4 +34427,3 @@ async function checkAndRunLotteryDraws() {
   // Also ensure fresh open rounds exist after draws
   await ensureActiveLotteryRounds();
 }
-

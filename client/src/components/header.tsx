@@ -131,13 +131,13 @@ export default function Header() {
                     {moreMenuOpen && (
                       <div className="absolute right-0 mt-1 w-48 bg-background border border-border rounded-lg shadow-lg py-1 z-50">
                         <Link
-                          href="/nature-made-jewls"
+                          href="/handmade-jewels-by-ashley"
                           className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors hover:bg-muted"
                           data-testid="button-jewls"
                           onClick={() => setMoreMenuOpen(false)}
                         >
                           <Gem className="h-4 w-4 text-emerald-500" />
-                          <span className="bg-gradient-to-r from-emerald-600 to-amber-500 bg-clip-text text-transparent">Jewls</span>
+                          <span className="bg-gradient-to-r from-emerald-600 to-amber-500 bg-clip-text text-transparent">Ashley’s Shop</span>
                         </Link>
                         <Link
                           href="/staking"
@@ -339,13 +339,13 @@ export default function Header() {
                   <span className="px-3 py-1 text-xs text-muted-foreground/60 uppercase tracking-wider">Marketplace</span>
 
                   <Link
-                    href="/nature-made-jewls"
+                    href="/handmade-jewels-by-ashley"
                     className="flex items-center gap-2 px-3 py-2.5 rounded-md text-sm font-bold transition-colors hover:bg-muted"
                     data-testid="button-mobile-jewls"
                     onClick={() => setMobileMenuOpen(false)}
                   >
                     <Gem className="h-4 w-4 text-emerald-500" />
-                    <span className="bg-gradient-to-r from-emerald-600 to-amber-500 bg-clip-text text-transparent">Jewls</span>
+                    <span className="bg-gradient-to-r from-emerald-600 to-amber-500 bg-clip-text text-transparent">Ashley’s Shop</span>
                   </Link>
                   <Link
                     href="/staking"

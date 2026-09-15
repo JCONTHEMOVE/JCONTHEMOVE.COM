@@ -29,6 +29,7 @@ export type MarketingSignals = {
   activePromotion?: { code: string; description: string } | null;
   prior14DayKeys: Set<string>;
   performance: Record<string, { bookings: number; leads: number; callClicks: number }>;
+  workerPlans?: Array<{service:string;territories:string[];ideas:string;message:string;goals:{bookings:number;qualifiedInquiries:number}}>;
 };
 
 const WEEKDAY_SERVICE: Record<number, MarketingBotService> = {
@@ -134,6 +135,15 @@ export function scoreMarketingCandidates(signals: MarketingSignals): MarketingCa
       }
 
       const result = signals.performance[key] || { bookings: 0, leads: 0, callClicks: 0 };
+      const plans = (signals.workerPlans || []).filter(plan => plan.service === service && plan.territories.includes(territory));
+      if (plans.length) {
+        score += 16;
+        reasons.push('Matches a worker-selected service lane and shared area');
+        if (plans.some(plan => plan.goals.bookings > result.bookings || plan.goals.qualifiedInquiries > result.leads)) {
+          score += 8;
+          reasons.push('Supports a worker growth target');
+        }
+      }
       const performancePoints = Math.min(32, result.bookings * 12 + result.leads * 3 + result.callClicks * 0.5);
       score += performancePoints;
       if (result.bookings > 0) reasons.push(`${result.bookings} confirmed booking${result.bookings === 1 ? "" : "s"} from similar campaigns`);

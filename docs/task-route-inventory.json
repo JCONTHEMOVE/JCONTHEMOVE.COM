@@ -1,0 +1,3004 @@
+[
+  {
+    "path": "/",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/customer-home.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "customer-home",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/my-jobs",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/my-jobs.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "my-jobs",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/jobs",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/my-jobs.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "my-jobs",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/book",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/book.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "book",
+    "inputCandidates": [
+      "First name",
+      "Last name",
+      "Phone number",
+      "Service",
+      "Notes (optional)",
+      "Photo, video, or album link (optional)",
+      "Full name",
+      "Phone",
+      "Email",
+      "Notes for the crew (optional)",
+      "Assign to crew member",
+      "Lead source",
+      "Internal notes (crew-only)",
+      "Select heavy / specialty items billed extra",
+      "Apply JCMOVES tokens"
+    ],
+    "actionCandidates": [
+      "Call Now",
+      "Text Details / Album",
+      "Build a detailed quote",
+      "Return Home",
+      "Build my quote instead",
+      "Apply Smart Start"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/book/chat",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/book.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "book",
+    "inputCandidates": [
+      "First name",
+      "Last name",
+      "Phone number",
+      "Service",
+      "Notes (optional)",
+      "Photo, video, or album link (optional)",
+      "Full name",
+      "Phone",
+      "Email",
+      "Notes for the crew (optional)",
+      "Assign to crew member",
+      "Lead source",
+      "Internal notes (crew-only)",
+      "Select heavy / specialty items billed extra",
+      "Apply JCMOVES tokens"
+    ],
+    "actionCandidates": [
+      "Call Now",
+      "Text Details / Album",
+      "Build a detailed quote",
+      "Return Home",
+      "Build my quote instead",
+      "Apply Smart Start"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/schedule-request/:token",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/schedule-request.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "schedule-request",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/wallet",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/customer/wallet.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "customer/wallet",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/wallet/add-credit",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/wallet-add-credit.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "wallet-add-credit",
+    "inputCandidates": [
+      "Custom amount (USD)"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/earn",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/customer/earn.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "customer/earn",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/post-job",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/window-cleaning",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/window-cleaning.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "window-cleaning",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/lawn-care",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/lawn-care.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "lawn-care",
+    "inputCandidates": [
+      "Service address",
+      "Package",
+      "Property size",
+      "Service frequency",
+      "Add-ons"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/cleaning",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/move-out-cleaning.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "move-out-cleaning",
+    "inputCandidates": [
+      "Service address",
+      "Cleaning package",
+      "Home size",
+      "Detail add-ons"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/roofing",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/roofing.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "roofing",
+    "inputCandidates": [
+      "Project address",
+      "Roof size (squares)",
+      "Material",
+      "Stories",
+      "Pitch",
+      "Existing roof condition"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/demolition",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/demolition.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "demolition",
+    "inputCandidates": [
+      "Project address",
+      "Project type",
+      "Project extras"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/packages",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/crew-jobs",
+    "audience": "crew",
+    "components": [
+      "client/src/pages/crew-jobs.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "crew-jobs",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/rewards",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/customer-rewards.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "customer-rewards",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/profile",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/customer-profile.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "customer-profile",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/customer-portal",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/customer-portal.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "customer-portal",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/staking",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/staking.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "staking",
+    "inputCandidates": [
+      "ETH Amount Sent",
+      "Transaction Hash (optional)"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/marketplace",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/rewards-marketplace.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "rewards-marketplace",
+    "inputCandidates": [
+      "📦 How would you like to receive your reward?",
+      "Preferred service date (optional)",
+      "Additional notes (optional)"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/mining",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/mining.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "mining",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/pending-approval",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/pending-approval.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "pending-approval",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/pending-approval",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/pending-approval.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "pending-approval",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/customer-portal",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/customer-portal.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "customer-portal",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/crew/add-job",
+    "audience": "crew",
+    "components": [
+      "client/src/pages/crew/add-job.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "crew/add-job",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/crew/pricing-training",
+    "audience": "crew",
+    "components": [
+      "client/src/pages/pricing-training-team.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "pricing-training-team",
+    "inputCandidates": [],
+    "actionCandidates": [
+      "Use as starting point for final answer"
+    ],
+    "optionalSections": [
+      "Leaderboard and daily prize",
+      "Help"
+    ],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/crew/jobs",
+    "audience": "crew",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/crew/schedule",
+    "audience": "crew",
+    "components": [
+      "client/src/pages/crew/schedule.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "crew/schedule",
+    "inputCandidates": [
+      "Weekly Goal",
+      "Monthly Goal",
+      "Preferred Job Size"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/crew/reviews",
+    "audience": "crew",
+    "components": [
+      "client/src/pages/crew/reviews.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "crew/reviews",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/crew/marketing",
+    "audience": "crew",
+    "components": [
+      "client/src/pages/crew/earnings.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "crew/earnings",
+    "inputCandidates": [
+      "Area",
+      "Focus",
+      "Creative source",
+      "Photo from device",
+      "Post note"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [
+      "Help",
+      "Bot setup and missions",
+      "Create an ad",
+      "Ad performance",
+      "More marketing tools"
+    ],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/crew/earnings",
+    "audience": "crew",
+    "components": [
+      "client/src/pages/crew/earnings.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "crew/earnings",
+    "inputCandidates": [
+      "Area",
+      "Focus",
+      "Creative source",
+      "Photo from device",
+      "Post note"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [
+      "Help",
+      "Bot setup and missions",
+      "Create an ad",
+      "Ad performance",
+      "More marketing tools"
+    ],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/crew/tutorials",
+    "audience": "crew",
+    "components": [
+      "client/src/pages/tutorials.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "tutorials",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/crew",
+    "audience": "crew",
+    "components": [
+      "client/src/pages/job-planner.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "job-planner",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin",
+    "audience": "owner",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/overview",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/overview.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/overview",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/ops-board",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/ops-board.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/ops-board",
+    "inputCandidates": [
+      "Base Package",
+      "Small-Job Price",
+      "Date",
+      "Window",
+      "Mover Count",
+      "Extra Hours",
+      "Crew",
+      "Truck",
+      "Truck Miles",
+      "Travel Miles",
+      "Job Description / Quote Notes"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/dispatch",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/dispatch.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/dispatch",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/regional-automation",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/regional-automation.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/regional-automation",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/jobs",
+    "audience": "owner",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/people",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/people.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/people",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/finance",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/finance.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/finance",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/gift-card-bonuses",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/gift-card-bonuses.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/gift-card-bonuses",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/pricing",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/pricing.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/pricing",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/pricing-training",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/pricing-training.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/pricing-training",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/marketplace",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/marketplace.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/marketplace",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/marketplace-playbook",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/marketplace-playbook.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/marketplace-playbook",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/system",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/system.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/system",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/sponsors",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/sponsors.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/sponsors",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/analytics",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/analytics.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/analytics",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/booking-analytics",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/booking-analytics.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/booking-analytics",
+    "inputCandidates": [
+      "From",
+      "To"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/marketing-network",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/marketing-network.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/marketing-network",
+    "inputCandidates": [
+      "Slug",
+      "Sort",
+      "Display name",
+      "Brand name",
+      "Tagline",
+      "Promo code",
+      "Phone",
+      "CTA label",
+      "Service focus, one per line",
+      "Territory",
+      "Audience",
+      "Facebook personality",
+      "Weekly prompts, one per line"
+    ],
+    "actionCandidates": [
+      "View"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/marketing",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/northwoods-marketing.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/northwoods-marketing",
+    "inputCandidates": [
+      "Market",
+      "Date",
+      "Start",
+      "End",
+      "Crew size",
+      "Open slots",
+      "Services crew can perform"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/chief-of-staff",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/chief-of-staff.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/chief-of-staff",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/marketing-webhooks",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/marketing-webhooks.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/marketing-webhooks",
+    "inputCandidates": [
+      "Campaign",
+      "Headline",
+      "Post Text",
+      "Area",
+      "Focus",
+      "Audience",
+      "Promo Code",
+      "Photo URL",
+      "CTA Link",
+      "CTA Label",
+      "Rep Slug"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/payments",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/AdminPaymentsPage.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/AdminPaymentsPage",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/wallet-ledger",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/AdminWalletLedgerPage.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/AdminWalletLedgerPage",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/cashouts",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/AdminCashoutsPage.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/AdminCashoutsPage",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/launch-checklist",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin/AdminLaunchChecklistPage.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin/AdminLaunchChecklistPage",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/schedule",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/job-planner.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "job-planner",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/tutorials",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/tutorials.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "tutorials",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/calibrate",
+    "audience": "owner",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/pricing-calibration",
+    "audience": "owner",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/treasury",
+    "audience": "owner",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/users",
+    "audience": "owner",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/employees",
+    "audience": "owner",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/rewards",
+    "audience": "owner",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/hub.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "hub",
+    "inputCandidates": [
+      "Weekly Goal",
+      "Monthly Goal",
+      "Preferred Job Size",
+      "Weekly Job Goal",
+      "Monthly Job Goal"
+    ],
+    "actionCandidates": [
+      "🎁 Redeem Rewards",
+      "📊 History"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/dashboard",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/employee/add-job",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/employee/dashboard",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/employee-dashboard.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "employee-dashboard",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/leads",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/lead/:id",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/lead-detail.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "lead-detail",
+    "inputCandidates": [
+      "Send by",
+      "Add a personal note (optional)",
+      "Payment method",
+      "Payment date",
+      "Closeout note (optional)",
+      "Personal note (optional)",
+      "Delivery Method",
+      "Amount ($)",
+      "Description"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/pending-quotes",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/pending-quotes.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "pending-quotes",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/employees",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/employees.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "employees",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/rewards",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/rewards.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "rewards",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/mining",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/mining.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "mining",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/swap",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/swap.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "swap",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/request-swap",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/request-swap.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "request-swap",
+    "inputCandidates": [
+      "Amount of JCMOVES",
+      "Desired Asset",
+      "Your Wallet Address",
+      "I understand this request will be reviewed and processed manually by the team.",
+      "I understand there is no guaranteed exchange rate. The final amount will be determined at the time of processing.",
+      "I agree to the terms and understand that requests may be declined based on availability and policy."
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/reviews",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/reviews.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "reviews",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/profile",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/profile.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "profile",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/tutorials",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/tutorials.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "tutorials",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/customer-portal",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/customer-portal.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "customer-portal",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/pending-approval",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/pending-approval.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "pending-approval",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/hub",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/control",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/control.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "control",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/in-god-we-trust",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/treasury",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin-treasury.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin-treasury",
+    "inputCandidates": [
+      "Customer Name",
+      "Email",
+      "Phone (optional)",
+      "Amount ($)",
+      "Description",
+      "Recipient Wallet Address",
+      "Amount (JCMOVES)",
+      "Decline Reason",
+      "Amount Sent",
+      "Transaction Hash",
+      "Execute on blockchain",
+      "Manual TX Hash",
+      "JCMOVES Amount",
+      "Code *",
+      "Offer Type",
+      "Service Discount %",
+      "Package Price $",
+      "Required Movers",
+      "Required Hours",
+      "Local Mile Limit",
+      "Jewelry Discount %",
+      "Bonus JCMOVES (to customer)",
+      "Referral JCMOVES (to code owner)",
+      "Max Uses (blank = unlimited)",
+      "Expiry Date (blank = never)"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/lottery",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin-lottery.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin-lottery",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/users",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin-users.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin-users",
+    "inputCandidates": [
+      "Amount (JCMOVES)",
+      "Description (Optional)",
+      "Reason"
+    ],
+    "actionCandidates": [
+      "Back to Main"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/testimonials",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin-testimonials.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin-testimonials",
+    "inputCandidates": [],
+    "actionCandidates": [
+      "Go Home"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/pipeline",
+    "audience": "owner",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/promo-codes",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin-promo-codes.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin-promo-codes",
+    "inputCandidates": [
+      "Code *",
+      "Description",
+      "Referrer (optional)",
+      "Max Uses (leave empty = unlimited)"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/system-check",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin-system-check.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin-system-check",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/square-catalog",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin-square-catalog.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin-square-catalog",
+    "inputCandidates": [
+      "Code",
+      "Name",
+      "Description",
+      "Type",
+      "Value",
+      "Maximum dollars off",
+      "End date"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/marketplace",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin-reward-shop.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin-reward-shop",
+    "inputCandidates": [
+      "Item Name *",
+      "Category *",
+      "Short Description *",
+      "Full Description",
+      "Image URL",
+      "Token Price *",
+      "Sale Price (optional)",
+      "Promo Badge Text",
+      "Status",
+      "Inventory (blank = ∞)",
+      "Max / User",
+      "Max / Month",
+      "Featured",
+      "Limited Time",
+      "Schedule Required",
+      "Tier Required",
+      "Delivery Type",
+      "Expires After (days)",
+      "Admin Notes (internal)",
+      "Admin Note (sent to user)"
+    ],
+    "actionCandidates": [
+      "Save"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/marketplace",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/rewards-marketplace.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "rewards-marketplace",
+    "inputCandidates": [
+      "📦 How would you like to receive your reward?",
+      "Preferred service date (optional)",
+      "Additional notes (optional)"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/ops/snow-removal",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/snow-removal.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "snow-removal",
+    "inputCandidates": [
+      "Name *",
+      "City *",
+      "Address *",
+      "Phone",
+      "Price Per Visit *",
+      "Notes",
+      "Prepaid customer (auto-mark as paid)",
+      "Customer *",
+      "Date *",
+      "Price",
+      "Service Type",
+      "Status",
+      "Select CSV File"
+    ],
+    "actionCandidates": [
+      "Log Service"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/snow-removal",
+    "audience": "owner",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin-trash-valet",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin-trash-valet.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin-trash-valet",
+    "inputCandidates": [
+      "Week of",
+      "Status"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/trash-valet/book",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/trash-valet/book.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "trash-valet/book",
+    "inputCandidates": [
+      "Full Name *",
+      "Phone *",
+      "Email",
+      "Number of Cans *",
+      "Extra Bags",
+      "Billing Plan",
+      "First recycling week starts on (anchor date)",
+      "Service Notes (optional)",
+      "Promo Code (optional)"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/trash-valet/gift",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/trash-valet/gift.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "trash-valet/gift",
+    "inputCandidates": [
+      "Service Address *",
+      "Number of Cans",
+      "Extra Bags",
+      "Recycling Day",
+      "Special Notes (optional)",
+      "Full Name *",
+      "Phone *",
+      "Email",
+      "Gift Recipient's Name (optional)"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/trash-valet",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/trash-valet.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "trash-valet",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/book/lawn-care",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/book-lawn-care.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "book-lawn-care",
+    "inputCandidates": [
+      "Lawn care preferred start date (optional)",
+      "Additional notes (optional)",
+      "Full name *",
+      "Phone *",
+      "Email (optional)",
+      "Service address *"
+    ],
+    "actionCandidates": [
+      "Not me",
+      "Back to Home"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/lawn-care",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin-lawn-care.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin-lawn-care",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/window-cleaning",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/window-cleaning.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "window-cleaning",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/snow-removal",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/snow-removal-public.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "snow-removal-public",
+    "inputCandidates": [
+      "Service address",
+      "Driveway size",
+      "Plan style"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/mobile-preview",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/mobile-preview.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "mobile-preview",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/jobs",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "Role-dependent landing or inline route",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/crew-jobs",
+    "audience": "crew",
+    "components": [
+      "client/src/pages/crew-jobs.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "crew-jobs",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/treasury",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin-moonshot",
+    "audience": "owner",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/job/:id",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/job-detail.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "job-detail",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/get-started",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/onboarding.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "onboarding",
+    "inputCandidates": [
+      "Full Name",
+      "Email Address",
+      "Password"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/home",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "Role-dependent landing or inline route",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/marketing-onboarding",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/marketing-onboarding.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "marketing-onboarding",
+    "inputCandidates": [],
+    "actionCandidates": [
+      "View rep page",
+      "JC ON THE MOVE home"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/network/:slug",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/marketing-rep.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "marketing-rep",
+    "inputCandidates": [],
+    "actionCandidates": [
+      "Back Home",
+      "Build Quote",
+      "Text Link",
+      "Request General Callback"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/rep/:slug",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/marketing-rep.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "marketing-rep",
+    "inputCandidates": [],
+    "actionCandidates": [
+      "Back Home",
+      "Build Quote",
+      "Text Link",
+      "Request General Callback"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/matt",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/troy",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/evan",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/bill",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/darrell",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/employee-register",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/employee-register.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "employee-register",
+    "inputCandidates": [
+      "First Name",
+      "Last Name",
+      "Email Address",
+      "Phone Number",
+      "Password",
+      "Confirm Password"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/login",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/login.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "login",
+    "inputCandidates": [
+      "First Name",
+      "Last Name",
+      "Email Address",
+      "Password"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/employee-login",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/login.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "login",
+    "inputCandidates": [
+      "First Name",
+      "Last Name",
+      "Email Address",
+      "Password"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/customer-login",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/login.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "login",
+    "inputCandidates": [
+      "First Name",
+      "Last Name",
+      "Email Address",
+      "Password"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/forgot-access",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/forgot-access.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "forgot-access",
+    "inputCandidates": [
+      "Email address or phone number",
+      "6-digit verification code",
+      "New password",
+      "Confirm new password"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/leave-review",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/leave-review.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "leave-review",
+    "inputCandidates": [
+      "Your review",
+      "Would you recommend us?",
+      "How would you like to tip?"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [
+      "Thank your movers"
+    ],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/customer",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "Role-dependent landing or inline route",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/terms",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/terms.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "terms",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/privacy",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/privacy.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "privacy",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/quote",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/quote.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "quote",
+    "inputCandidates": [],
+    "actionCandidates": [
+      "Create Free Account",
+      "Sign In"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/quote-order/:id",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/public-quote-order.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "public-quote-order",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/job-closeout/:token",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/job-closeout.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "job-closeout",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/schedule-request/:token",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/schedule-request.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "schedule-request",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/book",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/book.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "book",
+    "inputCandidates": [
+      "First name",
+      "Last name",
+      "Phone number",
+      "Service",
+      "Notes (optional)",
+      "Photo, video, or album link (optional)",
+      "Full name",
+      "Phone",
+      "Email",
+      "Notes for the crew (optional)",
+      "Assign to crew member",
+      "Lead source",
+      "Internal notes (crew-only)",
+      "Select heavy / specialty items billed extra",
+      "Apply JCMOVES tokens"
+    ],
+    "actionCandidates": [
+      "Call Now",
+      "Text Details / Album",
+      "Build a detailed quote",
+      "Return Home",
+      "Build my quote instead",
+      "Apply Smart Start"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/book/chat",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/book.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "book",
+    "inputCandidates": [
+      "First name",
+      "Last name",
+      "Phone number",
+      "Service",
+      "Notes (optional)",
+      "Photo, video, or album link (optional)",
+      "Full name",
+      "Phone",
+      "Email",
+      "Notes for the crew (optional)",
+      "Assign to crew member",
+      "Lead source",
+      "Internal notes (crew-only)",
+      "Select heavy / specialty items billed extra",
+      "Apply JCMOVES tokens"
+    ],
+    "actionCandidates": [
+      "Call Now",
+      "Text Details / Album",
+      "Build a detailed quote",
+      "Return Home",
+      "Build my quote instead",
+      "Apply Smart Start"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/offers/:code",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/offers.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "offers",
+    "inputCandidates": [
+      "Option",
+      "Quantity",
+      "First name",
+      "Last name",
+      "Email",
+      "Phone",
+      "Service address",
+      "Requested date",
+      "Notes",
+      "Payment choice",
+      "Promotion code"
+    ],
+    "actionCandidates": [
+      "View options",
+      "Get my itemized quote",
+      "View all offers"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/offers",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/offers.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "offers",
+    "inputCandidates": [
+      "Option",
+      "Quantity",
+      "First name",
+      "Last name",
+      "Email",
+      "Phone",
+      "Service address",
+      "Requested date",
+      "Notes",
+      "Payment choice",
+      "Promotion code"
+    ],
+    "actionCandidates": [
+      "View options",
+      "Get my itemized quote",
+      "View all offers"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/uhaul/:slug",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/uhaul-market.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "uhaul-market",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/trash-valet/book",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/trash-valet/book.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "trash-valet/book",
+    "inputCandidates": [
+      "Full Name *",
+      "Phone *",
+      "Email",
+      "Number of Cans *",
+      "Extra Bags",
+      "Billing Plan",
+      "First recycling week starts on (anchor date)",
+      "Service Notes (optional)",
+      "Promo Code (optional)"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/trash-valet/gift",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/trash-valet/gift.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "trash-valet/gift",
+    "inputCandidates": [
+      "Service Address *",
+      "Number of Cans",
+      "Extra Bags",
+      "Recycling Day",
+      "Special Notes (optional)",
+      "Full Name *",
+      "Phone *",
+      "Email",
+      "Gift Recipient's Name (optional)"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/trash-valet",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/trash-valet.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "trash-valet",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/book/lawn-care",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/book-lawn-care.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "book-lawn-care",
+    "inputCandidates": [
+      "Lawn care preferred start date (optional)",
+      "Additional notes (optional)",
+      "Full name *",
+      "Phone *",
+      "Email (optional)",
+      "Service address *"
+    ],
+    "actionCandidates": [
+      "Not me",
+      "Back to Home"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/window-cleaning",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/window-cleaning.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "window-cleaning",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/snow-removal",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/snow-removal-public.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "snow-removal-public",
+    "inputCandidates": [
+      "Service address",
+      "Driveway size",
+      "Plan style"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/lawn-care",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/lawn-care.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "lawn-care",
+    "inputCandidates": [
+      "Service address",
+      "Package",
+      "Property size",
+      "Service frequency",
+      "Add-ons"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/cleaning",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/move-out-cleaning.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "move-out-cleaning",
+    "inputCandidates": [
+      "Service address",
+      "Cleaning package",
+      "Home size",
+      "Detail add-ons"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/roofing",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/roofing.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "roofing",
+    "inputCandidates": [
+      "Project address",
+      "Roof size (squares)",
+      "Material",
+      "Stories",
+      "Pitch",
+      "Existing roof condition"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/demolition",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/demolition.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "demolition",
+    "inputCandidates": [
+      "Project address",
+      "Project type",
+      "Project extras"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/sponsors",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/sponsors.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "sponsors",
+    "inputCandidates": [
+      "Business Name *",
+      "Contact Name *",
+      "Email *",
+      "Phone *",
+      "Website (optional)",
+      "Business Logo (optional)"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/services",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/services.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "services",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/gift-cards/bonus",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/gift-card-bonus.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "gift-card-bonus",
+    "inputCandidates": [
+      "Give it to the recipient",
+      "Purchaser email"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/gift-cards",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/gift-cards.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "gift-cards",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/route-days",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/route-days.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "route-days",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/route-days/:slug",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/route-days.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "route-days",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/pricing",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/pricing.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "pricing",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/gallery",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/gallery.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "gallery",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/reviews",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/reviews.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "reviews",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/pi-jackpot",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/pi-jackpot.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "pi-jackpot",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/handmade-jewels-by-ashley",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/nature-made-jewls.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "nature-made-jewls",
+    "inputCandidates": [
+      "Title *",
+      "Photos & Videos",
+      "Price",
+      "Category",
+      "Short Description",
+      "Materials",
+      "Full Description",
+      "Title",
+      "Photos",
+      "Your Name *",
+      "What would you like? *",
+      "Preferred Materials",
+      "Budget Range",
+      "Contact (email or phone) *"
+    ],
+    "actionCandidates": [
+      "Login"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/handmade-jewels-by-ashley/:id",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/jewelry-detail.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "jewelry-detail",
+    "inputCandidates": [
+      "Title",
+      "Price",
+      "Category",
+      "Materials",
+      "Short Description",
+      "Full Description",
+      "Your Name *",
+      "What would you like? *",
+      "Preferred Materials",
+      "Budget Range",
+      "Contact (email or phone) *"
+    ],
+    "actionCandidates": [
+      "Create Account to Earn Rewards &rarr;"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/nature-made-jewls/:id",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/nature-made-jewls",
+    "audience": "customer / shared",
+    "components": [],
+    "redirect": true,
+    "review": "pending",
+    "purpose": "Preserve existing entry URL",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/ashley-shop-admin",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/ashley-shop-admin.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "ashley-shop-admin",
+    "inputCandidates": [
+      "Listing title",
+      "Category",
+      "Materials — verify before approval",
+      "Short description",
+      "Full description",
+      "AI price suggestion",
+      "Final price from Ashley *"
+    ],
+    "actionCandidates": [
+      "Sign in"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/legacy-home",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/_archive/home.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "_archive/home",
+    "inputCandidates": [],
+    "actionCandidates": [
+      "Leave a Review"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/welcome",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/_archive/home.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "_archive/home",
+    "inputCandidates": [],
+    "actionCandidates": [
+      "Leave a Review"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/moving-estimator",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/moving-estimator.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "moving-estimator",
+    "inputCandidates": [],
+    "actionCandidates": [
+      "Add"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/payment-success",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/payment-success.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "payment-success",
+    "inputCandidates": [],
+    "actionCandidates": [
+      "Create Account &rarr;"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/promo/half-day",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/promo-half-day.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "promo-half-day",
+    "inputCandidates": [
+      "First Name *",
+      "Last Name *",
+      "Email *",
+      "Phone *",
+      "Special Instructions / Details"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/cart",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/cart.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "cart",
+    "inputCandidates": [
+      "First Name *",
+      "Last Name *",
+      "Email *",
+      "Phone *",
+      "Notes (optional)"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/bitcoin-payment",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/bitcoin-payment.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "bitcoin-payment",
+    "inputCandidates": [],
+    "actionCandidates": [
+      "Go Home",
+      "Back to Home"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/btc-payments",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin-btc-payments.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin-btc-payments",
+    "inputCandidates": [],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/staking",
+    "audience": "customer / shared",
+    "components": [
+      "client/src/pages/staking.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "staking",
+    "inputCandidates": [
+      "ETH Amount Sent",
+      "Transaction Hash (optional)"
+    ],
+    "actionCandidates": [],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  },
+  {
+    "path": "/admin/quote-review",
+    "audience": "owner",
+    "components": [
+      "client/src/pages/admin-quote-review.tsx"
+    ],
+    "redirect": false,
+    "review": "pending",
+    "purpose": "admin-quote-review",
+    "inputCandidates": [
+      "Pre-adjustment service subtotal",
+      "Final pre-tax target",
+      "Internal quote / override notes"
+    ],
+    "actionCandidates": [
+      "Go to Job Dashboard"
+    ],
+    "optionalSections": [],
+    "auditNote": "Source inventory only. Required inputs, primary action, role variants, and runtime behavior still require page review."
+  }
+]

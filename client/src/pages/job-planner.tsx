@@ -116,9 +116,7 @@ export default function JobPlannerPage({ audience }: { audience: "admin" | "crew
     <main className="mx-auto w-full max-w-7xl px-3 py-5 pb-24 sm:px-5 md:py-7">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-cyan-300">JC ON THE MOVE</p>
           <h1 className="mt-1 text-2xl font-black tracking-tight text-white sm:text-3xl">Job Planner</h1>
-          <p className="mt-1 text-sm text-slate-400">One calendar for what needs attention, what is upcoming, and what is confirmed.</p>
         </div>
         <div className="flex items-center gap-2">
           {data?.viewer.canAddJob ? (

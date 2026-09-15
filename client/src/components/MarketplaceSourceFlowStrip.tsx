@@ -1,3 +1,4 @@
+import { TaskDetails } from "@/components/task-ui";
 import {
   ArrowRight,
   BadgeDollarSign,
@@ -66,7 +67,7 @@ function stageChipClass(active: boolean) {
     : "border-slate-700 bg-slate-950/50 text-slate-400";
 }
 
-export default function MarketplaceSourceFlowStrip({
+function MarketplaceSourceFlowStripContent({
   source,
   shapeId,
   serviceCode,
@@ -167,3 +168,5 @@ function SourceFlowFact({
     </div>
   );
 }
+
+export default function MarketplaceSourceFlowStrip(props:MarketplaceSourceFlowStripProps){return <TaskDetails title="Workflow help"><MarketplaceSourceFlowStripContent {...props}/></TaskDetails>;}

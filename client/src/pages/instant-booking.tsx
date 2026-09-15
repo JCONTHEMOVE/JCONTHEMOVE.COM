@@ -1,3 +1,4 @@
+import { PhoneRewardsEnrollment } from "@/components/phone-rewards-enrollment";
 import { type FormEvent, type ReactNode, useMemo, useState } from "react";
 import { CalendarClock, CheckCircle2, Clock3, PhoneCall, ShieldCheck, Truck, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -225,6 +226,7 @@ export default function InstantBookingPage() {
             <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-400" />
             <h1 className="mt-4 text-2xl font-black">You’re all set</h1>
             <p className="mt-3 text-muted-foreground">{complete.message}</p>
+            <div className="mt-4 text-left"><PhoneRewardsEnrollment phone={form.customerPhone} /></div>
             {complete.kind === "hold" && (
               <p className="mt-3 rounded-lg bg-background/70 p-3 text-sm">
                 {complete.status === "awaiting_deposit"
@@ -262,8 +264,8 @@ export default function InstantBookingPage() {
       <div className="mx-auto max-w-3xl">
         <div className="mb-6 text-center">
           <p className="text-xs font-bold uppercase tracking-[0.22em] text-blue-300">JC ON THE MOVE LLC</p>
-          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Choose the date. We’ll confirm the move.</h1>
-          <p className="mx-auto mt-3 max-w-2xl text-slate-300">Start with a preferred date and exact time so your request lands on the calendar instead of sitting as a date-less callback.</p>
+          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Request service</h1>
+
         </div>
 
         {mode === "schedule" && <DateFirstBooking onChooseCallback={() => setMode("callback")} onDetailedBooking={() => setMode("reserve")} />}
@@ -379,7 +381,7 @@ export default function InstantBookingPage() {
           </form>
         )}
       </div>
-      <style>{".field-select{display:flex;height:2.5rem;width:100%;border-radius:.375rem;border:1px solid hsl(var(--input));background:hsl(var(--background));padding:.5rem .75rem;font-size:.875rem;color:hsl(var(--foreground))}.field-select:focus{outline:2px solid hsl(var(--ring));outline-offset:2px}"}</style>
+      <style>{".field-select{display:flex;min-height:2.75rem;width:100%;border-radius:.375rem;border:1px solid hsl(var(--input));background:hsl(var(--background));padding:.5rem .75rem;font-size:1rem;color:hsl(var(--foreground))}.field-select:focus{outline:2px solid hsl(var(--ring));outline-offset:2px}"}</style>
     </div>
   );
 }

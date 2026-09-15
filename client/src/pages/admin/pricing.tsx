@@ -74,6 +74,7 @@ export default function AdminPricingPage() {
           )}
         </div>
 
+        <a href="/admin/pricing-training" className="mb-5 block rounded-xl bg-blue-600 px-4 py-4 text-center font-bold text-white">Take the 500-request pricing test</a>
         <Tabs defaultValue="rates">
           <TabsList className="bg-slate-800/50 border border-slate-700/50 mb-6 flex-wrap h-auto">
             <TabsTrigger value="rates" data-testid="tab-rates">Rates</TabsTrigger>

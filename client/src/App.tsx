@@ -25,6 +25,7 @@ import AdminLayout from "@/layouts/AdminLayout";
 
 // All pages are lazy-loaded — each page's JS only downloads when first visited
 const HomePage = lazy(() => import("@/pages/home"));
+const QuickBookPage = lazy(() => import("@/pages/quick-book"));
 const LegacyHomePage = lazy(() => import("@/pages/_archive/home"));
 const SplashPage = lazy(() => import("@/pages/splash"));
 const OnboardingPage = lazy(() => import("@/pages/onboarding"));
@@ -33,6 +34,7 @@ const MyJobsPage = lazy(() => import("@/pages/my-jobs"));
 // Canonical customer + worker booking engine. The same mobile wizard owns
 // address resolution, scheduling, quote review, and submission on /book.
 const MultiServiceBookPage = lazy(() => import("@/pages/book"));
+const CarpetRemovalPage = lazy(() => import("@/pages/carpet-removal"));
 const JobCloseoutPage = lazy(() => import("@/pages/job-closeout"));
 const ScheduleRequestPage = lazy(() => import("@/pages/schedule-request"));
 const CustomerWalletPage = lazy(() => import("@/pages/customer/wallet"));
@@ -122,6 +124,8 @@ const AdminFinancePage = lazy(() => import("@/pages/admin/finance"));
 const AdminMarketplacePage = lazy(() => import("@/pages/admin/marketplace"));
 const AdminMarketplacePlaybookPage = lazy(() => import("@/pages/admin/marketplace-playbook"));
 const AdminSystemPage = lazy(() => import("@/pages/admin/system"));
+const PricingTrainingPage = lazy(() => import("@/pages/admin/pricing-training"));
+const PricingTrainingTeamPage = lazy(() => import("@/pages/pricing-training-team"));
 const AdminPricingPage = lazy(() => import("@/pages/admin/pricing"));
 const AdminDispatchPage = lazy(() => import("@/pages/admin/dispatch"));
 const AdminRegionalAutomationPage = lazy(() => import("@/pages/admin/regional-automation"));
@@ -530,6 +534,7 @@ function AuthenticatedApp() {
           <CrewLayout>
             <Switch>
               <Route path="/crew/add-job"><CrewAddJobPage /></Route>
+              <Route path="/crew/pricing-training"><PricingTrainingTeamPage /></Route>
               <Route path="/crew/jobs"><PlannerLegacyRedirect plannerPath="/crew" /></Route>
               <Route path="/crew/schedule"><CrewSchedulePage /></Route>
               <Route path="/crew/reviews"><CrewReviewsPage /></Route>
@@ -543,6 +548,19 @@ function AuthenticatedApp() {
         </RouteGuard>
       </ComplianceCheck>
     );
+  }
+  if (location === "/quick-book") {
+    return (
+      <ComplianceCheck>
+        <RouteGuard allowedRoles={['admin', 'employee', 'business_owner']}>
+          <NotificationPrompt />
+          <QuickBookPage />
+        </RouteGuard>
+      </ComplianceCheck>
+    );
+  }
+  if (import.meta.env.DEV && location === "/quick-book-fixture") {
+    return <QuickBookPage visualFixture />;
   }
   if (location === "/post-job") {
     return <Redirect to="/book" />;
@@ -566,6 +584,7 @@ function AuthenticatedApp() {
               <Route path="/admin/finance"><AdminFinancePage /></Route>
               <Route path="/admin/gift-card-bonuses"><AdminGiftCardBonusesPage /></Route>
               <Route path="/admin/pricing"><AdminPricingPage /></Route>
+              <Route path="/admin/pricing-training"><PricingTrainingPage /></Route>
               <Route path="/admin/marketplace"><AdminMarketplacePage /></Route>
               <Route path="/admin/marketplace-playbook"><AdminMarketplacePlaybookPage /></Route>
               <Route path="/admin/system"><AdminSystemPage /></Route>
@@ -808,6 +827,7 @@ function PageViewTracker() {
 }
 
 const PUBLIC_PATH_PREFIXES = [
+  "/carpet-removal",
   "/",
   "/get-started",
   "/home",
@@ -873,6 +893,7 @@ function Router() {
     <Switch>
       {/* Onboarding / Get Started */}
       <Route path="/get-started" component={OnboardingPage} />
+      <Route path="/carpet-removal" component={CarpetRemovalPage} />
 
       {/* Public site (original marketing page) */}
         <Route path="/home">{() => <PublicHomePage />}</Route>

@@ -1,0 +1,151 @@
+import assert from 'node:assert/strict';
+import express from 'express';
+import { PGlite } from '@electric-sql/pglite';
+import { createPricingTrainingTeamRouter } from '../pricingTrainingTeam';
+import { pricingTrainingScenarios as cases } from '../../../shared/pricingTrainingScenarios';
+import { emptyTrainingAnswer } from '../../../shared/pricingTraining';
+import { answerDistribution, TRAINING_REWARDS } from '../../../shared/pricingTrainingTeam';
+import { createTrainingReward } from '../../services/pricingTrainingReward';
+import { sql } from 'drizzle-orm';
+
+// Real PostgreSQL engine, isolated in memory. No production data, tokens or webhooks.
+const pg=new PGlite();
+await pg.exec(`CREATE TABLE users(id text PRIMARY KEY,email text,role text,first_name text,username text);
+  INSERT INTO users VALUES('owner','owner@example.test','business_owner','Owner','owner'),('legacy-owner','upmichiganstatemovers@gmail.com','admin','Legacy','legacy'),('crew','crew@example.test','employee','Crew','crew'),('crew2','crew2@example.test','employee','Crew2','crew2');
+  CREATE TABLE wallet_accounts(user_id text PRIMARY KEY,token_balance numeric NOT NULL DEFAULT 0,total_earned numeric DEFAULT 0,last_activity timestamptz);
+  CREATE TABLE rewards(user_id text,reward_type text,token_amount numeric,cash_value numeric,status text,reference_id text UNIQUE,metadata jsonb);
+  CREATE TABLE notifications(id text PRIMARY KEY,user_id text,type text,title text,message text,data jsonb);
+  CREATE TABLE test_reserve(amount int);INSERT INTO test_reserve VALUES(10000);`);
+let lock=Promise.resolve();
+let rewardFailure=false,thanks=0,verifiedThanks=0;
+async function query(statement:any,args?:any[]){
+  const text=typeof statement==='string'?statement:statement.text;
+  if(rewardFailure&&text.startsWith('INSERT INTO rewards'))throw Error('Simulated ledger failure after wallet credit');
+  const result=await pg.query(text,args);
+  return statement.rowMode==='array'?{...result,rows:result.rows.map(r=>Object.values(r as object))}:result;
+}
+const pool={query,connect:async()=>{const previous=lock;let release!:()=>void;lock=new Promise<void>(resolve=>release=resolve);await previous;return {query,release};}};
+const app=express();app.use(express.json());
+const auth=(req:any,res:any,next:any)=>{const id=req.headers['x-user'];if(!id)return res.sendStatus(401);req.user={id,role:id==='owner'?'business_owner':id==='customer'?'customer':'employee',firstName:id};next();};
+const staff=(req:any,res:any,next:any)=>req.user.role==='customer'?res.sendStatus(403):next();
+const owner=(req:any,res:any,next:any)=>req.user.role==='business_owner'?next():res.sendStatus(403);
+app.use('/team',createPricingTrainingTeamRouter(auth,staff,owner,pool as any,{
+  reward:createTrainingReward(async(tx,amount)=>{
+    await tx.execute(sql`UPDATE test_reserve SET amount=amount-${amount}`);
+    return {cashValue:0,transactionId:'test-transaction'};
+  }),thank:async(_name,_scenario,amount)=>{if(amount===undefined)thanks++;else verifiedThanks++;return 'sent';}
+}));
+const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
+const base=`http://127.0.0.1:${(server.address() as any).port}/team`;
+const call=(path='',method='GET',body?:any,user='crew')=>fetch(base+path,{method,headers:{'Content-Type':'application/json',...(user?{'x-user':user}:{})},body:body?JSON.stringify(body):undefined});
+const a={...emptyTrainingAnswer(),decision:'quote' as const,difficulty:'moderate' as const,minimumCrew:2,recommendedCrew:2,minimumScheduledHours:2,minimumBillableHours:2,expectedElapsedHours:3,price:500,notes:'Two trained workers needed for safe handling.'};
+const payload=(i:number,revision=0)=>({answer:a,status:'reviewed',revision,fingerprint:cases[i].fingerprint});
+try{
+  assert.equal((await call('', 'GET',undefined,'')).status,401);
+  assert.equal((await call('', 'GET',undefined,'customer')).status,403);
+  assert.equal((await call()).status,200);
+  // Existing owner progress is immediately shared, without data migration.
+  await pg.query(`INSERT INTO pricing_training_answers(owner_id,scenario_id,fingerprint,answer,status) VALUES('owner',$1,$2,$3::jsonb,'reviewed')`,[cases[0].id,cases[0].fingerprint,JSON.stringify(a)]);
+  assert.deepEqual((await (await call()).json()).completed,[cases[0].id]);
+  assert.equal((await (await call()).json()).ownerId,'owner','existing answer set takes precedence over the legacy owner email');
+  // The API must withhold answer content, not merely hide it in the page.
+  await pg.query(`INSERT INTO pricing_training_contributions(user_id,scenario_id,fingerprint,answer,status) VALUES('crew2',$1,$2,$3::jsonb,'reviewed')`,[cases[0].id,cases[0].fingerprint,JSON.stringify(a)]);
+  const locked={canCompare:false,responses:[],final:null};
+  assert.deepEqual(await (await call('/scenario/'+cases[0].id)).json(),locked,'no submission hides coworker and owner answers');
+  assert.equal((await call('/'+cases[0].id,'PUT',{...payload(0),status:'draft'})).status,200);
+  assert.equal((await pg.query('SELECT * FROM notifications')).rows.length,0,'drafts do not send submission notifications');
+  assert.deepEqual(await (await call('/scenario/'+cases[0].id)).json(),locked,'draft does not unlock comparisons');
+  const ownerView=await (await call('/scenario/'+cases[0].id,'GET',undefined,'owner')).json();
+  assert.equal(ownerView.responses.length,1,'owner can review before contributing');
+  assert.equal(ownerView.final.answer.price,500);
+  assert.equal((await call('/'+cases[0].id,'PUT',payload(0,1))).status,200);
+  const unlocked=await (await call('/scenario/'+cases[0].id)).json();
+  assert.equal(unlocked.canCompare,true);assert.equal(unlocked.responses.length,2);assert.equal(unlocked.final.answer.price,500);
+  assert.deepEqual(await (await call('/scenario/'+cases[1].id)).json(),locked,'unlock applies only to the submitted scenario');
+  await pg.query("UPDATE pricing_training_answers SET status='draft' WHERE scenario_id=$1",[cases[0].id]);
+  assert.equal((await (await call('/scenario/'+cases[0].id)).json()).final,null,'owner drafts remain private even after submission');
+  await pg.query("UPDATE pricing_training_answers SET status='reviewed' WHERE scenario_id=$1",[cases[0].id]);
+  await pg.query("UPDATE pricing_training_contributions SET fingerprint=$1 WHERE user_id='crew' AND scenario_id=$2",['0'.repeat(64),cases[0].id]);
+  assert.deepEqual(await (await call('/scenario/'+cases[0].id)).json(),locked,'outdated submission does not unlock a revised scenario');
+  assert.equal((await call('/final/'+cases[1].id,'PUT',payload(1))).status,403);
+  assert.equal((await call('/'+cases[1].id,'PUT',{...payload(1),answer:emptyTrainingAnswer()})).status,400);
+  assert.equal((await call('/'+cases[1].id,'PUT',payload(1))).status,200);
+  assert.equal((await call('/'+cases[1].id,'PUT',payload(1))).status,409);
+  assert.equal((await call('/'+cases[1].id,'PUT',payload(1,1))).status,200);
+  assert.equal((await pg.query("SELECT * FROM notifications WHERE id LIKE 'training-submit:%' AND user_id='crew'")).rows.length,2,'one submission notice per request, not per edit');
+  assert.equal((await call('/'+cases[1].id,'PUT',payload(1), 'crew2')).status,200);
+  let detail=await (await call('/scenario/'+cases[1].id)).json();
+  assert.equal(detail.responses.length,2);assert.equal(detail.final,null);
+  assert.equal((await (await call()).json()).completed.length,1,'responses do not inflate completion');
+  const c=detail.responses.find((r:any)=>r.userId==='crew');
+  const rating={revision:c.revision,grade:'mostly_correct',note:'Good approach; add a little travel time.'};
+  assert.equal((await call('/review/'+c.id,'POST',rating)).status,403);
+  rewardFailure=true;
+  assert.equal((await call('/review/'+c.id,'POST',rating,'owner')).status,503);
+  assert.equal((await pg.query('SELECT * FROM wallet_accounts')).rows.length,0,'wallet rollback');
+  assert.equal((await pg.query<any>('SELECT amount FROM test_reserve')).rows[0].amount,10000,'treasury rollback');
+  assert.equal((await pg.query<any>('SELECT grade FROM pricing_training_contributions WHERE id=$1',[c.id])).rows[0].grade,null,'review rollback');
+  assert.equal((await pg.query("SELECT * FROM notifications WHERE id LIKE 'training-review:%'")).rows.length,0,'failed reward transaction emits no verification notice');
+  assert.equal((await pg.query('SELECT * FROM pricing_training_verified_thanks')).rows.length,0,'failed reward transaction queues no Discord verification');
+  rewardFailure=false;
+  const reviews=await Promise.all([call('/review/'+c.id,'POST',rating,'owner'),call('/review/'+c.id,'POST',rating,'owner')]);
+  assert.ok(reviews.every(r=>r.status===200));
+  assert.equal(Number((await pg.query<any>('SELECT token_balance FROM wallet_accounts')).rows[0].token_balance),150);
+  assert.equal((await pg.query('SELECT * FROM rewards')).rows.length,1,'one ledger entry under retries');
+  const reviewNotices=await pg.query<any>("SELECT * FROM notifications WHERE id LIKE 'training-review:%'");
+  assert.equal(reviewNotices.rows.length,1,'one verification notification under retries');
+  assert.equal(reviewNotices.rows[0].data.amount,150);assert.match(reviewNotices.rows[0].message,/100 contribution \+ 50 bonus/);
+  assert.equal((await call('/review/'+c.id,'POST',{...rating,grade:'correct'},'owner')).status,409);
+  assert.equal((await call('/'+cases[1].id,'PUT',payload(1,c.revision))).status,409,'reviewed answer locked');
+  assert.equal((await call('/final/'+cases[1].id,'PUT',payload(1),'owner')).status,200);
+  assert.equal((await call('/final/'+cases[1].id,'PUT',payload(1),'owner')).status,409);
+  assert.equal((await call('/final/'+cases[1].id,'PUT',{...payload(1,1),answer:{...a,price:650}},'owner')).status,200);
+  assert.equal((await (await call()).json()).completed.length,2);
+  detail=await (await call('/scenario/'+cases[1].id)).json();assert.equal(detail.final.answer.price,650);assert.equal(detail.responses[0].answer.price,500,'override preserves input');
+  assert.equal((await pg.query('SELECT * FROM pricing_training_answer_history')).rows.length,2);
+  assert.equal((await pg.query('SELECT * FROM pricing_training_final_audit')).rows.length,2);
+  assert.equal((await call('/'+cases[2].id,'PUT',payload(2),'owner')).status,200);
+  const self=(await (await call('/scenario/'+cases[2].id,'GET',undefined,'owner')).json()).responses[0];
+  assert.equal((await call('/review/'+self.id,'POST',{...rating,revision:1},'owner')).status,403);
+  await new Promise(r=>setTimeout(r,50));assert.equal(thanks,4,'one thank-you for each contributor/request, not edits');
+  assert.equal(verifiedThanks,1,'one additional Discord message on verification, not retries');
+  for(const [i,grade,amount] of [[3,'contribution',100],[4,'correct',200],[5,'rejected',0]] as const){
+    assert.equal((await call('/'+cases[i].id,'PUT',payload(i))).status,200);
+    const r=(await (await call('/scenario/'+cases[i].id)).json()).responses[0];
+    const reviewed=await call('/review/'+r.id,'POST',{revision:1,grade,note:'Owner assessment.'},'owner');
+    assert.equal(reviewed.status,200);assert.equal((await reviewed.json()).rewardAmount,amount);
+  }
+  assert.equal(Number((await pg.query<any>("SELECT token_balance FROM wallet_accounts WHERE user_id='crew'")).rows[0].token_balance),450);
+  await pg.query(`INSERT INTO pricing_training_contributions(user_id,scenario_id,fingerprint,answer,status) VALUES('crew',$1,$2,$3::jsonb,'draft')`,[cases[6].id,cases[6].fingerprint,JSON.stringify(a)]);
+  const scoreboard=await (await call()).json();
+  assert.deepEqual(scoreboard.myScore,{userId:'crew',displayName:'Crew',submitted:4,drafts:1,reviewed:4,pending:0,correct:1,mostlyCorrect:1,rewards:450,bonus:150,todayPoints:450},'scores exclude outdated answers and drafts; review retries cannot inflate rewards');
+  const peer=scoreboard.leaderboard.find((r:any)=>r.userId==='crew2');
+  assert.equal(peer.submitted,2);assert.equal(peer.pending,2);assert.equal(peer.rewards,0,'pending submissions earn no leaderboard credit');
+  assert.ok(scoreboard.leaderboard.every((r:any)=>Object.keys(r).sort().join(',')==='bonus,correct,displayName,mostlyCorrect,pending,reviewed,rewards,submitted,todayPoints,userId'),'leaderboard contains aggregates only, with no answers, notes, or private drafts');
+  assert.equal((await call('/daily-prize','POST')).status,403,'only owner can trigger authorized daily payout');
+  const emptyPrize=await (await call('/daily-prize','POST',undefined,'owner')).json();
+  assert.deepEqual(emptyPrize.awards,[],'empty day has no prize');
+  await pg.query('DELETE FROM pricing_training_daily_prizes');
+  // Synthetic tied winners yesterday; today\'s reviews cannot influence yesterday\'s payout.
+  await pg.query(`UPDATE pricing_training_contributions SET updated_at=((now() AT TIME ZONE 'America/Chicago')::date-1 + time '12:00') AT TIME ZONE 'America/Chicago' WHERE user_id='crew' AND grade IS NOT NULL`);
+  await pg.query(`UPDATE pricing_training_contributions SET grade='correct',reward_amount=450,updated_at=((now() AT TIME ZONE 'America/Chicago')::date-1 + time '12:00') AT TIME ZONE 'America/Chicago' WHERE user_id='crew2' AND scenario_id=$1`,[cases[1].id]);
+  rewardFailure=true;
+  assert.equal((await call('/daily-prize','POST',undefined,'owner')).status,503);
+  assert.equal((await pg.query('SELECT * FROM pricing_training_daily_prizes')).rows.length,0,'failed payout rolls back day claim');
+  assert.equal(Number((await pg.query<any>("SELECT token_balance FROM wallet_accounts WHERE user_id='crew'")).rows[0].token_balance),450,'failed prize credit rolls back wallet');
+  rewardFailure=false;
+  const payouts=await Promise.all([call('/daily-prize','POST',undefined,'owner'),call('/daily-prize','POST',undefined,'owner')]);
+  const results=await Promise.all(payouts.map(r=>r.json()));
+  assert.ok(results.some(r=>r.alreadyAwarded));assert.equal(results[0].awards.length,2);
+  assert.equal(results[0].awards.reduce((sum:number,r:any)=>sum+r.amount,0),1000,'ties share a total 1000-token budget');
+  assert.equal((await pg.query("SELECT * FROM rewards WHERE reference_id LIKE 'pricing-training-daily:%'")).rows.length,2,'one prize ledger credit per tied winner despite parallel retries');
+  assert.equal((await pg.query("SELECT * FROM notifications WHERE id LIKE 'training-daily:%'")).rows.length,2);
+  assert.equal(Number((await pg.query<any>("SELECT token_balance FROM wallet_accounts WHERE user_id='crew'")).rows[0].token_balance),950);
+  assert.equal((await (await call()).json()).myScore.rewards,450,'daily prize must not inflate scenario leaderboard scores');
+  assert.equal((await (await call()).json()).myScore.todayPoints,0,'previous day points reset in today race');
+  const newParticipant=await (await call('','GET',undefined,'legacy-owner')).json();
+  assert.equal(newParticipant.myScore.submitted,0);assert.equal(newParticipant.myScore.rewards,0);
+  assert.deepEqual(TRAINING_REWARDS,{contribution:100,mostly_correct:150,correct:200,rejected:0});
+  assert.deepEqual(answerDistribution([a,{...a,price:100},{...a,price:null}], 'price'),[{label:'100',count:1},{label:'500',count:1}]);
+  console.log('Team training PostgreSQL integration passed: access, shared progress, contributions, owner overrides, atomic reward rollback, retry deduplication, self-reward prevention, charts, thank-you deduplication.');
+}finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await pg.close();}
