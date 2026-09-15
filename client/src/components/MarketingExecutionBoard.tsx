@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { MarketingDailyReview } from './MarketingDailyReview';
+import type { MarketingReviewAction } from '@shared/marketingActionReview';
 
 type Action = {
   id: string;
@@ -34,6 +36,7 @@ type Rep = {
   profileUrl: string;
   onboardingTask: string | null;
   actions: Action[];
+  dailyActions?: MarketingReviewAction[];
   linked_first_name: string | null;
   linked_last_name: string | null;
 };
@@ -98,7 +101,7 @@ export function MarketingExecutionBoard() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/marketing-execution/overview"] });
-      toast({ title: "Launch action completed" });
+      toast({ title: "Marketing action reviewed" });
     },
     onError: (error: Error) => toast({ title: "Could not update action", description: error.message, variant: "destructive" }),
   });
@@ -248,6 +251,7 @@ export function MarketingExecutionBoard() {
                     </div>
                   ))}
                 </div>
+                <MarketingDailyReview actions={rep.dailyActions || []} pending={completeAction.isPending} onApprove={id => completeAction.mutate(id)} />
               </CardContent>
             </Card>
           );
