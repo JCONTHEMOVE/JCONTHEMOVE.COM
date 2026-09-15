@@ -1,5 +1,36 @@
 # Production alerting and database recovery evidence
 
+## September 15 status — supersedes historical observations below
+
+PR #8 has been integrated with main through `f544cd45`, preserving the released
+application. The draft now checks apex and www home/booking entrypoints and
+referral-query preservation alongside readiness. A healthy www response cannot
+hide an apex outage. These checks are skipped during isolated alert drills.
+
+The September 14 owner instruction selects the company Gmail account for alerts
+until other channels are configured. Use that confirmed address in private
+incident-service configuration. Discord is a deferred optional channel, not a
+prerequisite for email activation. Mailbox access is not automated delivery proof.
+
+The database migration and Railway-only cutover completed September 10. The final
+logical copy matched 202 tables, 47,690 rows, 520 public constraints, 534 indexes
+and all 63 sequence states, including per-table content comparison. Source Replit
+was paused and retained for rollback. The owner selected the new database's Free
+plan with six-hour recovery history. Preserve the original source and archives;
+never run an old target-refresh script against the now-live database. A successful
+logical migration does not prove a current provider PITR restore or measured
+incident RPO/RTO. The September 6 unavailable-access notes below are historical.
+
+Alert activation remains open: incident-service account/plan, independent uptime
+probe, separate production/drill heartbeat secrets, and actual email receipt,
+acknowledgement, escalation, missed-check and recovery evidence are unverified.
+Keep this draft unmerged until private configuration and activation are ready.
+Serialized jobs prevent overlap but do not guarantee queue order; delayed-run
+behavior remains an acceptance requirement and the external uptime probe is
+required. No monitor, subscription or live alert was created by this integration.
+
+## Historical September 6 evidence
+
 Evidence date: 2026-09-06 (UTC). Scope: the two operational readiness gates in
 `PRODUCTION_EXECUTION_PLAN.md`. Both gates remain **OPEN** until live evidence
 is recorded. The preparation below does not certify delivery or recovery.

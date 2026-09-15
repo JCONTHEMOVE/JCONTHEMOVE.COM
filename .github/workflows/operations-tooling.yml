@@ -7,12 +7,16 @@ on:
       - .github/workflows/operations-tooling.yml
       - scripts/report-availability.mjs
       - scripts/report-availability.test.mjs
+      - scripts/check-public-entrypoints.mjs
+      - scripts/public-entrypoints.test.mjs
   push:
     branches: [main]
     paths:
       - .github/workflows/operations-tooling.yml
       - scripts/report-availability.mjs
       - scripts/report-availability.test.mjs
+      - scripts/check-public-entrypoints.mjs
+      - scripts/public-entrypoints.test.mjs
 
 permissions:
   contents: read
@@ -26,4 +30,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: node --test scripts/report-availability.test.mjs
+      - run: node --test scripts/report-availability.test.mjs scripts/public-entrypoints.test.mjs

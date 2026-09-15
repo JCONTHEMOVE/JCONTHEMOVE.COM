@@ -9,6 +9,7 @@ on:
       - .github/workflows/production-availability.yml
       - scripts/check-production-deploy.mjs
       - scripts/report-availability.mjs
+      - scripts/check-public-entrypoints.mjs
   schedule:
     # GitHub scheduled workflows can be delayed during high load, especially
     # near the top of the hour. Offset the check to avoid peak scheduling.
@@ -37,7 +38,7 @@ permissions:
   contents: read
 
 concurrency:
-  # Serialize automatic runs so an older result cannot arrive after a newer one.
+  # Prevent concurrent reporting; GitHub does not guarantee pending-run order.
   # Manual drills never block or refresh the production monitor.
   group: production-availability-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'automatic' }}
   cancel-in-progress: false
@@ -80,12 +81,18 @@ jobs:
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.alert_drill) }}
         run: node scripts/check-production-deploy.mjs "$PUBLIC_HEALTH_URL"
 
+      - name: Verify apex and www customer entry points
+        id: entrypoints
+        if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.alert_drill) }}
+        run: node scripts/check-public-entrypoints.mjs
+
       - name: Record the monitoring evidence
         if: ${{ always() }}
         env:
           ALERT_DRILL: ${{ github.event_name == 'workflow_dispatch' && inputs.alert_drill }}
           DRILL_OUTCOME: ${{ steps.alert_drill.outcome }}
           READINESS_OUTCOME: ${{ steps.readiness.outcome }}
+          ENTRYPOINTS_OUTCOME: ${{ steps.entrypoints.outcome }}
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<EOF
           ## Availability evidence
@@ -97,6 +104,7 @@ jobs:
           - Synthetic alert drill: $ALERT_DRILL
           - Drill step: $DRILL_OUTCOME
           - Production verifier: $READINESS_OUTCOME
+          - Customer entrypoints: $ENTRYPOINTS_OUTCOME
 
           A failed drill proves the failure signal only. Actual owner receipt,
           escalation acknowledgement, and measured schedule coverage must be
