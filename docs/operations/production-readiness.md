@@ -1,6 +1,75 @@
 # Production alerting and database recovery evidence
 
-## September 15 status — supersedes historical observations below
+## September 16 acceptance review — current decision
+
+The owner selected the existing Better Stack integration. Use Darrell's already
+confirmed company Gmail as the required delivery route. Discord is deferred and
+is not required to close the email acceptance gate.
+
+Both operational gates remain **OPEN**. This review changed documentation only:
+no alert or monitor was activated, no message was sent, and no database restore,
+retention change, account upgrade, application change, merge or production
+deployment was performed.
+
+| Evidence inspected on September 16 (UTC) | Result and limit |
+| --- | --- |
+| Reviewed application/tooling commit | `5a0f222a`; Operations Tooling, PWA assets and Quick Book release checks passed on that commit. This is code-validation evidence, not live alert acceptance. |
+| Current main and production | Main is `897dbbf4`. A read-only public readiness GET returned `ready` for app and database at `2026-09-16T23:07:06.333Z`, reporting that same commit. |
+| Changes since the draft refresh | Main is four commits ahead of the common ancestor. The changed paths do not include the operational workflow, reporter or database schema. This review did not refresh or merge the application branch. |
+| Active workflow | Main still requests `7,27,47 * * * *` (20 minutes) and has no Better Stack reporting job. The draft's ten-minute schedule and sender are not active on main. |
+| Observed schedule | The latest 20 availability schedule runs retrieved span `2026-09-13T16:33:02Z` to `2026-09-16T20:20:10Z`. All succeeded; adjacent start gaps were 119.03–422.70 minutes. These are monitoring gaps, not proof of website outages. |
+| Independent uptime coverage | Required before activation; Better Stack account, plan entitlements, monitor/policy assignment and live probing could not be inspected. |
+| Provider history configuration | Authenticated Neon metadata for the recovery-migration project reports 21,600 seconds (six hours). Current Railway-to-project/branch mapping and actual earliest/latest usable recovery points remain unverified. |
+| Snapshot inventory | Neon returned no snapshots and an empty snapshot schedule for the inspected migration branch. This does not mean PITR history is absent and does not establish off-provider backup coverage. |
+| Plan discrepancy | The live provider account reports `launch_v3`, while the September 15 note records an earlier Free-plan choice. Billing/support entitlement needs private verification; no plan or retention was changed. |
+| Recovery execution | Not run. A validated recovery point, independently grounded baseline and positively identified isolated target are still required. |
+
+Private provider/endpoint identifiers and account evidence belong in the
+restricted acceptance record, not this public repository. Railway access was
+not connected in this review. Better Stack browser access stalled; no
+authenticated configuration or delivery result is claimed. GitHub secret
+configuration and workflow dispatch were not available through the connected
+repository tools.
+
+### Minimum remaining acceptance
+
+1. Inspect the existing Better Stack account and its entitlement to the chosen
+   email escalation policy. Configure the independent readiness probe and two
+   distinct heartbeat records below; verify Darrell is the only required
+   responder and attach the same policy to all three. Store the two heartbeat
+   URLs privately in the named GitHub Actions secrets. Leave the production
+   heartbeat unprimed until the automatic main workflow is ready.
+2. **Drill A — failure, deduplication, escalation, recovery.** Dispatch the
+   reviewed draft with `alert_drill=true`, phase `fail`. Require the reporter
+   job to succeed even though the readiness job deliberately fails. Record a
+   real email receipt and the provider incident ID. Repeat failure once to
+   verify one open incident. Leave it unacknowledged through T0+15, +30 and +60
+   minutes and retain actual receipt/timeline evidence. Dispatch phase
+   `resolve`; require one recovery notice and stopped escalation.
+3. **Drill B — missing check and acknowledgement.** Prime only the separate
+   drill heartbeat, then withhold it for ten minutes plus five minutes of grace.
+   Verify the missed-check incident and real email receipt. Darrell acknowledges
+   it; retain evidence that paging stops while the incident remains unresolved.
+   Observe through the next configured escalation checkpoint. Resolve using
+   the drill success signal, verify recovery and pause the drill heartbeat.
+   Neither drill may refresh or resolve the production heartbeat.
+4. Verify delayed/queued-run behavior and continued independent uptime probing.
+   Serialization does not guarantee ordering. Do not infer this proof from
+   passing unit tests or a green manual run.
+5. After these results and release review, the operational change can be
+   considered for merge. Verify the first automatic main heartbeat and actual
+   monitor timestamps before closing the alert gate; ordinary manual health
+   checks do not activate or refresh production monitoring.
+6. For recovery, first match Railway's active endpoint to the provider without
+   exposing credentials. Record actual recoverable bounds, select retained
+   point T, then restore to a new disposable branch/compute and run the existing
+   SQL verifier in read-only mode with stop-on-error. Use an independently
+   supported same-T baseline or explicitly limited pre-T evidence. Record
+   recovery-point lag and validated data-recovery duration, confirm production
+   mapping/readiness is unchanged, and record target cleanup status. Never
+   restore/reset the production branch or start this app against the copy.
+
+## September 15 status — historical context
 
 PR #8 has been integrated with main through `f544cd45`, preserving the released
 application. The draft now checks apex and www home/booking entrypoints and
@@ -40,13 +109,13 @@ is recorded. The preparation below does not certify delivery or recovery.
 **Darrell Jackson is both the business owner and the technical responder.** He
 explicitly confirmed this and his primary email in the September 6 session.
 There is no separate technical-contact identity to obtain. Escalation means
-reaching Darrell through another verified channel, repeating an unacknowledged
-page, and having him engage the affected provider if an incident persists.
+repeating unacknowledged email to Darrell and having him engage the affected
+provider if an incident persists. Another verified channel can be added later.
 
 | Destination | Decision | Live configuration and proof |
 | --- | --- | --- |
 | Email | Darrell's directly confirmed primary address; store the exact address in private incident configuration. | Not verified; a successful test must reach that inbox. |
-| Discord | Requested operational alert channel. | Exact server/channel link and Darrell's notification settings are unresolved. |
+| Discord | Deferred optional operational alert channel. | No Discord configuration or receipt is required for the current email-only acceptance. |
 | Website notification bell | Existing signed-in in-app notices need no native app download. | Supplemental only; outage alerting must work when the app/database is unavailable. Phone/browser push remains unproven following the September 3 missing-VAPID result. |
 | Provider support | Darrell engages Railway for hosting or the verified database provider for data issues. | Record the account's actual support entitlement and case reference during an incident; no response-time guarantee has been verified. |
 
@@ -74,20 +143,19 @@ Commit sanitized results and restricted-record references only.
 | Existing notifications | The admin layout uses `notification-bell.tsx` and `notification-list.tsx`; `jobEventBus.ts` supports job-event Discord webhooks. | Does not establish an operational outage route or its Discord audience. |
 | Database | `server/db.ts` uses the Neon PostgreSQL driver and `DATABASE_URL`. No authenticated production mapping, retention evidence, or restore result was available. | Provider clue only; backup protection remains unverified. |
 
-Neon is connected, but project/branch/SQL actions were not exposed in this
-session and no authenticated CLI was available. Railway access was requested
+During the September 6 review, Neon was connected but project/branch/SQL actions
+were not exposed and no authenticated CLI was available. Railway access was requested
 to inspect the live host configuration and verify the production database
 mapping. Neither retention settings nor production data have been changed.
 
 ## Alerting gate
 
-### Recommended monitoring arrangement
+### Selected monitoring arrangement
 
-Use an external uptime/incident service for the following three records. Better
-Stack is the reference integration implemented in this draft; no account,
-subscription, or monitor has been provisioned. Reuse an existing suitable
-service if the account inventory identifies one, and adapt the reporter before
-activation. Confirm any plan cost before subscribing.
+Use Better Stack, as selected by the owner on September 16, for the following
+three records. Its account and entitlements remain unverified; this review has
+not created an account, subscription or monitor. Inspect existing resources
+before creating duplicates. Confirm any new plan cost before subscribing.
 
 | Record | Configuration to apply | Incident meaning |
 | --- | --- | --- |
@@ -111,14 +179,12 @@ deliberately withhold a test heartbeat to prove missing-check alerting.
    the incident service. Native GitHub Actions email can remain an additional
    signal, but scheduled recipients depend on cron ownership/settings and need
    separate receipt evidence.
-2. Resolve the exact Discord server/channel. Create a dedicated operational
-   webhook there and store it privately in the incident service. Do not redirect
+2. Configure email to Darrell only for the initial acceptance. Inspect the
+   account's actual policy entitlement and receipt/recovery settings. Do not
+   enable default team-wide or unrelated integrations.
+3. Discord is deferred. If added later, separately verify its exact operational
+   destination, payload, audience and receipt. Do not redirect
    `DISCORD_JOB_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL`, or the shared crew invite.
-3. Configure email and the Discord outgoing webhook on the same incident policy.
-   Discord payloads must contain `content` or embeds and must not ping an entire
-   server. Resolve Darrell's Discord user ID before enabling a targeted mention.
-   Better Stack supports customized outgoing incident-webhook templates;
-   verify the rendered payload and channel receipt before activation.
    [Outgoing webhooks](https://betterstack.com/docs/uptime/webhooks/).
 4. Put the two distinct canonical heartbeat URLs in GitHub Actions secrets:
    `OPS_HEARTBEAT_URL` and `OPS_DRILL_HEARTBEAT_URL`. They are operational
@@ -130,9 +196,9 @@ deliberately withhold a test heartbeat to prove missing-check alerting.
    [Escalation policy assignment](https://betterstack.com/docs/uptime/escalation-policies/).
 
 No email, Discord message, in-app notice, or push has been sent in this review.
-The exact Discord channel, service account, secrets, and live policy remain
-unverified. App downloads and production VAPID changes are not prerequisites
-for email/Discord outage delivery.
+The service account, secrets and live email policy remain unverified. Discord,
+app downloads and production VAPID changes are not prerequisites for the
+selected email-only outage route.
 
 ### Single-responder escalation policy
 
@@ -146,10 +212,10 @@ T0+30, and T0+60.
 
 | Time | Automated notification to configure | Darrell's response |
 | --- | --- | --- |
-| T0 | Email Darrell first and record the incident in the verified Discord alert channel. | Open the incident and check its evidence; acknowledge ownership. |
-| 15 minutes | If unacknowledged, repeat email and send an urgent Discord notification to Darrell. | Inspect Railway deployment/logs and the strict readiness result; record diagnosis and next update. |
-| 30 minutes | If still unacknowledged, repeat both channels with provider-support instructions. | If still unresolved, contact the affected provider using the account's available support route and record the case reference. |
-| 60 minutes | If still unacknowledged, repeat both channels and request an incident decision. | Review impact and recovery/containment options; record a decision and next update time. |
+| T0 | Email Darrell and record the incident in Better Stack. | Open the incident and check its evidence; acknowledge ownership. |
+| 15 minutes | If unacknowledged, repeat email to Darrell. | Inspect Railway deployment/logs and the strict readiness result; record diagnosis and next update. |
+| 30 minutes | If still unacknowledged, repeat email with provider-support instructions. | If still unresolved, contact the affected provider using the account's available support route and record the case reference. |
+| 60 minutes | If still unacknowledged, repeat email and request an incident decision. | Review impact and recovery/containment options; record a decision and next update time. |
 | Recovery | Send one recovery notice for the affected monitor and stop its pending escalation. | Confirm a fresh successful check; retain the incident timeline. |
 
 Acknowledgement records Darrell's ownership and may stop automated wake-up
@@ -177,17 +243,16 @@ Status: **NOT RUN LIVE**. The reporter has automated tests with fake HTTP
 responses; these are not email, Discord, timing, or recovery evidence.
 
 1. Complete the private account/destination/secret configuration above. Verify
-   Darrell can receive the email and that the Discord channel is visible with
-   the intended notification settings.
+   Darrell can receive email at the confirmed company mailbox.
 2. Run `Production Availability` on this reviewed branch with
    `alert_drill=true`, `alert_drill_phase=fail`. The readiness job intentionally
    fails before its checkout, Node setup, or production verifier. The separate
    reporting job checks out only to execute the operational reporter; it never
    runs the app or the production verifier.
 3. Verify the provider created a **drill** incident and record Darrell's actual
-   email/Discord receipt times. Leave this rehearsal unacknowledged to verify
-   the configured 15/30/60-minute wake-up sequence. Test acknowledgement in a
-   separate rehearsal and verify that it stops paging without resolving it.
+   email receipt times. Leave this rehearsal unacknowledged to verify
+   the configured 15/30/60-minute wake-up sequence. Test acknowledgement during
+   the separate missed-check rehearsal in step 5.
 4. Resolve the synthetic incident with `alert_drill=true`,
    `alert_drill_phase=resolve`. Record the drill recovery notice and stopped
    escalation; production monitoring must remain unaffected. Pause the drill
@@ -195,7 +260,9 @@ responses; these are not email, Discord, timing, or recovery evidence.
    missing-heartbeat alerts.
 5. For a missed-check rehearsal, enable only the drill heartbeat, send its first
    signal, then withhold further pings for its interval plus grace. Verify the
-   missing-check incident and real receipt. Resolve and pause the drill again.
+   missing-check incident and real email receipt. Have Darrell acknowledge it;
+   verify that paging stops while it remains unresolved, observing through the
+   next configured escalation checkpoint. Resolve and pause the drill again.
 6. After configuration and review, merge the operational change and verify the
    first automatic main run activates the production heartbeat. Record that
    the independent uptime monitor is actively probing the strict endpoint.
@@ -210,7 +277,7 @@ starts the workflow or its reporting job, the independent service must alert
 on the absent heartbeat. Missing secrets cause a visible reporting failure.
 
 Record: private destination references; service/monitor/policy IDs; tested ref
-and run; first failure time; accepted-send responses; actual email/Discord
+and run; first failure time; accepted-send responses; actual email
 receipt and acknowledgement times; timed escalation results; acknowledged but
 unresolved handling; recovery/deduplication results; missed-check test; actual
 ongoing coverage; reviewer/date. An HTTP accepted-send result is not proof that
@@ -226,10 +293,10 @@ production host and database metadata, fill in the following restricted record:
 | Evidence | Current result |
 | --- | --- |
 | Hosting service and active production database endpoint match | Pending; match the host's active `DATABASE_URL` to the provider project/branch without exposing its password. |
-| Database provider, organization, project, branch, database, region, PostgreSQL version, plan | Not verified |
-| Configured PITR/history retention | Not verified; record actual configuration and capture time. |
+| Database provider, organization, project, branch, database, region, PostgreSQL version, plan | Neon metadata for the recovery-migration project was inspected September 16 (PostgreSQL 16, AWS US West 2); current production mapping and billing entitlement remain unverified. Keep identifiers private. |
+| Configured PITR/history retention | Inspected project reports 21,600 seconds on September 16; current production mapping and actual available history remain unverified. |
 | Earliest and latest currently restorable time or LSN | Not verified; configured retention alone does not prove available history. |
-| Scheduled snapshots/exports: successful timestamps and failures | Not verified |
+| Scheduled snapshots/exports: successful timestamps and failures | September 16 Neon snapshot inventory and branch schedule are empty. External exports and independent backup coverage remain unverified. |
 | Retention of snapshots/exports, destination, access and encryption controls | Not verified |
 | Protection against loss of the primary provider/account | Not verified; same-provider PITR is not independent off-provider recovery. |
 | Maximum observed backup gap and age of newest usable recovery point | Not measured |
@@ -338,7 +405,7 @@ is claimed by these checks.
 
 | Gate | Status | Required to close |
 | --- | --- | --- |
-| Recipient and escalation | OPEN | Darrell is confirmed as owner and technical responder, and his email is confirmed. The tested reporting code still needs an incident-service account, exact Discord destination, private secrets/policy configuration, actual receipt/escalation/recovery evidence, and measured external monitoring coverage. |
+| Recipient and escalation | OPEN | Darrell is confirmed as owner and technical responder, and his email is confirmed. Better Stack is selected. Its account/entitlement, private secrets/policy configuration, actual email receipt/escalation/acknowledgement/missed-check/recovery evidence and measured external monitoring coverage remain open. Discord is deferred. |
 | Backup retention and restore | OPEN | Authenticated production retention/recovery-point evidence and one successfully validated, documented isolated restore. |
 
 This operational work does not approve other payment, payout, notification,
