@@ -17,7 +17,7 @@ globalThis.fetch = async (...args) => { requests.push(args); throw new Error('No
 const { createElement: h, act } = await import('react');
 const { createRoot } = await import('react-dom/client');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { screen, within, configure } = await import('@testing-library/dom');
+const { screen, within, configure, fireEvent } = await import('@testing-library/dom');
 const { default: userEvent } = await import('@testing-library/user-event');
 configure({ defaultHidden: true });
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -25,11 +25,11 @@ const temporary = await mkdtemp(path.join(root, 'node_modules', '.insights-test-
 after(async () => { dom.window.close(); await rm(temporary, { recursive: true, force: true }); });
 const bundle = path.join(temporary, 'components.mjs');
 await build({
-  stdin: { contents: "export { WorkInsights } from './client/src/components/WorkInsights'; export { CrewDailyHome } from './client/src/components/CrewDailyHome'; export { default as JobPlanner } from './client/src/pages/job-planner'; export { summarizeWork } from './shared/workInsights';", resolveDir: root, loader: 'tsx' },
+  stdin: { contents: "export { WorkInsights } from './client/src/components/WorkInsights'; export { CrewDailyHome } from './client/src/components/CrewDailyHome'; export { default as JobPlanner } from './client/src/pages/job-planner'; export { summarizeWork } from './shared/workInsights'; export { default as CrewHome } from './client/src/pages/crew/home'; export { WorkerMonthlyProgress } from './client/src/components/worker-monthly-progress'; export * from './shared/workerHome';", resolveDir: root, loader: 'tsx' },
   outfile: bundle, absWorkingDir: root, bundle: true, packages: 'external', platform: 'node', format: 'esm', jsx: 'automatic',
   define: { 'import.meta.env.VITE_API_BASE_URL': '""' },
 });
-const { WorkInsights, CrewDailyHome, JobPlanner, summarizeWork } = await import(pathToFileURL(bundle).href);
+const { WorkInsights, CrewDailyHome, JobPlanner, summarizeWork, CrewHome, WorkerMonthlyProgress, currentWork, monthlyWork, chicagoMonth, workMonth } = await import(pathToFileURL(bundle).href);
 const complete = { id: 'ready', orderNumber: 101, serviceType: 'moving', status: 'available', moveDate: '2026-09-21', arrivalWindow: '9–11 am', fromAddress: 'Fixture address', details: 'Pack kitchen', phone: 'fixture', crewSize: 2 };
 const incomplete = { id: 'needs/details', orderNumber: 102, serviceType: 'flooring', status: 'quote_requested', moveDate: '2026-02-30', workerVisibility: { exactLocation: false, jobScope: false } };
 const jobs = [complete, incomplete, { id: 'done', serviceType: 'junk', status: 'completed' }];
@@ -40,13 +40,15 @@ async function mount(t, component, data) {
   if (data) client.setQueryData(['/api/crew/marketing/daily-home'], data);
   client.setQueryData(['/api/jobs/planner'], { items: jobs, viewer: { isAdmin: false, canAddJob: false } });
   client.setQueryData(['/api/admin/lead-safety/status'], { leads: [] });
+  client.setQueryData(['/api/jobs/my-pending'], [{ id: 'request', serviceType: 'delivery', status: 'assigned' }]);
+  client.setQueryData(['/api/leads/my-jobs'], [{ id: 'done', serviceType: 'junk', status: 'completed', confirmedDate: '2026-09-02' }]);
   const node = document.createElement('div'); document.body.append(node);
   const reactRoot = createRoot(node);
   const render = async (child) => act(async () => reactRoot.render(h(QueryClientProvider, { client }, child)));
   await render(component);
   t.after(async () => { await act(async () => reactRoot.unmount()); client.clear(); node.remove(); assert.equal(requests.length, 0, 'Charts and progress selection must never submit or send messages'); });
   const user = userEvent.setup({ document });
-  return { user, render, interact: (fn) => act(fn) };
+  return { client, user, render, interact: (fn) => act(fn) };
 }
 
 test('missing information excludes closed work, archived rows, duplicates, and hidden worker fields', () => {
@@ -139,4 +141,70 @@ test('the active crew planner contains the insights and retains its calendar', a
   assert.ok(screen.getByRole('heading', { name: 'Work in focus' }));
   assert.ok(screen.getByRole('region', { name: 'Calendar view controls' }));
   assert.equal(screen.getByRole('link', { name: /flooring/ }).getAttribute('href'), '/lead/needs%2Fdetails?returnTo=%2Fcrew');
+});
+
+test('worker queue keeps old active leads and excludes completed, paid, archived, and duplicate jobs', () => {
+  const input = [...jobs, complete, { id: 'old', status: 'new', createdAt: '2025-01-01' }, { id: 'paid', status: 'paid' }, { id: 'archived', status: 'new', archivedAt: '2026-09-01' }];
+  const before = structuredClone(input);
+  assert.deepEqual(new Set(currentWork(input).map(job => job.id)), new Set(['ready', 'needs/details', 'old']));
+  assert.deepEqual(input, before);
+});
+
+test('monthly reporting uses service dates and Chicago receipt months, with history replacing duplicate active records', () => {
+  assert.equal(chicagoMonth(new Date('2026-10-01T02:00:00Z')), '2026-09');
+  assert.equal(workMonth({ id: 'boundary', createdAt: '2026-10-01T02:00:00Z' }), '2026-09');
+  assert.equal(workMonth({ id: 'service', confirmedDate: '2026-10-01', createdAt: '2026-09-20' }), '2026-10');
+  assert.equal(workMonth({ id: 'invalid', moveDate: '2026-02-30', createdAt: 'invalid' }), null);
+  const summary = monthlyWork([
+    complete, { ...complete, status: 'completed' }, { id: 'unknown', status: 'new' },
+    { id: 'archived', archivedAt: true, moveDate: '2026-09-21' },
+    { id: 'cancelled', status: 'cancelled', moveDate: '2026-09-21' },
+  ], '2026-09');
+  assert.equal(summary.jobs.length, 1);
+  assert.equal(summary.jobs[0].status, 'completed');
+  assert.equal(summary.undated, 1);
+});
+
+test('worker homepage puts requests and current work before materials, monthly progress, and rewards', async t => {
+  const { user, interact } = await mount(t, h(CrewHome));
+  const headings = screen.getAllByRole('heading', { level: 2 }).map(node => node.textContent);
+  assert.deepEqual(headings, ['1 Work', '2 Get work', '3 Monthly progress', '4 Rewards & redemptions']);
+  const work = screen.getByRole('region', { name: '1 Work' });
+  assert.ok(within(work).getByRole('link', { name: /delivery/ }));
+  assert.equal(within(work).queryByRole('link', { name: /junk/ }), null);
+  assert.equal(screen.getByRole('link', { name: /Pricing datasets/ }).getAttribute('href'), '/crew/pricing-training');
+  assert.equal(screen.getByRole('link', { name: 'Calendar' }).getAttribute('href'), '/crew/calendar');
+  assert.equal(screen.getByRole('link', { name: 'Job request' }).getAttribute('href'), '/book?worker=1');
+  await interact(() => user.click(screen.getByRole('button', { name: 'leads', exact: true })));
+  assert.equal(within(work).queryByRole('link', { name: /moving/ }), null);
+  assert.equal(within(work).getByRole('link', { name: /flooring/ }).getAttribute('href'), '/lead/needs%2Fdetails?returnTo=%2Fcrew');
+});
+
+test('monthly chart controls include completed work, change months, and expose safe drill-through links', async t => {
+  const { user, interact } = await mount(t, h(WorkerMonthlyProgress));
+  assert.equal(screen.getByLabelText('Progress month').value, chicagoMonth());
+  await interact(() => fireEvent.change(screen.getByLabelText('Progress month'), { target: { value: '2026-09' } }));
+  const finished = screen.getByRole('button', { name: 'Finished: 1 job' });
+  await interact(async () => { finished.focus(); await user.keyboard('{Enter}'); });
+  assert.equal(screen.getByRole('link', { name: /junk/ }).getAttribute('href'), '/lead/done?returnTo=%2Fcrew%2Fprogress%3Fmonth%3D2026-09');
+  await interact(() => user.click(screen.getByRole('button', { name: 'Previous month' })));
+  assert.equal(screen.getByLabelText('Progress month').value, '2026-08');
+  assert.ok(screen.getByText('No jobs recorded for this month.'));
+  assert.equal(screen.queryByRole('link', { name: /junk/ }), null);
+  await interact(() => fireEvent.change(screen.getByLabelText('Progress month'), { target: { value: '2026-01' } }));
+  await interact(() => user.click(screen.getByRole('button', { name: 'Previous month' })));
+  assert.equal(screen.getByLabelText('Progress month').value, '2025-12');
+});
+
+test('missing history never produces a misleading completed count and a cached error stays visible', async t => {
+  const { client, interact, render } = await mount(t, h(WorkerMonthlyProgress));
+  await interact(async () => {
+    await client.fetchQuery({ queryKey: ['/api/leads/my-jobs'], staleTime: 0, queryFn: async () => { throw new Error('history unavailable'); } }).catch(() => {});
+  });
+  assert.match(screen.getByRole('alert').textContent, /last loaded records/);
+  assert.ok(screen.getByRole('group', { name: 'Monthly job stages' }));
+  await render(null);
+  client.removeQueries({ queryKey: ['/api/leads/my-jobs'] });
+  await render(h(WorkerMonthlyProgress));
+  assert.equal(screen.queryByRole('group', { name: 'Monthly job stages' }), null);
 });

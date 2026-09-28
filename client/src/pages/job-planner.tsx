@@ -102,7 +102,7 @@ export default function JobPlannerPage({ audience }: { audience: "admin" | "crew
     }
     return result;
   }, [scheduled]);
-  const plannerPath = audience === "admin" ? "/admin/schedule" : "/crew";
+  const plannerPath = audience === "admin" ? "/admin/schedule" : "/crew/calendar";
 
   const openJob = (job: PlannerJob) => {
     navigate(`/lead/${encodeURIComponent(job.id)}?returnTo=${encodeURIComponent(plannerPath)}`);
