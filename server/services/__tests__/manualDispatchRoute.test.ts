@@ -44,3 +44,37 @@ for (const test of [
   if (status === 409) assert.ok(payload.blockers.length > 0);
 }
 console.log('Manual dispatch route rejects unauthorized and incomplete setup before payment effects.');
+
+// The legacy administrator status override cannot bypass shared readiness.
+const forceStart = source.indexOf('  app.patch("/api/leads/:id/status/force"');
+const forceEnd = source.indexOf('  // Protected routes - Update lead status', forceStart);
+assert.ok(forceStart >= 0 && forceEnd > forceStart);
+const forceCompiled = ts.transpileModule(source.slice(forceStart, forceEnd), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
+class WorkflowError extends Error {
+  constructor(public status: number, message: string, public blockers: unknown[] = []) { super(message); }
+}
+for (const blocked of [true, false]) {
+  let handler: any, status = 200, payload: any, sharedCalls = 0;
+  const res: any = { status(value: number) { status = value; return res; }, json(value: unknown) { payload = value; return res; } };
+  const deps = {
+    app: { patch(_path: string, _auth: unknown, _role: unknown, callback: unknown) { handler = callback; } },
+    isAuthenticated: () => {}, requireAdmin: () => {}, WorkflowError,
+    storage: { getLead: async () => ready, updateLeadStatus: () => { throw new Error('Dispatch bypassed the shared service'); } },
+    workflowActor: async () => ({ userId: 'owner', manage: true }),
+    getJobWorkflow: async () => ({ version: 'current-version' }),
+    executeCrewAction: async (id: string, _actor: unknown, input: any) => {
+      sharedCalls++;
+      assert.equal(id, ready.id);
+      assert.deepEqual(input, { version: 'reviewed-version', action: 'dispatch', idempotencyKey: 'retry-key' });
+      if (blocked) throw new WorkflowError(409, 'Complete dispatch setup first.', [{ code: 'customer_confirmation', target: 'confirmation' }]);
+      return { saved: true, notifications: [] };
+    },
+  };
+  new Function(...Object.keys(deps), forceCompiled)(...Object.values(deps));
+  await handler({ session: { userId: 'owner' }, params: { id: ready.id }, body: { status: 'dispatched', version: 'reviewed-version', idempotencyKey: 'retry-key' } }, res);
+  assert.equal(sharedCalls, 1);
+  assert.equal(status, blocked ? 409 : 200);
+  if (blocked) assert.equal(payload.blockers[0].code, 'customer_confirmation');
+  else assert.equal(payload.dispatchResult.saved, true);
+}
+console.log('Legacy forced dispatch delegates to shared readiness and preserves actionable errors.');

@@ -10604,6 +10604,20 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       const existingLead = await storage.getLead(id);
       if (!existingLead) return res.status(404).json({ error: "Lead not found" });
 
+      // An administrative stage correction must still use the dispatch checks
+      // and durable effects when it actually dispatches a crew.
+      if (status === "dispatched") {
+        const actor = await workflowActor(actorId || "");
+        if (!actor?.manage) return res.status(403).json({ error: "Job management permission required" });
+        const current = await getJobWorkflow(id, actor);
+        const dispatchResult = await executeCrewAction(id, actor, {
+          version: req.body?.version || current.version,
+          action: "dispatch",
+          idempotencyKey: req.body?.idempotencyKey || crypto.randomUUID(),
+        });
+        return res.json({ ...await storage.getLead(id), dispatchResult });
+      }
+
       let updatedLead = await storage.updateLeadStatus(id, status);
       if (!updatedLead) return res.status(404).json({ error: "Lead not found" });
 
@@ -10658,6 +10672,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
 
       res.json(updatedLead);
     } catch (error) {
+      if (error instanceof WorkflowError) return res.status(error.status).json({ error: error.message, blockers: error.blockers });
       console.error("Error force-updating lead status:", error);
       res.status(500).json({ error: "Failed to force update lead status" });
     }
