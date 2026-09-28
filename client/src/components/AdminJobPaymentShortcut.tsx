@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
+import { centralBusinessDate as businessDate, closeoutRepairs, isPastJobDate, type JobCloseoutRepair } from "@/lib/job-closeout-repair";
 
 type Action = "payment" | "payout";
 type Receipt = { method: "cash" | "check" | ""; paidDate: string; reference: string; note: string };
@@ -32,13 +33,6 @@ type Review = { action: Action; receipt: Receipt; snapshot: Snapshot; fingerprin
 const pastStatuses = new Set(["confirmed", "available", "assigned", "accepted", "dispatched", "in_progress", "completed"]);
 const money = (value: unknown) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(value) || 0);
 const tokens = (value: number) => Number.isFinite(value) ? value.toLocaleString("en-US") : "Unavailable";
-
-function businessDate() {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit",
-  }).formatToParts(new Date()).map(part => [part.type, part.value]));
-  return `${parts.year}-${parts.month}-${parts.day}`;
-}
 
 function jobDate(snapshot: Snapshot) {
   const value = snapshot.lead.confirmedDate || snapshot.lead.moveDate || "";
@@ -83,7 +77,7 @@ function unavailable(snapshot: Snapshot, action: Action) {
   } else {
     if (lead.paymentPaidAt || rewards.paidInFull) return "Payment is already recorded. Use the JCMOVES payout option if awards are still missing.";
     if (!pastStatuses.has(lead.status.toLowerCase())) return "Confirm the job before using past-job payment closeout.";
-    if (!jobDate(snapshot) || jobDate(snapshot) >= businessDate()) return "Past-job closeout requires the correct job date, before today.";
+    if (!isPastJobDate(jobDate(snapshot))) return "Past-job closeout requires the correct job date, before today.";
     if (!Number.isFinite(Number(lead.totalPrice || lead.basePrice)) || Number(lead.totalPrice || lead.basePrice) <= 0) return "Save the final job total before recording full payment.";
   }
   const members = crew(snapshot);
@@ -117,7 +111,11 @@ function JobSummary({ snapshot }: { snapshot: Snapshot }) {
   </div>;
 }
 
-export function AdminJobPaymentShortcut({ leadId }: { leadId: string }) {
+export function AdminJobPaymentShortcut({ leadId, onFixJob, resumeKey = 0 }: {
+  leadId: string;
+  onFixJob?: (target: JobCloseoutRepair) => void;
+  resumeKey?: number;
+}) {
   const { hasAdminAccess } = useAuth();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -132,6 +130,8 @@ export function AdminJobPaymentShortcut({ leadId }: { leadId: string }) {
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState("");
+  const leavingForRepair = useRef(false);
+  const lastResumeKey = useRef(resumeKey);
   const query = useQuery<Snapshot>({
     queryKey: ["admin-payment-shortcut", leadId], enabled: open && hasAdminAccess, retry: false, staleTime: 0,
     queryFn: async () => {
@@ -154,6 +154,15 @@ export function AdminJobPaymentShortcut({ leadId }: { leadId: string }) {
     setConfirmed(false);
     return () => clearTimeout(clickTimer.current);
   }, [leadId, hasAdminAccess]);
+
+  useEffect(() => {
+    if (lastResumeKey.current === resumeKey) return;
+    lastResumeKey.current = resumeKey;
+    if (!hasAdminAccess) return;
+    // Reopening enables a fresh read. Saving details never confirms a payment.
+    setReview(null); setConfirmed(false); setError(""); setResult("");
+    setOpen(true);
+  }, [resumeKey, hasAdminAccess]);
 
   const reset = () => {
     setAction(null); setReview(null); setConfirmed(false); setError(""); setResult("");
@@ -213,6 +222,9 @@ export function AdminJobPaymentShortcut({ leadId }: { leadId: string }) {
   const loading = query.isPending || query.isFetching;
   const ready = !!snapshot && !loading && !query.isError;
   const blocked = snapshot && action ? unavailable(snapshot, action) : null;
+  const repairTarget: JobCloseoutRepair | null = blocked === "Past-job closeout requires the correct job date, before today." ? "date"
+    : blocked === "Save the final job total before recording full payment." ? "total"
+    : blocked === "Assign and verify the crew accounts that actually worked this job." ? "crew" : null;
   const receiptError = action === "payment" ? receiptProblem(receipt) : null;
   const reviewChanged = !!review && !!snapshot && review.fingerprint !== fingerprint(snapshot);
   return <>
@@ -223,7 +235,8 @@ export function AdminJobPaymentShortcut({ leadId }: { leadId: string }) {
     </Button>
     <span className="sr-only" aria-live="polite">{clicks > 0 ? `${clicks} of 5 clicks to open admin payment options` : ""}</span>
     <Dialog open={open} onOpenChange={value => { if (!submitting.current) { setOpen(value); if (!value) reset(); } }}>
-      <DialogContent className="max-h-[90dvh] max-w-lg overflow-y-auto" data-testid="admin-payment-dialog">
+      <DialogContent className="max-h-[90dvh] max-w-lg overflow-y-auto" data-testid="admin-payment-dialog"
+        onCloseAutoFocus={event => { if (leavingForRepair.current) { event.preventDefault(); leavingForRepair.current = false; } }}>
         <DialogHeader>
           <DialogTitle>{result ? "Payment & JCMOVES result" : review ? "Final admin confirmation" : "Payment received & JCMOVES"}</DialogTitle>
           <DialogDescription>{review ? "Check this job and its recipients, then confirm the selected action." : "Review the saved job, record an eligible cash/check receipt, or request its missing JCMOVES awards."}</DialogDescription>
@@ -253,7 +266,15 @@ export function AdminJobPaymentShortcut({ leadId }: { leadId: string }) {
                   <input type="radio" name={`admin-payment-action-${leadId}`} value={value} checked={action === value} onChange={() => { setAction(value); setConfirmed(false); setError(""); }} />{label}
                 </label>)}
             </fieldset>
-            {blocked ? <p role="status" className="text-sm text-amber-400">{blocked}</p> : null}
+            {blocked ? <div className="space-y-2 rounded-lg border border-amber-500/40 p-3">
+              <p role="status" className="text-sm text-amber-400">{blocked}</p>
+              {repairTarget && onFixJob ? <Button type="button" variant="outline" className="min-h-11" disabled={!ready || busy}
+                data-testid="button-fix-closeout" onClick={() => {
+                  leavingForRepair.current = true;
+                  setReview(null); setConfirmed(false); setError(""); setOpen(false);
+                  onFixJob(repairTarget);
+                }}>{closeoutRepairs[repairTarget].label}</Button> : null}
+            </div> : null}
             {action === "payment" && !blocked ? <div className="space-y-3">
               <p className="text-xs text-muted-foreground">Use this only for a full cash/check payment already received. Card, U-Haul, and other payments must use their verified payment records.</p>
               <div className="grid gap-3 sm:grid-cols-2">
