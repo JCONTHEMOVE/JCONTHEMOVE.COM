@@ -311,7 +311,9 @@ export async function finalizeCommerceOrder(orderId: string) {
   const order = orderResult.rows[0];
   if (!order) throw new Error("Order not found");
   if (order.status === "paid") {
-    await issuePaidOrderRewards(orderId);
+    await issuePaidOrderRewards(orderId).catch((error) => {
+      console.error("[Ashley Shop] reward issuance failed; will retry", orderId, error);
+    });
     return getCommerceOrder(orderId);
   }
   if (!order.square_order_id) throw new Error("Order is not connected to Square");
