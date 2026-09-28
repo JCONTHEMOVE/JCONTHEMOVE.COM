@@ -41,6 +41,24 @@ export interface EmailParams {
   html?: string;
 }
 
+/** Durable workflows must not fall through to a second provider after an
+ * ambiguous send. A false Gmail result can include a lost acknowledgement. */
+export async function sendWorkflowEmail(params: EmailParams): Promise<boolean> {
+  if (await isGmailAvailable()) {
+    if (await sendGmailEmail({ ...params, from: params.from || FROM_EMAIL })) return true;
+    throw new Error("Email provider outcome needs verification");
+  }
+  if (!isEmailServiceAvailable) return false;
+  try {
+    await mailService.send({ ...params, from: params.from || FROM_EMAIL } as any);
+    return true;
+  } catch (error: any) {
+    const status = Number(error?.code || error?.response?.statusCode);
+    if (status >= 400 && status < 500 && status !== 408) return false;
+    throw new Error("Email provider outcome needs verification");
+  }
+}
+
 export async function sendEmail(params: EmailParams): Promise<boolean> {
   // Try Gmail first (primary)
   try {

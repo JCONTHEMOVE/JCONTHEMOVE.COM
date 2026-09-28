@@ -1,19 +1,19 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
-import { manualDispatchMissingSetup } from '../../../shared/manualDispatchReadiness';
+import { dispatchBlockers } from '../../../shared/job-workflow';
 
 // Execute the production route through its pre-write boundary. An incomplete
 // dispatch must return before any payment, wallet or notification effect.
 const source = readFileSync('server/routes.ts', 'utf8');
 const start = source.indexOf('  app.post("/api/leads/:id/mark-paid"');
-const end = source.indexOf("      // Record 'paid' transition first, then 'dispatched'", start);
+const end = source.indexOf("      const current = await getJobWorkflow", start);
 assert.ok(start >= 0 && end > start);
 const compiled = ts.transpileModule(source.slice(start, end) + `
   return res.status(202).json({ ready: true });
   } catch (error) { return res.status(500).json({ error: String(error) }); }
 });`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
-const ready = { id: 'synthetic', status: 'quoted', totalPrice: '425', confirmedDate: '2030-09-15', crewSize: 2, crewMembers: ['one', 'two'] };
+const ready = { id: 'synthetic', status: 'quoted', firstName: 'Test', lastName: 'Customer', phone: '2025550135', fromAddress: 'Test street', serviceType: 'labor', totalPrice: '425', confirmedDate: '2099-09-15', arrivalWindow: '9:00 AM – 10:00 AM', crewSize: 2, crewMembers: ['one', 'two'] };
 for (const test of [
   { role: 'customer', lead: ready, expected: 403 },
   { role: 'employee', lead: ready, expected: 403 },
@@ -32,13 +32,15 @@ for (const test of [
     storage: { getUser: async () => ({ id: 'owner', role: test.role }) },
     db: { select: () => ({ from: () => ({ where: async () => test.lead ? [test.lead] : [] }) }), update: rejectEffect },
     pool: { query: rejectEffect }, leads: { id: 'id' }, eq: () => true,
-    manualDispatchMissingSetup, writeLeadHistory: rejectEffect,
+    writeLeadHistory: rejectEffect,
+    workflowActor: async () => ({ userId: 'owner', manage: true }),
+    checkWorkflowDispatch: async () => dispatchBlockers(test.lead, { matches: Number(test.lead?.totalPrice) > 0, status: 'approved' } as any, true),
     recordRevenueSplit: rejectEffect, creditJcMovesUsd: rejectEffect,
   };
   new Function(...Object.keys(deps), compiled)(...Object.values(deps));
   await handler({ session: { userId: 'owner' }, params: { id: 'synthetic' } }, res);
   assert.equal(status, test.expected);
   assert.equal(effects, 0);
-  if (status === 409) assert.ok(payload.missingSetup.length > 0);
+  if (status === 409) assert.ok(payload.blockers.length > 0);
 }
 console.log('Manual dispatch route rejects unauthorized and incomplete setup before payment effects.');
