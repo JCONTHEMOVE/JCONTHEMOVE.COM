@@ -13,6 +13,8 @@ export type WorkflowQuote = {
   id: string | null; revision: number; status: string; total: number; subtotal: number;
   discount: number; lines: Array<{ name: string; quantity: number; unitPrice: number; total: number }>;
   requiresOwner: boolean; reasons: string[]; matches: boolean;
+  addOns?: Array<{ id: string; name: string; quantity: number; unitPrice: number; total: number }>;
+  invoiceTotal?: number;
 };
 export type JobWorkflow = {
   version: string;
@@ -36,7 +38,7 @@ export function customerAgreementSnapshot(lead: any, quoteId: string | null) {
     customer: [lead.firstName || "", lead.lastName || "", lead.email || "", lead.phone || ""],
     quoteId, total: cents(lead.totalPrice ?? lead.basePrice), service: lead.serviceType || "",
     from: lead.confirmedFromAddress || lead.fromAddress || "", to: lead.confirmedToAddress || lead.toAddress || "",
-    date: lead.confirmedDate || "", window: lead.arrivalWindow || "",
+    date: lead.confirmedDate || lead.moveDate || "", window: lead.arrivalWindow || "",
     hours: Number(lead.confirmedHours || 0), crewSize: Number(lead.crewSize || 0),
     truck: lead.truckConfig || "", trailer: Boolean(lead.trailerRequested),
     scope: plan.workScope || "", customerNotes: customerNotesFromDetails(lead.details), additionalInterests: plan.projectIntake?.additionalServices || [], stairs: plan.stairsFlights || 0, elevator: Boolean(plan.hasElevator),
@@ -71,10 +73,11 @@ export function dispatchBlockers(lead: any, quote: WorkflowQuote, confirmed: boo
   if (lead.archivedAt || ["completed", "closed", "cancelled", "archived", "customer_approved", "payout_calculated", "payout_sent", "in_progress"].includes(lead.status)) result.push({ code: "dispatch_stage", message: "This job has already started or closed. Review its history instead of dispatching it again.", target: "details" });
   if (!quote.matches || !["approved", "sent"].includes(quote.status)) result.push({ code: "quote_approval", message: "Review and approve the current quote.", target: "quote" });
   if (!confirmed) result.push({ code: "customer_confirmation", message: "Record the customer's agreement to the current job details.", target: "confirmation" });
-  if (!validServiceDate(lead.confirmedDate) || String(lead.confirmedDate).slice(0, 10) < businessDateString()) result.push({ code: "service_date", message: "Choose a current or future service date. Past jobs use closeout.", target: "schedule", field: "job-setup-schedule" });
+  const serviceDate = lead.confirmedDate || lead.moveDate;
+  if (!validServiceDate(serviceDate) || String(serviceDate).slice(0, 10) < businessDateString()) result.push({ code: "service_date", message: "Choose a current or future service date. Past jobs use closeout.", target: "schedule", field: "job-setup-schedule" });
   if (!lead.arrivalWindow || (!isHourlyJobArrivalWindow(lead.arrivalWindow) && !isLegacyJobArrivalWindow(lead.arrivalWindow))) result.push({ code: "arrival_window", message: "Choose a valid arrival window.", target: "schedule", field: "setup-arrival-window" });
   const end = String(lead.arrivalWindow || "").match(/[-–]\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-  if (end && String(lead.confirmedDate).slice(0, 10) === businessDateString()) {
+  if (end && String(serviceDate).slice(0, 10) === businessDateString()) {
     const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "numeric", hourCycle: "h23" }).formatToParts(new Date()).map(p => [p.type, p.value]));
     const endMinutes = (Number(end[1]) % 12 + (end[3].toUpperCase() === "PM" ? 12 : 0)) * 60 + Number(end[2]);
     if (Number(parts.hour) * 60 + Number(parts.minute) >= endMinutes) result.push({ code: "elapsed_window", message: "This arrival window has passed. Review the agreed schedule.", target: "schedule", field: "setup-arrival-window" });

@@ -54,7 +54,7 @@ router.post("/leads/:id/quote-review", async (req: any, res) => {
     const review = await reviewJobQuote(req.params.id, req.workflowActor, input.deliveryMethod);
     res.json({ version: review.version, reviewHash: review.reviewHash, quote: review.quote, blockers: review.blockers,
       recipient: review.recipient, smsConsent: review.smsConsent, invoiceAvailable: review.invoiceAvailable,
-      schedule: { date: review.lead.confirmedDate, window: review.lead.arrivalWindow },
+      schedule: { date: review.lead.confirmedDate || review.lead.moveDate, window: review.lead.arrivalWindow },
       fromAddress: review.lead.confirmedFromAddress || review.lead.fromAddress,
       toAddress: review.lead.confirmedToAddress || review.lead.toAddress,
       service: review.lead.serviceType, ownerReasons: review.policy?.travelEligibility?.reasons || [] });

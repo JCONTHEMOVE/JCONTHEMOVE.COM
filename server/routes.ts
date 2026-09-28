@@ -158,7 +158,7 @@ import { createMarketingExecutionRouter } from "./routes/marketingExecution";
 import bookingsRouter from "./routes/bookings";
 import quotesRouter from "./routes/quotes";
 import jobWorkflowRouter from "./routes/jobWorkflow";
-import { syncSavedQuote, loadWorkflowState, WorkflowError, workflowActor, getJobWorkflow, reviewJobQuote, approveAndSend, readWorkflowQuoteToken, checkWorkflowDispatch, recordWorkflowPayment, executeCrewAction } from "./services/jobWorkflow";
+import { syncSavedQuote, loadWorkflowState, WorkflowError, workflowActor, getJobWorkflow, reviewJobQuote, approveAndSend, readWorkflowQuoteToken, checkWorkflowDispatch, recordWorkflowPayment, executeCrewAction, usableEmail } from "./services/jobWorkflow";
 import pricingV2Router from "./routes/pricingV2";
 import regionalAutomationRouter from "./routes/regionalAutomation";
 import pipelineRouter from "./routes/pipeline";
@@ -15395,14 +15395,14 @@ Thank you for your business!
       if (workflowToken && workflowToken.leadId === req.params.id) {
         const { lead: savedLead, row, quote } = await loadWorkflowState(req.params.id);
         if (!row || row.id !== workflowToken.quoteId || !quote.matches || !["approved", "sent"].includes(row.status) || savedLead.archivedAt || ["closed", "cancelled"].includes(savedLead.status)) return res.status(404).json({ error: "Quote order not found" });
-        const lines = [...quote.lines, ...(quote.discount > 0 ? [{ name: "Discount", quantity: 1, total: -quote.discount }] : [])];
+        const lines = [...quote.lines, ...(quote.addOns || []), ...(quote.discount > 0 ? [{ name: "Discount", quantity: 1, total: -quote.discount }] : [])];
         const invoice = await pool.query("SELECT payload FROM customer_job_events WHERE event_key=$1", ["workflow-invoice:" + row.id]);
         return res.json({ order: {
           id: savedLead.id, orderNumber: savedLead.orderNumber, customerName: [savedLead.firstName,savedLead.lastName].filter(Boolean).join(" "),
           serviceType: savedLead.serviceType, status: savedLead.status, confirmedDate: savedLead.confirmedDate,
           moveDate: savedLead.moveDate, arrivalWindow: savedLead.arrivalWindow, crewSize: savedLead.crewSize, confirmedHours: savedLead.confirmedHours,
           fromAddress: savedLead.confirmedFromAddress || savedLead.fromAddress, toAddress: savedLead.confirmedToAddress || savedLead.toAddress,
-          totalPrice: quote.total, lineItems: lines, quoteRevisionId: row.id, paymentUrl: invoice.rows[0]?.payload?.paymentUrl || null,
+          totalPrice: quote.invoiceTotal ?? quote.total, lineItems: lines, quoteRevisionId: row.id, paymentUrl: invoice.rows[0]?.payload?.paymentUrl || null,
         } });
       }
       const token = readPublicQuoteToken(rawToken);
@@ -15492,7 +15492,8 @@ Thank you for your business!
       if (!actor?.canApproveStandard) return res.status(403).json({ error: "Quote approval authority is required." });
       const workflow = await getJobWorkflow(req.params.id, actor);
       if (!workflow.quote.matches || !["approved", "sent"].includes(workflow.quote.status)) return res.status(409).json({ error: "Review and approve the current quote before sending.", blockers: [{ code: "quote_approval", message: "Review the current quote.", target: "quote" }] });
-      const method = ["email", "sms", "both", "copy"].includes(req.body.deliveryMethod) ? req.body.deliveryMethod : "email";
+      const customer = await storage.getLead(req.params.id);
+      const method = ["email", "sms", "both", "copy"].includes(req.body.deliveryMethod) ? req.body.deliveryMethod : usableEmail(customer?.email || "") ? "email" : workflow.capabilities.sms ? "sms" : "copy";
       const review = await reviewJobQuote(req.params.id, actor, method);
       const key = typeof req.body.idempotencyKey === "string" ? req.body.idempotencyKey : crypto.createHash("sha256").update("legacy-quote:" + workflow.quote.id + ":" + method).digest("hex");
       const result = await approveAndSend(req.params.id, actor, { version: review.version, reviewHash: review.reviewHash, idempotencyKey: key, deliveryMethod: method, message: req.body.message, recordSmsConsent: req.body.recordSmsConsent });

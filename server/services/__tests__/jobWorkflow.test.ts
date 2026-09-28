@@ -14,6 +14,8 @@ assert.equal(project(confirmed, approved).nextAction.target, "payment");
 assert.equal(project({ ...confirmed, paymentPaidAt: "2099-01-01" } as any, approved).nextAction.key, "dispatch");
 assert.equal(projectJobWorkflow({ lead, quote, version: "v", confirmationHash: "", capabilities: { approve: false, manage: false, sms: false } }).label, "Awaiting approval");
 assert.ok(dispatchBlockers({ ...confirmed, crewMembers: ["a", "a"] }, approved, true).some(b => b.code === "crew_roster"));
+assert.ok(!dispatchBlockers({ ...lead, confirmedDate: null, moveDate: "2099-10-02" }, approved, true).some(b => b.code === "service_date"), "Legacy saved dates remain reviewable for agreement and dispatch");
+assert.equal(customerAgreementSnapshot({ ...lead, confirmedDate: null, moveDate: "2099-10-02" }, "q1").date, "2099-10-02");
 assert.ok(!dispatchBlockers({ ...confirmed, crewMembers: [] }, approved, true, false).some(b => b.code === "crew_roster"));
 assert.ok(dispatchBlockers({ ...confirmed, depositRequired: true, depositPaid: false }, approved, true, false).some(b => b.code === "payment_required"));
 assert.ok(dispatchBlockers({ ...confirmed, depositRequired: true, depositPaid: false, dispatchOverrideReason: "Owner exception" }, quote, false).some(b => b.code === "quote_approval"), "Payment overrides do not bypass quote approval");

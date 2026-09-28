@@ -45,6 +45,7 @@ try {
     CREATE TABLE customer_job_events(id varchar PRIMARY KEY DEFAULT gen_random_uuid(),lead_id varchar,event_type text,event_key text UNIQUE,title text,message text,payload jsonb);
     CREATE TABLE customer_notification_deliveries(id varchar PRIMARY KEY DEFAULT gen_random_uuid(),event_id varchar,channel text,destination_hash text,status text,provider_reference text,error text,attempts int,updated_at timestamp,UNIQUE(event_id,channel,destination_hash));
     CREATE TABLE idempotency_keys(key text PRIMARY KEY,scope text);
+    CREATE TABLE wallet_credit_grants(id varchar PRIMARY KEY,source_type text,source_id varchar,status text,amount_usd numeric,metadata jsonb,square_invoice_id text);
     INSERT INTO users(id,role,email,status,is_approved) VALUES('owner','business_owner','upmichiganstatemovers@gmail.com','active',true),('worker','employee','worker@example.test','active',true);
   `);
   const outfile = path.join(directory, "workflow.mjs");
@@ -58,7 +59,7 @@ try {
           "./pricingVersions": 'export async function getActivePricingSnapshot(){return {versionId:null,snapshot:{version:"test_legacy",currency:"USD",offers:{totalPercentageCap:100}}}}',
           "./quoteGeography": 'export async function resolveQuoteRouteEvidence(){return {verified:true,stopCoordinates:[],oneWayMinutes:5,oneWayMiles:2}}',
           "./regionalAutomationMigration": 'export async function ensureRegionalAutomationSchema(){}',
-          "./square-invoice": pre + 'export const squareInvoiceService={isConfigured:()=>true,createItemizedInvoiceForLead:async(lead,lines,contact,delivery,options)=>{if(delivery!=="none" || options.expectedTotal!==472.5 || !options.idempotencyKey)throw Error("Wrong invoice arguments");state.invoices++;if(!state.invoiceOk)throw Error("provider timeout");return {invoiceUrl:"https://square.example.test/pay",squareInvoiceId:"invoice-test"}}};',
+          "./square-invoice": pre + 'export const squareInvoiceService={isConfigured:()=>true,createItemizedInvoiceForLead:async(lead,lines,contact,delivery,options)=>{if(delivery!=="none" || options.expectedTotal!==Math.round((lines.reduce((sum,l)=>sum+l.total,0)-options.discounts.reduce((sum,d)=>sum+d.amount,0))*100)/100 || !options.idempotencyKey)throw Error("Wrong invoice arguments");state.invoices++;if(!state.invoiceOk)throw Error("provider timeout");return {invoiceUrl:"https://square.example.test/pay",squareInvoiceId:"invoice-test"}}};',
           "./email": pre + 'export async function sendWorkflowEmail(){state.emails++;if(state.emailThrows)throw Error("timeout");return state.emailOk;}',
           "./sms": pre + 'export const smsService={sendSMS:async()=>{state.texts++;return {success:state.smsOk,messageSid:"sms-test",error:state.smsOk?undefined:"Invalid destination"}}};',
           "./jobEventBus": pre + 'export async function emitJobEvent(){state.crew++;}',
@@ -136,6 +137,14 @@ try {
   await workflow.approveAndSend("unknown", actor, uncertainRequest);
   assert.equal(state.emails, emailsAfterTimeout, "Unknown delivery is not blindly resent");
   state.emailThrows = false;
+
+  await seed("bundled");
+  await query("INSERT INTO wallet_credit_grants VALUES('grant-one','lead','bundled','pending',50,'{\"name\":\"Shop Card\"}',null)");
+  const bundledRequest = await prepare("bundled", "copy");
+  const bundled = await workflow.approveAndSend("bundled", actor, bundledRequest);
+  assert.equal(bundled.workflow.quote.invoiceTotal, 522.5);
+  assert.equal(bundled.workflow.quote.total, 472.5);
+  assert.equal((await query("SELECT square_invoice_id FROM wallet_credit_grants WHERE id='grant-one'")).rows[0].square_invoice_id, "invoice-test");
 
   await seed("rollback");
   const rollback = await prepare("rollback", "copy");

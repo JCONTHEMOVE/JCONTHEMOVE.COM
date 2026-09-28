@@ -63,7 +63,11 @@ export async function loadWorkflowState(leadId: string, client: Queryable = pool
   const result = await client.query("SELECT * FROM quote_revisions WHERE lead_id=$1 ORDER BY revision DESC LIMIT 1", [leadId]);
   const row = result.rows[0] || null;
   const quote = savedWorkflowQuote(lead, row);
-  const version = workflowHash({ terms: quoteTerms(lead), customer: [lead.firstName, lead.lastName, lead.email, lead.phone], quote: row ? [row.id, row.status, parseDate(row.updated_at)] : null, lineItems: lead.orderLineItems, confirmation: lead.jobPlanDetails?.customerConfirmation, crew: lead.crewMembers, payment: [lead.paymentPaidAt, lead.depositPaid, lead.paymentPlan], status: lead.status });
+  const grants = await client.query("SELECT id,amount_usd,metadata FROM wallet_credit_grants WHERE source_type='lead' AND source_id=$1 AND status='pending' ORDER BY id", [leadId]);
+  const pendingAddOns = grants.rows.map((g: any) => ({ id: g.id, name: String(g.metadata?.name || "JCMOVES Shop Card"), quantity: 1, unitPrice: cents(g.amount_usd) / 100, total: cents(g.amount_usd) / 100 }));
+  quote.addOns = quote.matches && ["approved", "sent"].includes(quote.status) && Array.isArray(row?.route_evidence?.workflowBillingAddOns) ? row.route_evidence.workflowBillingAddOns : pendingAddOns;
+  quote.invoiceTotal = (cents(quote.total) + quote.addOns!.reduce((sum, item) => sum + cents(item.total), 0)) / 100;
+  const version = workflowHash({ terms: quoteTerms(lead), customer: [lead.firstName, lead.lastName, lead.email, lead.phone], quote: row ? [row.id, row.status, parseDate(row.updated_at)] : null, lineItems: lead.orderLineItems, addOns: quote.addOns, pendingAddOns, confirmation: lead.jobPlanDetails?.customerConfirmation, crew: lead.crewMembers, payment: [lead.paymentPaidAt, lead.depositPaid, lead.paymentPlan], status: lead.status });
   const confirmationHash = workflowHash(customerAgreementSnapshot(lead, quote.id));
   return { lead, row, quote, version, confirmationHash };
 }
@@ -180,7 +184,8 @@ export async function approveAndSend(leadId: string, actor: WorkflowActor, input
         await audit(client, locked.lead, actor.userId, `Quote revision ${row.revision} reviewed and approved.`);
       }
       if (input.recordSmsConsent && ["sms", "both"].includes(input.deliveryMethod)) await client.query("UPDATE leads SET sms_consent=true,sms_consent_recorded_at=NOW(),sms_consent_source='verbal',sms_consent_recorded_by=$2 WHERE id=$1", [leadId, actor.userId]);
-      await client.query("INSERT INTO customer_job_events(lead_id,event_type,event_key,title,message,payload) VALUES($1,'quote_reviewed',$2,'Quote approved','Staff reviewed this quote.',$3::jsonb)", [leadId, operationKey, JSON.stringify({ quoteId, actorId: actor.userId, deliveryMethod: input.deliveryMethod, message: input.message || "", email: locked.lead.email, phone: locked.lead.phone })]);
+      await client.query("UPDATE quote_revisions SET route_evidence=route_evidence || $2::jsonb WHERE id=$1", [quoteId, JSON.stringify({ workflowBillingAddOns: review.quote.addOns || [] })]);
+      await client.query("INSERT INTO customer_job_events(lead_id,event_type,event_key,title,message,payload) VALUES($1,'quote_reviewed',$2,'Quote approved','Staff reviewed this quote.',$3::jsonb)", [leadId, operationKey, JSON.stringify({ quoteId, actorId: actor.userId, deliveryMethod: input.deliveryMethod, message: input.message || "", email: locked.lead.email, phone: locked.lead.phone, addOns: review.quote.addOns || [] })]);
     }
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
@@ -225,6 +230,7 @@ async function deliverApprovedQuote(leadId: string, actor: WorkflowActor, input:
   const deliveryMethod = event.payload.deliveryMethod;
   const message = String(event.payload.message || "");
   const { lead, quote } = state;
+  if (workflowHash(quote.addOns || []) !== workflowHash(event.payload.addOns || [])) throw new WorkflowError(409, "The invoice add-ons changed. Review the billing details before sharing.");
   if (lead.email !== event.payload.email || lead.phone !== event.payload.phone) throw new WorkflowError(409, "Customer contact details changed. Review the recipients before sending again.");
   const deliveryEvent = (await pool.query("INSERT INTO customer_job_events(lead_id,event_type,event_key,title,message,payload) VALUES($1,'quote_delivery',$2,'Quote delivery','Per-channel quote delivery status','{}'::jsonb) ON CONFLICT(event_key) DO UPDATE SET event_key=EXCLUDED.event_key RETURNING id", [leadId, `workflow-delivery:${quoteId}`])).rows[0];
   const quoteAccessUrl = event.payload.quoteAccessUrl || workflowQuoteLink(leadId, quoteId);
@@ -235,10 +241,12 @@ async function deliverApprovedQuote(leadId: string, actor: WorkflowActor, input:
   let invoice: DeliveryOutcome = { status: "unavailable", message: "Online payment setup pending" };
   if (squareInvoiceService.isConfigured() && getSquareLocationId() && (process.env.NODE_ENV !== "production" || getSquareEnvironment() === "production")) {
     invoice = await deliverChannel(inv.rows[0].id, "invoice", quoteId, async () => {
-      const created = await squareInvoiceService.createItemizedInvoiceForLead(lead as any, quote.lines.map((l, index) => ({ id: `quote-${quoteId}-${index}`, name: l.name, qty: l.quantity, unitPrice: l.total / l.quantity, total: l.total })), undefined, "none", {
-        quoteRevisionId: quoteId, idempotencyKey: `quote-${quoteId}`, purpose: "final_balance", expectedTotal: quote.total,
+      const billableLines = [...quote.lines.map((l, index) => ({ id: `quote-${quoteId}-${index}`, name: l.name, qty: l.quantity, unitPrice: l.total / l.quantity, total: l.total })), ...(quote.addOns || []).map(item => ({ id: item.id, name: item.name, qty: 1, unitPrice: item.total, total: item.total, excludeFromBundleDiscount: true }))];
+      const created = await squareInvoiceService.createItemizedInvoiceForLead(lead as any, billableLines, undefined, "none", {
+        quoteRevisionId: quoteId, idempotencyKey: `quote-${quoteId}`, purpose: "final_balance", expectedTotal: quote.invoiceTotal ?? quote.total,
         discounts: quote.discount > 0 ? [{ code: "APPROVED_QUOTE_DISCOUNT", name: "Discount", amount: quote.discount }] : [],
       });
+      if (quote.addOns?.length) await pool.query("UPDATE wallet_credit_grants SET square_invoice_id=$2 WHERE id=ANY($1::varchar[]) AND status='pending'", [quote.addOns.map(item => item.id), created.squareInvoiceId]);
       await pool.query("UPDATE customer_job_events SET payload=payload || $2::jsonb WHERE id=$1", [inv.rows[0].id, JSON.stringify({ paymentUrl: created.invoiceUrl })]);
       await pool.query("UPDATE leads SET square_payment_url=$2 WHERE id=$1", [leadId, created.invoiceUrl]);
       return { ok: true, reference: created.squareInvoiceId };
@@ -246,9 +254,10 @@ async function deliverApprovedQuote(leadId: string, actor: WorkflowActor, input:
   }
   const invoiceData = (await pool.query("SELECT payload FROM customer_job_events WHERE id=$1", [inv.rows[0].id])).rows[0]?.payload;
   if (invoice.status === "sent") paymentUrl = invoiceData?.paymentUrl || null;
-  const summary = `Hi ${lead.firstName}, your JC ON THE MOVE quote (JC-${lead.orderNumber}) is $${quote.total.toFixed(2)}. Review your job: ${quoteAccessUrl}${paymentUrl ? `\nPay online: ${paymentUrl}` : "\nOnline payment setup is pending. Contact us to confirm the job."}${message ? `\n${message}` : ""}`;
+  const billingNote = quote.addOns?.length ? `\nShop-card add-ons: $${(quote.invoiceTotal! - quote.total).toFixed(2)}. Invoice total: $${quote.invoiceTotal!.toFixed(2)}.` : "";
+  const summary = `Hi ${lead.firstName}, your JC ON THE MOVE quote (JC-${lead.orderNumber}) is $${quote.total.toFixed(2)}.${billingNote} Review your job: ${quoteAccessUrl}${paymentUrl ? `\nPay online: ${paymentUrl}` : "\nOnline payment setup is pending. Contact us to confirm the job."}${message ? `\n${message}` : ""}`;
   const email = ["email", "both"].includes(deliveryMethod)
-    ? await deliverChannel(deliveryEvent.id, "email", lead.email, async () => ({ ok: await sendEmail({ to: lead.email, from: "upmichiganstatemovers@gmail.com", subject: `Your JC ON THE MOVE quote — JC-${lead.orderNumber}`, text: summary, html: `<div style="font-family:Arial,sans-serif;max-width:560px"><h2>JC ON THE MOVE · JC-${lead.orderNumber}</h2><p>${escapeHtml(String(lead.serviceType))} · <strong>$${quote.total.toFixed(2)}</strong></p><p>${escapeHtml(String(lead.confirmedDate || "Date to confirm"))}${lead.arrivalWindow ? ` · ${escapeHtml(lead.arrivalWindow)}` : ""}</p><p><a href="${escapeHtml(quoteAccessUrl)}">Review your job and quote</a></p>${paymentUrl ? `<p><a href="${escapeHtml(paymentUrl)}">Pay online</a></p>` : "<p>Online payment setup pending.</p>"}${message ? `<p>${escapeHtml(message)}</p>` : ""}<p>Contact us to confirm or make changes: (906) 285-9312.</p></div>` }) })) : { status: "not_requested" as const };
+    ? await deliverChannel(deliveryEvent.id, "email", lead.email, async () => ({ ok: await sendEmail({ to: lead.email, from: "upmichiganstatemovers@gmail.com", subject: `Your JC ON THE MOVE quote — JC-${lead.orderNumber}`, text: summary, html: `<div style="font-family:Arial,sans-serif;max-width:560px"><h2>JC ON THE MOVE · JC-${lead.orderNumber}</h2><p>${escapeHtml(String(lead.serviceType))} · <strong>$${quote.total.toFixed(2)}</strong></p><p>${escapeHtml(String(lead.confirmedDate || "Date to confirm"))}${lead.arrivalWindow ? ` · ${escapeHtml(lead.arrivalWindow)}` : ""}</p><p><a href="${escapeHtml(quoteAccessUrl)}">Review your job and quote</a></p>${paymentUrl ? `<p><a href="${escapeHtml(paymentUrl)}">Pay online</a></p>` : "<p>Online payment setup pending.</p>"}${billingNote ? `<p>${escapeHtml(billingNote)}</p>` : ""}${message ? `<p>${escapeHtml(message)}</p>` : ""}<p>Contact us to confirm or make changes: (906) 285-9312.</p></div>` }) })) : { status: "not_requested" as const };
   const sms = ["sms", "both"].includes(deliveryMethod)
     ? await deliverChannel(deliveryEvent.id, "sms", lead.phone, async () => { const result = await smsService.sendSMS(lead.phone, summary); if (!result.success && /timeout|timed out|ECONN|socket|network/i.test(result.error || "")) throw new Error("Provider outcome unknown"); return { ok: result.success, reference: result.messageSid, error: result.error }; }) : { status: "not_requested" as const };
   const delivery = { email, sms, invoice, quoteAccessUrl };
@@ -299,8 +308,8 @@ export async function recordWorkflowPayment(leadId: string, actor: WorkflowActor
     }
     if (state.version !== input.version) throw new WorkflowError(409, "The job changed. Review payment again.");
     if (!state.quote.matches || !["approved", "sent"].includes(state.quote.status)) throw new WorkflowError(409, "Approve the current quote before recording its payment.", [{ code: "quote_approval", message: "Review the current quote.", target: "quote" }]);
-    await client.query("UPDATE leads SET payment_paid_at=NOW(),deposit_paid=true,job_plan_details=COALESCE(job_plan_details,'{}'::jsonb) || $2::jsonb WHERE id=$1", [leadId, JSON.stringify({ paymentReceipt: { method: input.method, amount: state.quote.total, actorId: actor.userId, recordedAt: new Date().toISOString() } })]);
-    await audit(client, state.lead, actor.userId, `Full ${input.method} payment of $${state.quote.total.toFixed(2)} recorded. Crew was not dispatched.`);
+    await client.query("UPDATE leads SET payment_paid_at=NOW(),deposit_paid=true,job_plan_details=COALESCE(job_plan_details,'{}'::jsonb) || $2::jsonb WHERE id=$1", [leadId, JSON.stringify({ paymentReceipt: { method: input.method, amount: state.quote.invoiceTotal ?? state.quote.total, actorId: actor.userId, recordedAt: new Date().toISOString() } })]);
+    await audit(client, state.lead, actor.userId, `Full ${input.method} payment of ${(state.quote.invoiceTotal ?? state.quote.total).toFixed(2)} recorded. Crew was not dispatched.`);
     await client.query("COMMIT");
     return { saved: true, alreadyRecorded: false, total: state.quote.total, status: state.lead.status };
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
