@@ -98,6 +98,13 @@ try {
   assert.equal(plan.keep, "original intake"); assert.equal(plan.customerConfirmation.method, "phone");
   flow = await workflow.getJobWorkflow("one", actor);
   assert.equal(flow.confirmation.current, true);
+  // Drizzle's raw transaction adapter returns timestamp strings, while the
+  // pool returns Date objects. Both readers must identify the same saved job.
+  const rawTimestampAdapter = { query: async (sql: string, values: any[] = []) => {
+    const result = await query(sql, values);
+    return { ...result, rows: result.rows.map((row: any) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value instanceof Date ? value.toISOString().replace("T", " ").replace("Z", "") : value]))) };
+  } };
+  assert.equal((await workflow.loadWorkflowState("one", rawTimestampAdapter)).version, flow.version, "Setup and workflow reads must agree after quote approval and confirmation");
   await assert.rejects(workflow.executeCrewAction("one", actor, { version: flow.version, action: "dispatch", idempotencyKey: randomUUID() }), /setup/);
   assert.equal(state.crew, 0);
   const paymentRequest = { version: flow.version, method: "cash", attested: true };
@@ -105,6 +112,7 @@ try {
   assert.equal(payments.filter(p => !p.alreadyRecorded).length, 1);
   assert.equal((await query("SELECT status FROM leads WHERE id='one'")).rows[0].status, "quoted", "Recording payment preserves the operational status");
   flow = await workflow.getJobWorkflow("one", actor);
+  assert.equal((await workflow.loadWorkflowState("one", rawTimestampAdapter)).version, flow.version, "Payment timestamps must not depend on the database reader");
   const dispatch = { version: flow.version, action: "dispatch", idempotencyKey: randomUUID() };
   await workflow.executeCrewAction("one", actor, dispatch);
   await workflow.executeCrewAction("one", actor, { ...dispatch, idempotencyKey: randomUUID() });
