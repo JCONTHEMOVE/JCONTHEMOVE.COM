@@ -16,7 +16,6 @@ export class WorkflowError extends Error {
 }
 export const workflowHash = (value: unknown) => crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const camel = (row: any): Record<string, any> => Object.fromEntries(Object.entries(row).map(([key, value]) => [key.replace(/_([a-z])/g, (_, c) => c.toUpperCase()), value]));
-const parseDate = (value: any) => value instanceof Date ? value.toISOString() : value;
 const smsConfigured = () => Boolean(process.env.TWILIO_ACCOUNT_SID && (process.env.TWILIO_AUTH_TOKEN || process.env.TWILIO_API_KEY && process.env.TWILIO_API_KEY_SECRET) && (process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_MESSAGING_SERVICE_SID));
 export const usableEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || "") && !/@(?:jconthemove\.local|system\.internal)$|\.internal$/i.test(email);
 
@@ -60,14 +59,16 @@ export async function loadWorkflowState(leadId: string, client: Queryable = pool
   const leadResult = await client.query(`SELECT * FROM leads WHERE id=$1 ${lock ? "FOR UPDATE" : ""}`, [leadId]);
   if (!leadResult.rows[0]) throw new WorkflowError(404, "Job not found");
   const lead = camel(leadResult.rows[0]);
-  const result = await client.query("SELECT * FROM quote_revisions WHERE lead_id=$1 ORDER BY revision DESC LIMIT 1", [leadId]);
+  // Use a database-produced revision marker: raw Drizzle transactions preserve
+  // timestamp strings while pool reads decode Date objects.
+  const result = await client.query("SELECT *, EXTRACT(EPOCH FROM updated_at)::text AS workflow_revision_stamp FROM quote_revisions WHERE lead_id=$1 ORDER BY revision DESC LIMIT 1", [leadId]);
   const row = result.rows[0] || null;
   const quote = savedWorkflowQuote(lead, row);
   const grants = await client.query("SELECT id,amount_usd,metadata FROM wallet_credit_grants WHERE source_type='lead' AND source_id=$1 AND status='pending' ORDER BY id", [leadId]);
   const pendingAddOns = grants.rows.map((g: any) => ({ id: g.id, name: String(g.metadata?.name || "JCMOVES Shop Card"), quantity: 1, unitPrice: cents(g.amount_usd) / 100, total: cents(g.amount_usd) / 100 }));
   quote.addOns = quote.matches && ["approved", "sent"].includes(quote.status) && Array.isArray(row?.route_evidence?.workflowBillingAddOns) ? row.route_evidence.workflowBillingAddOns : pendingAddOns;
   quote.invoiceTotal = (cents(quote.total) + quote.addOns!.reduce((sum, item) => sum + cents(item.total), 0)) / 100;
-  const version = workflowHash({ terms: quoteTerms(lead), customer: [lead.firstName, lead.lastName, lead.email, lead.phone], quote: row ? [row.id, row.status, parseDate(row.updated_at)] : null, lineItems: lead.orderLineItems, addOns: quote.addOns, pendingAddOns, confirmation: lead.jobPlanDetails?.customerConfirmation, crew: lead.crewMembers, payment: [lead.paymentPaidAt, lead.depositPaid, lead.paymentPlan], status: lead.status });
+  const version = workflowHash({ terms: quoteTerms(lead), customer: [lead.firstName, lead.lastName, lead.email, lead.phone], quote: row ? [row.id, row.status, row.workflow_revision_stamp] : null, lineItems: lead.orderLineItems, addOns: quote.addOns, pendingAddOns, confirmation: lead.jobPlanDetails?.customerConfirmation, crew: lead.crewMembers, payment: [Boolean(lead.paymentPaidAt), lead.depositPaid, lead.paymentPlan], status: lead.status });
   const confirmationHash = workflowHash(customerAgreementSnapshot(lead, quote.id));
   return { lead, row, quote, version, confirmationHash };
 }
