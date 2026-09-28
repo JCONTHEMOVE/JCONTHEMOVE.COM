@@ -5,7 +5,7 @@ type AddressComponent = { longText: string; shortText: string; types: string[] }
 type PlaceResult = { formattedAddress?: string; addressComponents?: AddressComponent[]; fetchFields: (options: { fields: string[] }) => Promise<unknown> };
 type PlaceSelectEvent = Event & { placePrediction: { toPlace: () => PlaceResult } };
 type PlacesWidget = HTMLElement;
-type PlacesWindow = Window & { google?: { maps?: { importLibrary?: (name: string) => Promise<{ PlaceAutocompleteElement: new (options: object) => PlacesWidget }> } } };
+type PlacesWindow = Window & { __jcProjectPlacesReady?: () => void; google?: { maps?: { importLibrary?: (name: string) => Promise<{ PlaceAutocompleteElement: new (options: object) => PlacesWidget }> } } };
 let placesLoading: Promise<new (options: object) => PlacesWidget> | undefined;
 
 async function loadPlaces() {
@@ -20,10 +20,11 @@ async function loadPlaces() {
       if (!mapsWindow.google?.maps?.importLibrary) {
         await new Promise<void>((resolve, reject) => {
           const script = document.createElement("script");
-          script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(config.key)}&loading=async&libraries=places&v=weekly`;
+          const timeout = window.setTimeout(() => reject(new Error("Address search timed out")), 12000);
+          mapsWindow.__jcProjectPlacesReady = () => { clearTimeout(timeout); delete mapsWindow.__jcProjectPlacesReady; resolve(); };
+          script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(config.key)}&loading=async&libraries=places&v=weekly&callback=__jcProjectPlacesReady`;
           script.async = true;
-          script.onload = () => resolve();
-          script.onerror = () => { script.remove(); reject(new Error("Address search unavailable")); };
+          script.onerror = () => { clearTimeout(timeout); delete mapsWindow.__jcProjectPlacesReady; script.remove(); reject(new Error("Address search unavailable")); };
           document.head.appendChild(script);
         });
       }
