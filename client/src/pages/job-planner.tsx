@@ -5,9 +5,11 @@ import { useLocation } from "wouter";
 import { JobOrderTicket, type JobOrderTicketData } from "@/components/job-order-ticket";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { WorkInsights } from '@/components/WorkInsights';
+import type { InsightJob } from '@shared/workInsights';
 
 type PlannerView = "month" | "week" | "day";
-type PlannerJob = JobOrderTicketData & {
+type PlannerJob = JobOrderTicketData & InsightJob & {
   id: string;
   archivedAt?: string | null;
   flow?: JobOrderTicketData["flow"] & {
@@ -73,7 +75,7 @@ export default function JobPlannerPage({ audience }: { audience: "admin" | "crew
   const [, navigate] = useLocation();
   const [view, setView] = useState<PlannerView>("month");
   const [anchor, setAnchor] = useState(() => new Date());
-  const { data, isLoading, isError, refetch, isFetching } = useQuery<PlannerResponse>({
+  const { data, isLoading, isError, refetch, isFetching, dataUpdatedAt } = useQuery<PlannerResponse>({
     queryKey: ["/api/jobs/planner"],
   });
   const { data: safetyData } = useQuery<SafetyResponse>({
@@ -129,6 +131,12 @@ export default function JobPlannerPage({ audience }: { audience: "admin" | "crew
           </Button>
         </div>
       </div>
+
+      <details className="mb-4 rounded-xl border border-slate-700 bg-slate-900/70 p-3">
+        <summary className="min-h-11 cursor-pointer py-2 text-base font-semibold text-cyan-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">Job insights · progress and missing details</summary>
+        <WorkInsights jobs={data?.items} audience={audience === 'admin' ? 'owner' : 'crew'} isLoading={isLoading}
+          isError={isError} isFetching={isFetching} updatedAt={dataUpdatedAt} onRefresh={() => { void refetch(); }} />
+      </details>
 
       <section className="mb-4 rounded-xl border border-slate-700/80 bg-slate-900/70 p-2 shadow-sm" aria-label="Calendar view controls">
         <div className="flex flex-wrap items-center justify-between gap-3">

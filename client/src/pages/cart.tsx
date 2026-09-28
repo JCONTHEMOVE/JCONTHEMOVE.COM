@@ -813,6 +813,11 @@ export default function CartPage() {
                           <span className="text-xs text-slate-400">after verified payment to your account</span>
                         </div>
                       )}
+                      {pricing?.itemBonusMoves > 0 && (
+                        <p className="mt-1 text-xs font-semibold text-amber-300">
+                          Includes +{Number(pricing.itemBonusMoves).toLocaleString()} extra JCMOVES for the copper cuff with verified regular payment.
+                        </p>
+                      )}
                       {pricing?.regularPaymentBonusMoves > 0 && (
                         <p className="mt-1 text-xs font-semibold text-emerald-300">
                           Includes +{Number(pricing.regularPaymentBonusMoves).toLocaleString()} bonus JC Moves (5%) for regular payment

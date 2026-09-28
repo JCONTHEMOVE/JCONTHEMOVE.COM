@@ -12,6 +12,7 @@ on:
       - 'server/routes.ts'
       - 'package*.json'
       - 'scripts/store-*.test.mjs'
+      - 'scripts/work-insights.test.mjs'
       - '.github/workflows/pricing-training-checks.yml'
   workflow_dispatch:
 permissions:
@@ -32,4 +33,5 @@ jobs:
       - run: npm run check
       - run: npm run test:server
       - run: npm run test:store
+      - run: node --test scripts/work-insights.test.mjs
       - run: npm run build

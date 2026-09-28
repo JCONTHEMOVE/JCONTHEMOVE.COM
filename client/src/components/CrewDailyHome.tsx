@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CrewDailyHome as DailyHome } from '@shared/crewDailyHome';
 import { apiRequest } from '@/lib/queryClient';
@@ -10,15 +10,17 @@ import { useToast } from '@/hooks/use-toast';
 const endpoint = '/api/crew/marketing/daily-home';
 const fieldClass = 'border-slate-600 bg-slate-950 min-h-11';
 const copyClass = 'min-h-11 border-slate-600 bg-slate-950 text-white hover:bg-slate-800 hover:text-white';
-function Mission({ title, status, children }: { title: string; status?: string; children: React.ReactNode }) {
+function Mission({ id, title, status, children }: { id: string; title: string; status?: string; children: React.ReactNode }) {
   const finished = status === 'submitted' || status === 'completed';
-  return <details open={finished ? false : undefined} className="min-w-0 rounded-xl border border-slate-700 bg-slate-900 p-3">
+  return <details id={id} open={finished ? false : undefined} className="min-w-0 rounded-xl border border-slate-700 bg-slate-900 p-3">
     <summary className="min-h-11 cursor-pointer py-2 font-bold text-white">{title}{finished && <span className="mt-1 block text-xs font-normal text-emerald-300">{status === 'completed' ? 'Reviewed by owner' : 'Submitted for review'}</span>}</summary>
     <div className="mt-2 space-y-3 text-sm text-slate-300">{children}</div>
   </details>;
 }
 
 export function CrewDailyHome() {
+  const id = useId();
+  const section = useRef<HTMLElement>(null);
   const home = useQuery<DailyHome>({ queryKey: [endpoint], refetchOnWindowFocus: true });
   const queryClient = useQueryClient(), { toast } = useToast();
   const [destination, setDestination] = useState('');
@@ -41,24 +43,42 @@ export function CrewDailyHome() {
     catch { toast({ title: 'Copy unavailable', description: 'Select and copy the text shown below.', variant: 'destructive' }); }
   }
   if (home.isLoading) return <p role="status" className="text-slate-300">Loading today’s missions…</p>;
-  if (home.isError) return <div role="alert" className="text-slate-300">Could not load your missions. <Button variant="outline" onClick={() => home.refetch()}>Retry</Button></div>;
+  if (home.isError && !home.data) return <div role="alert" className="text-slate-300">Could not load your missions. <Button variant="outline" onClick={() => home.refetch()}>Retry</Button></div>;
   const data = home.data;
   if (!data?.rep) return <p className="rounded-xl border border-amber-600 p-4 text-sm text-amber-100">Your owner needs to confirm one active pilot profile for this account before daily missions are available.</p>;
   const reach = data.outreach;
   const tomorrow = new Date(Date.parse(data.day) + 86_400_000).toISOString().slice(0, 10);
-  const finished = Number(data.scenario?.submitted) + Number(!!reach && reach.status !== 'assigned') + Number(data.followupSubmitted);
-  return <section aria-label="Daily campaign missions" className="space-y-3">
+  const reachDone = reach?.status === 'submitted' || reach?.status === 'completed';
+  const finished = Number(!!data.scenario?.submitted) + Number(reachDone) + Number(data.followupSubmitted);
+  const missions = [
+    { key: 'learn', label: '1. Learn', done: !!data.scenario?.submitted, state: data.scenario?.submitted ? 'Reviewed' : data.scenario ? 'Scenario ready' : 'Not available' },
+    { key: 'reach', label: '2. Reach', done: reachDone, state: reach?.status === 'completed' ? 'Reviewed' : reachDone ? 'Submitted' : reach ? 'Copy ready' : 'Awaiting copy' },
+    { key: 'follow', label: '3. Follow through', done: data.followupSubmitted, state: data.followupSubmitted ? 'Submitted' : data.followup ? 'Follow-up due' : 'None due' },
+  ];
+  function openMission(key: string) {
+    const detail = section.current?.querySelector<HTMLDetailsElement>(`[id="${id}-${key}"]`);
+    if (detail) { detail.open = true; detail.querySelector('summary')?.focus(); detail.scrollIntoView({ block: 'nearest' }); }
+  }
+  return <section ref={section} aria-label="Daily campaign missions" className="space-y-3">
+    {home.isError && <p role="alert" className="text-sm text-amber-100">Missions could not refresh. Showing the last saved view. <Button variant="outline" onClick={() => home.refetch()}>Retry</Button></p>}
     <div className="rounded-xl border border-emerald-600/40 bg-emerald-950/30 p-4 text-white">
       <p className="text-xs text-emerald-300">September 14–October 31 campaign · {data.day} · Central time</p>
       <h2 className="mt-1 text-xl font-bold">Today’s three missions</h2>
       <p className="mt-1 text-sm text-slate-300">{data.rep.displayName} · {data.rep.territory}</p>
-      <p className="mt-2 text-sm" role="status">{finished} of 3 submitted · Code: <strong>{data.rep.promoCode}</strong></p>
+      <p className="mt-2 text-sm" role="status">{finished} submitted or reviewed · Code: <strong>{data.rep.promoCode}</strong></p>
+      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3" role="group" aria-label="Mission progress">
+        {missions.map(mission => <button key={mission.key} type="button" aria-controls={`${id}-${mission.key}`} onClick={() => openMission(mission.key)}
+          className="min-h-14 rounded-lg bg-slate-950 p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">
+          <span className="block text-sm font-semibold">{mission.label}</span><span className={`mt-1 block text-sm ${mission.done ? 'text-emerald-300' : 'text-slate-300'}`}>{mission.state}</span>
+          <span className="mt-2 block h-1.5 rounded-full bg-slate-700" aria-hidden="true"><span className={`block h-full rounded-full ${mission.done ? 'w-full bg-emerald-300' : 'w-0'}`} /></span>
+        </button>)}
+      </div>
       {reach && <Button className={`mt-3 ${copyClass}`} variant="outline" onClick={() => copy(reach.destinationUrl)}>Copy my tracked booking link</Button>}
     </div>
-    <Mission title="1. Learn · One relevant scenario" status={data.scenario?.submitted ? 'submitted' : undefined}>
+    <Mission id={`${id}-learn`} title="1. Learn · One relevant scenario" status={data.scenario?.submitted ? 'completed' : undefined}>
       {data.scenario && <><p>{data.scenario.title}</p><p className="text-xs">Answer independently. Training submissions and owner review stay in the training tool.</p><a className="inline-flex min-h-11 items-center text-emerald-300 underline" href={`/crew/pricing-training?scenario=${encodeURIComponent(data.scenario.id)}`}>Open scenario</a></>}
     </Mission>
-    <Mission title="2. Reach · Share approved copy" status={reach?.status}>
+    <Mission id={`${id}-reach`} title="2. Reach · Share approved copy" status={reach?.status}>
       {!reach ? <p>{data.active ? 'No owner-approved tracked copy is ready for your profile today. Check back after owner approval.' : 'The outreach campaign is outside its active dates.'}</p> : <>
         <p className="font-semibold text-white">{reach.headline}</p>
         <label className="block" htmlFor="daily-copy">Owner-approved outreach copy</label>
@@ -74,7 +94,7 @@ export function CrewDailyHome() {
         </form>}
       </>}
     </Mission>
-    <Mission title="3. Follow through · One due follow-up" status={!data.followup && data.followupSubmitted ? 'submitted' : undefined}>
+    <Mission id={`${id}-follow`} title="3. Follow through · One due follow-up" status={!data.followup && data.followupSubmitted ? 'submitted' : undefined}>
       {data.followup ? <form key={data.followup.id} className="space-y-3" onSubmit={e => { e.preventDefault(); save.mutate({ path: `/followups/${data.followup!.id}`, body: { outcome, ...(followDate ? { nextDate: followDate } : {}) } }); }}>
         <p className="font-semibold text-white">{data.followup.title}</p><p>Due {data.followup.due_on}</p>
         <label className="block" htmlFor="daily-outcome">Follow-up outcome</label><Textarea id="daily-outcome" required minLength={10} maxLength={2000} value={outcome} onChange={e => setOutcome(e.target.value)} className={fieldClass} />

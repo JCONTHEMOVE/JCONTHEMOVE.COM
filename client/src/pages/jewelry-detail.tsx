@@ -1,4 +1,5 @@
 import { CatalogImage } from "@/components/catalog-image";
+import { CopperCuffOffer } from "@/components/copper-cuff-offer";
 import { useState } from "react";
 import { useParams, Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -40,6 +41,7 @@ const COLLECTIONS = [
 
 interface JewelryItem {
   id: string;
+  sku?: string;
   postedBy?: string;
   title: string;
   description?: string;
@@ -844,6 +846,7 @@ export default function JewelryDetailPage() {
           </div>
 
           {/* Materials */}
+          <CopperCuffOffer sku={item.sku} available={item.status === "active" && item.inStock !== false} />
           {item.materials && (
             <div className="bg-rose-50 rounded-xl p-3 border border-rose-100">
               <p className="text-xs font-semibold text-rose-400 uppercase tracking-wide mb-1">Made With</p>

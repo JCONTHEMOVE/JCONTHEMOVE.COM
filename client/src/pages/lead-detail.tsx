@@ -1,7 +1,7 @@
 import { manualDispatchMissingSetup } from "@shared/manualDispatchReadiness";
 import { customerNotesFromDetails } from "@shared/leadDetails";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useRoute, Link, useLocation } from "wouter";
+import { useRoute, Link, useLocation, useSearch } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -500,7 +500,8 @@ function DisbursementSummaryCard({ lead }: { lead: Lead }) {
 
 export default function LeadDetailPage() {
   const [, params] = useRoute("/lead/:id");
-  const [location, setLocation] = useLocation();
+  const [, setLocation] = useLocation();
+  const queryString = useSearch();
   const { toast } = useToast();
   const [tokenAllocation, setTokenAllocation] = useState("");
   const [isCheckingIn, setIsCheckingIn] = useState(false);
@@ -526,7 +527,7 @@ export default function LeadDetailPage() {
   const [photoUploading, setPhotoUploading] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const { hasAdminAccess, isEmployee } = useAuth();
-  const requestedReturnTo = new URLSearchParams(location.includes("?") ? location.slice(location.indexOf("?") + 1) : "").get("returnTo");
+  const requestedReturnTo = new URLSearchParams(queryString).get("returnTo");
   const returnTarget = requestedReturnTo && (requestedReturnTo.startsWith("/crew") || requestedReturnTo.startsWith("/admin"))
     ? requestedReturnTo
     : hasAdminAccess ? "/admin/schedule" : "/crew";
