@@ -64,7 +64,7 @@ try {
   assert.match(outbound[0].content, /^@everyone\n/);
 
   const routes = await readFile("server/routes.ts", "utf8");
-  const campaignRoute = routes.slice(routes.indexOf('app.use("/api/home-projects"'), routes.indexOf("const quickRequestSchema"));
+  const campaignRoute = routes.slice(routes.indexOf('app.use("/api/home-projects"'), routes.indexOf("const QUICK_REQUEST_SERVICE_MAP"));
   assert.match(campaignRoute, /ownerReviewOnly:\s*true/, "the campaign HTTP route must opt into owner review");
   console.log("Home project notifications: owner delivery, no crew/webhook fan-out, and ordinary quote behavior passed.");
 } finally {

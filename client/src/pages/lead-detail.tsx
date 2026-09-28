@@ -1,3 +1,4 @@
+import { ProjectIntakeSummary } from "@/components/project-intake-summary";
 import { manualDispatchMissingSetup } from "@shared/manualDispatchReadiness";
 import { customerNotesFromDetails } from "@shared/leadDetails";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -2182,6 +2183,7 @@ export default function LeadDetailPage() {
                 <CardTitle className="text-base">Notes</CardTitle>
               </CardHeader>
               <CardContent>
+                <ProjectIntakeSummary details={lead.details} />
                 {customerNotesFromDetails(lead.details) && (
                   <div className="mb-3 rounded-lg bg-muted p-3">
                     <p className="mb-1 text-xs text-muted-foreground">Customer notes</p>
