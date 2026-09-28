@@ -100,7 +100,7 @@ export async function reviewJobQuote(leadId: string, actor: WorkflowActor, deliv
       if (cents(calculated.finalPreTaxTotal) !== cents(quote.total)) blockers.push({ code: "quote_policy", message: "The current pricing policy differs from this saved amount. Review the price before approval; the saved total has not changed.", target: "quote", field: "setup-quote-review" });
     }
   }
-  quote.requiresOwner = Boolean(policy?.travelEligibility?.requiresOwner);
+  quote.requiresOwner = Boolean(policy?.travelEligibility?.requiresOwner && (!quote.matches || quote.status === "draft"));
   if (policy?.travelEligibility?.canApprove === false || policy?.travelEligibility?.status === "out_of_range") blockers.push({ code: "quote_policy", message: "This job is outside the current service policy. Review its address and scope.", target: "details" });
   if (quote.requiresOwner && !actor.isOwner) blockers.push({ code: "owner_approval", message: "This quote needs the business owner's review.", target: "quote" });
   return { ...state, policy, blockers, reviewHash: workflowHash({ version: state.version, quote, policy: { pricingVersionId: policy?.pricingVersionId, travelEligibility: policy?.travelEligibility, pricingAdjustments: policy?.pricingAdjustments }, deliveryMethod }), deliveryMethod,
@@ -158,7 +158,7 @@ export async function approveAndSend(leadId: string, actor: WorkflowActor, input
   if (review.version !== input.version || review.reviewHash !== input.reviewHash) throw new WorkflowError(409, "This job changed. Review the current details before sending.", [{ code: "stale_review", message: "Review the updated job and quote.", target: "quote" }]);
   if (review.blockers.length) throw new WorkflowError(409, "Complete the highlighted details before sending.", review.blockers);
   if (["sms", "both"].includes(input.deliveryMethod) && !review.smsConsent && !input.recordSmsConsent) throw new WorkflowError(400, "Record the customer's permission before sending a text.", [{ code: "sms_consent", message: "Confirm the customer agreed to receive this text.", target: "quote" }]);
-  try { assertQuoteApprovalAllowed({ travelEligibility: review.policy?.travelEligibility || {}, actor, overrideReason: input.overrideReason }); }
+  try { if (!review.quote.matches || review.quote.status === "draft") assertQuoteApprovalAllowed({ travelEligibility: review.policy?.travelEligibility || {}, actor, overrideReason: input.overrideReason }); }
   catch (error) { throw new WorkflowError(403, error instanceof Error ? error.message : "Quote approval is not allowed.", [{ code: "approval_required", message: error instanceof Error ? error.message : "Review quote approval.", target: "quote" }]); }
   const client = await pool.connect();
   let quoteId = "";
