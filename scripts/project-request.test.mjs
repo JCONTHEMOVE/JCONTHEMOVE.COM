@@ -23,11 +23,11 @@ await build({stdin:{contents:'export {default as Request} from "./client/src/pag
 const {Request,ProjectIntakeSummary}=await import(pathToFileURL(output).href);
 const {act}=React;
 const response=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{"Content-Type":"application/json"}});
-let posts=[],failPost=false,root,client;
+let posts=[],failPost=false,root,client,googleAvailable=false;
 globalThis.fetch=async(input,options={})=>{
  const url=String(input);
  if(url==="/api/auth/user")return response(null);
- if(url.startsWith("/api/maps-config"))return response({disabled:true});
+ if(url.startsWith("/api/maps-config"))return response(googleAvailable ? {key:"isolated-test-key"} : {disabled:true});
  if(url==="/api/leads/quick-request"){posts.push(JSON.parse(options.body));return failPost?response({message:"Temporary failure"},500):response({success:true,lead:{id:"test",displayOrderNumber:"TEST-123",serviceLabel:"Moving"}});}
  throw Error("Unexpected request "+url);
 };
@@ -94,6 +94,30 @@ assert.equal(posts[0].email,"test@example.test");
 assert.match(posts[0].destinationAddress,/456 Second/);
 await unmount();
 // Staff see normalized intent, including callback requests, after details edits.
+class TestPlacesWidget extends HTMLElement {}
+dom.window.customElements.define("test-places-widget",TestPlacesWidget);
+window.google={maps:{importLibrary:async()=>({PlaceAutocompleteElement:TestPlacesWidget})}};
+googleAvailable=true;
+await mount();
+await click("Continue");
+const widget=document.querySelector("test-places-widget");
+assert.ok(widget,"The current Google widget mounts once its library is ready");
+const selection=new Event("gmp-select");
+selection.placePrediction={toPlace:()=>({fetchFields:async()=>{},addressComponents:[
+ {types:["street_number"],longText:"213",shortText:"213"},
+ {types:["route"],longText:"South Marquette Street",shortText:"S Marquette St"},
+ {types:["locality"],longText:"Ironwood",shortText:"Ironwood"},
+ {types:["administrative_area_level_1"],longText:"Michigan",shortText:"MI"},
+ {types:["postal_code"],longText:"49938",shortText:"49938"},
+]})};
+await act(async()=>widget.dispatchEvent(selection));
+assert.equal(screen.getByLabelText("Street address").value,"213 South Marquette Street");
+assert.equal(screen.getByLabelText("City").value,"Ironwood");
+assert.equal(screen.getByLabelText("State").value,"MI");
+assert.equal(screen.getByLabelText("ZIP code").value,"49938");
+await fill("Street address","213 South Marquette Street, Unit 2");
+assert.match(screen.getByLabelText("Street address").value,/Unit 2/);
+await unmount();
 root=createRoot(document.getElementById("root"));
 await act(async()=>root.render(React.createElement(ProjectIntakeSummary,{details:JSON.stringify({projectIntake:{version:1,serviceCode:"moving",additionalServices:["painting"],serviceAddress:"123 Main St, Ironwood, MI, 49938",city:"Ironwood",state:"MI",zip:"49938",destinationAddress:"",schedulingPreference:"callback",timeZone:"America/Chicago"}})})));
 assert.match(document.body.textContent,/Call to schedule/);

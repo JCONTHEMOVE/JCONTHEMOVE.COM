@@ -54,7 +54,7 @@ export function ProjectAddressField({ value, onChange }: { value: ProjectAddress
     loadPlaces().then(Widget => {
       if (cancelled || !container.current) return;
       clearTimeout(timeout);
-      widget = new Widget({ includedRegionCodes: ["us"], locationBias: { center: { lat: 46.4547, lng: -90.171 }, radius: 100000 } });
+      widget = new Widget({ includedRegionCodes: ["us"], locationBias: { center: { lat: 46.4547, lng: -90.171 }, radius: 50000 } });
       widget.setAttribute("placeholder", "Start typing your project address");
       widget.setAttribute("aria-label", "Find your project address");
       widget.addEventListener("gmp-select", async rawEvent => {
