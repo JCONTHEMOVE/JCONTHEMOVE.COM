@@ -4,6 +4,7 @@
 import { google } from 'googleapis';
 import net from 'net';
 import tls from 'tls';
+import { deliverWithGmailFallback, type GmailApiOutcome } from './gmailDelivery';
 
 function getEnvGmailSmtpCredentials() {
   const user = process.env.GMAIL_USER || process.env.COMPANY_EMAIL || process.env.FROM_EMAIL;
@@ -13,7 +14,7 @@ function getEnvGmailSmtpCredentials() {
     return null;
   }
 
-  return { user, appPassword };
+  return { user: normalizeEmailAddress(user), appPassword: appPassword.trim().replace(/^["']|["']$/g, '').replace(/\s/g, '') };
 }
 
 function getEnvGmailCredentials() {
@@ -283,7 +284,7 @@ async function sendGmailApiEmail(params: {
   subject: string;
   text?: string;
   html?: string;
-}): Promise<boolean> {
+}): Promise<GmailApiOutcome> {
   try {
     const gmail = await getUncachableGmailClient();
     const envCredentials = getEnvGmailCredentials();
@@ -298,7 +299,7 @@ async function sendGmailApiEmail(params: {
     });
 
     console.log(`Gmail API: Email accepted id=${response.data.id || 'unknown'} from=${from} to=${to} subject="${params.subject}"`);
-    return true;
+    return "sent";
   } catch (error: any) {
     const envCredentials = getEnvGmailCredentials();
     console.error(
@@ -307,7 +308,8 @@ async function sendGmailApiEmail(params: {
       `client=${describeClientId(envCredentials?.clientId)}`,
       `hasRefreshToken=${Boolean(envCredentials?.refreshToken)}`,
     );
-    return false;
+    return error?.response?.data?.error === 'invalid_grant' || error?.message === 'invalid_grant'
+      ? "auth-rejected" : "failed";
   }
 }
 
@@ -320,10 +322,12 @@ export async function sendGmailEmail(params: {
   html?: string;
 }): Promise<boolean> {
   if (getEnvGmailCredentials()) {
-    const sentByApi = await sendGmailApiEmail(params);
-    if (sentByApi) return true;
-
-    return false;
+    return deliverWithGmailFallback({
+      hasOAuth: true,
+      hasSmtp: Boolean(getEnvGmailSmtpCredentials()),
+      api: () => sendGmailApiEmail(params),
+      smtp: () => sendGmailSmtpEmail(params),
+    });
   }
 
   const smtpCredentials = getEnvGmailSmtpCredentials();

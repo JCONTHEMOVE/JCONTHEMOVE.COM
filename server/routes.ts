@@ -33,6 +33,8 @@ import {
   type QuickBookSessionResponse,
 } from "@shared/quickBook";
 import type { Express, Request, Response } from "express";
+import { createAccountRecoveryRouter } from "./routes/accountRecovery";
+import { RECOVERY_SCHEMA, type RecoveryDatabase } from "./services/accountRecovery";
 import { createPricingTrainingRouter } from "./routes/pricingTraining";
 import { createPricingTrainingTeamRouter } from "./routes/pricingTrainingTeam";
 import { rewardTrainingContribution, thankTrainingContributor } from "./services/pricingTrainingTeam";
@@ -62,7 +64,7 @@ import { decryptJobAccessDetails, encryptJobAccessDetails } from "./services/job
 import type { JobQuotePreview } from "./services/jobRateCard";
 import { eq, desc, sql, and, gte, lte, or, ilike, inArray, isNull } from 'drizzle-orm';
 import { db, pool } from './db';
-import { rewards, walletAccounts, walletPayouts, cashoutRequests, fundingDeposits, reserveTransactions, treasuryAccounts, users, leads, swapRequests, treasurySwapRules, bitcoinPayments, stakes, stakingTiers, contacts, notifications, walletTransactions, jewelryItems, shopItems, giftCards, miningSessions, miningClaims, treasuryWithdrawals, tokenConversions, rewardSettings, recoveryTokens, promoCodes, reviews, reviewTipAllocations, rewardCategories, rewardItems, rewardRedemptions, buybackFund, laborQuotes, jobTradeRequests, workerProfiles, quoteApprovals, quoteConsensusVotes, quoteAttributions, marketingReps, marketingCallEvents, insertMarketingRepSchema, jobPayoutSettings, referralPartners, jobAssignments, jobPayoutCalculations, jobWorkerPayouts, payrollPeriods, payrollEntries, jobCashPayoutAdjustments } from '@shared/schema';
+import { rewards, walletAccounts, walletPayouts, cashoutRequests, fundingDeposits, reserveTransactions, treasuryAccounts, users, leads, swapRequests, treasurySwapRules, bitcoinPayments, stakes, stakingTiers, contacts, notifications, walletTransactions, jewelryItems, shopItems, giftCards, miningSessions, miningClaims, treasuryWithdrawals, tokenConversions, rewardSettings, promoCodes, reviews, reviewTipAllocations, rewardCategories, rewardItems, rewardRedemptions, buybackFund, laborQuotes, jobTradeRequests, workerProfiles, quoteApprovals, quoteConsensusVotes, quoteAttributions, marketingReps, marketingCallEvents, insertMarketingRepSchema, jobPayoutSettings, referralPartners, jobAssignments, jobPayoutCalculations, jobWorkerPayouts, payrollPeriods, payrollEntries, jobCashPayoutAdjustments } from '@shared/schema';
 import { DEFAULT_MARKETING_REPS } from '@shared/marketingNetwork';
 import {
   getRouteDayDiscountEligibility,
@@ -4229,182 +4231,43 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     }
   });
 
-  // ── ACCOUNT RECOVERY ────────────────────────────────────────────────────────
+  // Recovery grants are stored in Postgres, independent of browser cookies.
+  // Schema failure disables only recovery, not the rest of the website.
+  try {
+    await pool.query(RECOVERY_SCHEMA);
+    const recoveryDb: RecoveryDatabase = {
+      query: (text, values) => pool.query(text, values),
+      async transaction(work) {
+        const client = await pool.connect();
+        try {
+          await client.query("BEGIN");
+          const tx: RecoveryDatabase = {
+            query: (text, values) => client.query(text, values),
+            transaction: nested => nested(tx),
+          };
+          const result = await work(tx);
+          await client.query("COMMIT");
+          return result;
+        } catch (error) {
+          await client.query("ROLLBACK");
+          throw error;
+        } finally { client.release(); }
+      },
+    };
+    app.use("/api/auth/recover", createAccountRecoveryRouter(recoveryDb, {
+      secret: process.env.SESSION_SECRET || (process.env.NODE_ENV !== "production" ? "local-recovery-tests" : ""),
+      hashPassword: password => bcrypt.hash(password, 12),
+      sendCode: (email, code) => sendEmail({
+        to: email,
+        subject: "JC ON THE MOVE — Account Recovery Code",
+        text: "Your JC ON THE MOVE recovery code is: " + code + "\n\nEnter it at https://www.jconthemove.com/forgot-access using the same email or phone number you requested it with. It expires in 15 minutes. Never share this code. If you did not request it, ignore this email.",
+      }),
+    }));
+  } catch {
+    console.error("[account-recovery] initialization failed");
+    app.use("/api/auth/recover", (_req, res) => res.status(503).json({ error: "Account recovery is temporarily unavailable. Please try again later or call (906) 285-9312." }));
+  }
 
-  // Step 1: Request OTP — accepts email or phone number
-  app.post("/api/auth/recover/request", async (req, res) => {
-    try {
-      const { contact } = req.body; // email or phone number
-      if (!contact || typeof contact !== 'string' || contact.trim().length < 4) {
-        return res.status(400).json({ error: "Please provide a valid email address or phone number." });
-      }
-      const value = normalizeEmailInput(contact);
-      const isPhone = /^[\d\s\-\+\(\)]{7,}$/.test(contact.trim());
-      const method = isPhone ? 'sms' : 'email';
-
-      // Find user by email or phone
-      let matchedUser = null;
-      if (method === 'email') {
-        matchedUser = await findUserByEmail(value);
-      } else {
-        const normalized = contact.trim().replace(/[\s\-\(\)]/g, '');
-        const allUsers = await db.select().from(users).where(sql`phone_number IS NOT NULL`);
-        matchedUser = allUsers.find(u => u.phoneNumber && u.phoneNumber.replace(/[\s\-\(\)]/g, '') === normalized) || null;
-      }
-
-      // Always return success to prevent user enumeration attacks
-      if (!matchedUser || matchedUser.status === "rewards_only") {
-        console.log(`⚠️ Recovery request for unknown ${method}: ${value}`);
-        return res.json({ success: true, method, masked: method === 'email' ? value.replace(/(.{2}).*(@.*)/, '$1***$2') : value.slice(-4) });
-      }
-
-      // Generate 6-digit OTP
-      const otp = Math.floor(100000 + Math.random() * 900000).toString();
-      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
-
-      await db.insert(recoveryTokens).values({
-        userId: matchedUser.id,
-        token: otp,
-        method,
-        contact: method === 'email' ? matchedUser.email! : matchedUser.phoneNumber!,
-        expiresAt,
-      });
-
-      const { sendEmail } = await import('./services/email');
-
-      if (method === 'email') {
-        const sent = await sendEmail({
-          to: matchedUser.email!,
-          from: process.env.COMPANY_EMAIL || 'michigankid906@gmail.com',
-          subject: 'JC ON THE MOVE — Account Recovery Code',
-          html: `
-            <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px">
-              <h2 style="color:#1e40af">Account Recovery</h2>
-              <p>Hi ${matchedUser.firstName || 'there'},</p>
-              <p>Your account recovery code is:</p>
-              <div style="font-size:36px;font-weight:900;letter-spacing:8px;color:#1e40af;background:#f0f4ff;padding:16px 24px;border-radius:8px;text-align:center;margin:16px 0">${otp}</div>
-              <p style="color:#64748b">This code expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your account is secure.</p>
-              <p style="color:#94a3b8;font-size:12px">JC ON THE MOVE · Northwoods Moving & More</p>
-            </div>
-          `,
-          text: `Your JC ON THE MOVE account recovery code is: ${otp}\n\nThis code expires in 15 minutes.`,
-        });
-        if (!sent) {
-          throw new Error('Email delivery is not configured. Set Gmail OAuth variables or SENDGRID_API_KEY and try again.');
-        }
-        console.log(`📧 Sent recovery OTP to ${matchedUser.email}`);
-      } else {
-        // SMS no longer available — send recovery code via email if email is on file
-        if (!matchedUser.email) {
-          return res.status(400).json({ error: "Phone-based recovery is unavailable. No email address is on file for this account — please contact support." });
-        }
-        const sent = await sendEmail({
-          to: matchedUser.email,
-          from: process.env.COMPANY_EMAIL || 'michigankid906@gmail.com',
-          subject: 'JC ON THE MOVE — Account Recovery Code',
-          text: `JC ON THE MOVE account recovery code: ${otp}\n\nExpires in 15 min. Don't share this code.`,
-          html: `<p>Your JC ON THE MOVE account recovery code is: <strong>${otp}</strong></p><p>This code expires in 15 minutes.</p>`,
-        });
-        if (!sent) {
-          throw new Error('Email delivery is not configured. Set Gmail OAuth variables or SENDGRID_API_KEY and try again.');
-        }
-        console.log(`📧 Sent recovery OTP via email to ${matchedUser.email} (phone-method fallback)`);
-      }
-
-      const masked = method === 'email'
-        ? matchedUser.email!.replace(/(.{2}).*(@.*)/, '$1***$2')
-        : matchedUser.email
-          ? matchedUser.email.replace(/(.{2}).*(@.*)/, '$1***$2')
-          : '***';
-
-      const deliveredVia = method === 'email' ? 'email' : (matchedUser.email ? 'email' : 'phone');
-      res.json({ success: true, method: deliveredVia, masked });
-    } catch (err) {
-      console.error("Recovery request error:", formatLoggableError(err));
-      const message = err instanceof Error && err.message
-        ? err.message
-        : "Failed to send recovery code. Please try again.";
-      res.status(500).json({ error: message });
-    }
-  });
-
-  // Step 2: Verify OTP
-  app.post("/api/auth/recover/verify", async (req, res) => {
-    try {
-      const { contact, token } = req.body;
-      if (!contact || !token || typeof token !== 'string' || token.length < 4) {
-        return res.status(400).json({ error: "Contact and verification code are required." });
-      }
-
-      const now = new Date();
-      const [record] = await db.select().from(recoveryTokens)
-        .where(and(
-          eq(recoveryTokens.token, token.trim()),
-          sql`expires_at > NOW()`,
-          sql`used_at IS NULL`
-        ))
-        .orderBy(desc(recoveryTokens.createdAt))
-        .limit(1);
-
-      if (!record) {
-        return res.status(400).json({ error: "Invalid or expired code. Please request a new one." });
-      }
-
-      // Mark as used
-      await db.update(recoveryTokens).set({ usedAt: now }).where(eq(recoveryTokens.id, record.id));
-
-      // Generate a short-lived reset session token
-      const resetToken = crypto.randomBytes(32).toString('hex');
-      (req.session as any).pendingResetUserId = record.userId;
-      (req.session as any).pendingResetToken = resetToken;
-      (req.session as any).pendingResetExpiry = Date.now() + 10 * 60 * 1000; // 10 minutes
-
-      await new Promise<void>((resolve, reject) => req.session.save(e => e ? reject(e) : resolve()));
-
-      res.json({ success: true, resetToken });
-    } catch (err) {
-      console.error("Recovery verify error:", formatLoggableError(err));
-      const message = err instanceof Error && err.message
-        ? err.message
-        : "Verification failed. Please try again.";
-      res.status(500).json({ error: message });
-    }
-  });
-
-  // Step 3: Reset password
-  app.post("/api/auth/recover/reset", async (req, res) => {
-    try {
-      const { newPassword, resetToken } = req.body;
-      const sess = req.session as any;
-
-      if (!sess.pendingResetUserId || !sess.pendingResetToken || sess.pendingResetToken !== resetToken) {
-        return res.status(401).json({ error: "Session expired. Please start the recovery process again." });
-      }
-      if (Date.now() > sess.pendingResetExpiry) {
-        return res.status(401).json({ error: "Recovery session expired. Please start again." });
-      }
-      if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
-        return res.status(400).json({ error: "Password must be at least 6 characters." });
-      }
-
-      const passwordHash = await bcrypt.hash(newPassword, 12);
-      await db.update(users).set({ passwordHash }).where(eq(users.id, sess.pendingResetUserId));
-
-      // Clear recovery session data
-      delete sess.pendingResetUserId;
-      delete sess.pendingResetToken;
-      delete sess.pendingResetExpiry;
-
-      console.log(`🔐 Password reset successful for user ${sess.pendingResetUserId || 'unknown'}`);
-      res.json({ success: true, message: "Password reset successfully. You can now log in." });
-    } catch (err) {
-      console.error("Recovery reset error:", formatLoggableError(err));
-      const message = err instanceof Error && err.message
-        ? err.message
-        : "Password reset failed. Please try again.";
-      res.status(500).json({ error: message });
-    }
-  });
 
   // ── END ACCOUNT RECOVERY ─────────────────────────────────────────────────────
 
