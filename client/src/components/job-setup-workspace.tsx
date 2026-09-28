@@ -17,6 +17,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { closeoutRepairs, isPastJobDate, type JobCloseoutRepair } from "@/lib/job-closeout-repair";
 
 interface JobQuoteLineItem {
   id: string;
@@ -201,13 +202,15 @@ interface JobSetupWorkspaceProps {
   employees: JobSetupEmployee[];
   canManageSetup: boolean;
   onSaved: () => void;
+  closeoutRepair?: JobCloseoutRepair | null;
+  onReturnToCloseout?: () => void;
 }
 
 /**
  * One place to collect the information needed to turn a request into a ready job.
  * Quote selection is staged locally and only becomes real when Save Job Setup is pressed.
  */
-export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, activeSection, onSectionChange }: JobSetupWorkspaceProps) {
+export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, activeSection, onSectionChange, closeoutRepair, onReturnToCloseout }: JobSetupWorkspaceProps) {
   const { toast } = useToast();
   const [draft, setDraft] = useState<SetupDraft>(() => setupDraftFromLead(lead));
   const [quoteDraft, setQuoteDraft] = useState<JobQuoteDraft | null>(() => savedQuote(lead));
@@ -246,6 +249,15 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
         window.setTimeout(() => document.getElementById("setup-from-address")?.focus(), 0);
         throw new Error("Enter the pickup or service address.");
       }
+      if (closeoutRepair === "date" && !isPastJobDate(draft.confirmedDate)) {
+        onSectionChange("schedule");
+        window.setTimeout(() => document.getElementById("setup-closeout-date")?.focus(), 0);
+        throw new Error("Enter the actual job date, before today in Central time, to continue past-job closeout.");
+      }
+      const original = setupDraftFromLead(lead);
+      const crewChanged = JSON.stringify(draft.crewMembers) !== JSON.stringify(original.crewMembers)
+        || draft.crewLeadUserId !== original.crewLeadUserId
+        || JSON.stringify(draft.crewRoles) !== JSON.stringify(original.crewRoles);
       return apiRequest("PATCH", `/api/leads/${lead.id}/setup`, {
         firstName: draft.firstName.trim(),
         lastName: draft.lastName.trim(),
@@ -261,13 +273,13 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
           trailerRequested: draft.trailerRequested,
           promoCode: draft.promoCode.trim().toUpperCase(),
           crewSize: draft.crewSize,
-          confirmedHours: draft.confirmedHours,
-          crewMembers: draft.crewMembers,
-          crewLeadUserId: draft.crewLeadUserId || null,
-          crewAssignments: draft.crewMembers.map((workerId) => ({
+          confirmedHours: draft.confirmedHours !== original.confirmedHours ? draft.confirmedHours : undefined,
+          crewMembers: crewChanged ? draft.crewMembers : undefined,
+          crewLeadUserId: crewChanged ? (draft.crewLeadUserId || null) : undefined,
+          crewAssignments: crewChanged ? draft.crewMembers.map((workerId) => ({
             workerId,
             roleOnJob: workerId === draft.crewLeadUserId ? "lead_mover" : (draft.crewRoles[workerId] || "mover"),
-          })),
+          })) : undefined,
           jobPlanDetails: {
             workScope: draft.workScope,
             accessCode: draft.accessCode,
@@ -294,6 +306,16 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
 
   const approvedEmployees = employees.filter((employee) => employee.isApproved || employee.status === "approved" || employee.status === "active");
   const hasDraftChanges = JSON.stringify(draft) !== JSON.stringify(setupDraftFromLead(lead));
+  const savedDraft = setupDraftFromLead(lead);
+  // Opening an existing job or correcting its date/crew must preserve its saved price.
+  const needsQuote = !savedQuote(lead)
+    || [...PRICED_DRAFT_KEYS].some(key => draft[key] !== savedDraft[key])
+    || (Boolean(lead.quoteSnapshot?.manualQuoteOverride) && quotePricingSource === "rate_card_auto");
+  useEffect(() => {
+    if (needsQuote) return;
+    setQuoteDraft(savedQuote(lead));
+    setQuoteDirty(false);
+  }, [needsQuote, lead.totalPrice, lead.basePrice]);
   const quoteTotal = quoteDraft ? Number(quoteDraft.totalPrice || 0) : 0;
   const {
     data: autoQuotePreview,
@@ -347,19 +369,19 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
       });
       return response.json();
     },
-    enabled: canManageSetup && (activeSection !== "" || hasDraftChanges),
+    enabled: canManageSetup && needsQuote && (activeSection !== "" || hasDraftChanges),
   });
 
   useEffect(() => {
     const reserved = autoQuotePreview?.reservedEquipment;
-    if (!reserved) return;
+    if (!needsQuote || !reserved) return;
     setDraft((current) => current.truckConfig === reserved.truckConfig && current.trailerRequested === reserved.trailerRequested
       ? current
       : { ...current, ...reserved });
-  }, [autoQuotePreview?.reservedEquipment]);
+  }, [autoQuotePreview?.reservedEquipment, needsQuote]);
 
   useEffect(() => {
-    if (!canManageSetup || !autoQuotePreview || quotePricingSource !== "rate_card_auto") return;
+    if (!needsQuote || !canManageSetup || !autoQuotePreview || quotePricingSource !== "rate_card_auto") return;
     setQuoteDraft((current) => {
       const basePrice = autoQuotePreview.total.toFixed(2);
       const specialItems = [
@@ -407,10 +429,10 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
       if (changed) setQuoteDirty(true);
       return next;
     });
-  }, [autoQuotePreview, canManageSetup, draft.confirmedHours, draft.crewSize, quotePricingSource]);
+  }, [autoQuotePreview, canManageSetup, draft.confirmedHours, draft.crewSize, quotePricingSource, needsQuote]);
 
-  const quoteIsUpdating = canManageSetup && quotePricingSource === "rate_card_auto" && quotePreviewFetching;
-  const quoteCannotSave = canManageSetup && quotePricingSource === "rate_card_auto" && quotePreviewFailed;
+  const quoteIsUpdating = canManageSetup && needsQuote && quotePricingSource === "rate_card_auto" && quotePreviewFetching;
+  const quoteCannotSave = canManageSetup && needsQuote && quotePricingSource === "rate_card_auto" && quotePreviewFailed;
 
   const hasChanges = hasDraftChanges
     || (quoteDirty && Number(quoteDraft?.totalPrice || 0) !== Number(lead.totalPrice || lead.basePrice || 0))
@@ -433,6 +455,18 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
     <Card id="job-setup" className="mb-4 scroll-mt-4 border-blue-500/35 bg-gradient-to-b from-blue-950/20 to-background" data-testid="job-setup-workspace">
       <CardHeader className="px-4 py-3"><CardTitle className="text-base">Edit job</CardTitle></CardHeader>
       <CardContent className="px-4 pb-3 [&_input]:min-h-11 [&_input]:text-base [&_textarea]:text-base [&_button[role=combobox]]:min-h-11 [&_button[role=combobox]]:text-base">
+        {closeoutRepair && canManageSetup && <div className="mb-4 space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3" data-testid="closeout-repair-panel">
+          <p className="font-semibold">{closeoutRepairs[closeoutRepair].label} to continue closeout</p>
+          <p className="text-sm text-muted-foreground">{closeoutRepairs[closeoutRepair].help}</p>
+          <p className="text-xs text-muted-foreground">Saving returns you to payment review. You will still confirm payment and completion there.</p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" className="min-h-11 whitespace-normal" disabled={!hasChanges || saveMutation.isPending || quoteIsUpdating || quoteCannotSave || (closeoutRepair === "date" && !isPastJobDate(draft.confirmedDate))}
+              onClick={() => saveMutation.mutate()} data-testid="button-save-return-closeout">{saveMutation.isPending ? "Saving…" : "Save and return to closeout"}</Button>
+            <Button type="button" variant="outline" className="min-h-11 whitespace-normal" disabled={saveMutation.isPending}
+              onClick={onReturnToCloseout}>Return without saving</Button>
+          </div>
+          {saveMutation.isError && <p role="alert" className="text-sm text-destructive">{saveMutation.error.message || "Could not save. Review the details and try again."}</p>}
+        </div>}
         <TaskStepNav steps={steps} value={step} onChange={changeStep} disabled={saveMutation.isPending}/><fieldset disabled={saveMutation.isPending} className="min-w-0">
         <section hidden={step!=='customer'} aria-label="customer">
 
@@ -484,7 +518,10 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
 
             <div className="space-y-3">
             <div className="grid gap-4 sm:grid-cols-2">
-              <div><Label>Confirmed Job Date</Label><DatePicker value={draft.confirmedDate || undefined} onChange={(value) => updateDraft("confirmedDate", value || "")} placeholder="Pick a confirmed job date" /></div>
+              <div className={closeoutRepair === "date" ? "rounded-lg border border-amber-500/60 p-3" : ""}>
+                {closeoutRepair === "date" ? <><Label htmlFor="setup-closeout-date">Actual job date</Label><Input id="setup-closeout-date" type="date" value={draft.confirmedDate} onChange={event => updateDraft("confirmedDate", event.target.value)} aria-describedby="setup-closeout-date-help" aria-invalid={!isPastJobDate(draft.confirmedDate)} /><p id="setup-closeout-date-help" className="mt-2 text-sm text-amber-400">{isPastJobDate(draft.confirmedDate) ? "Save this correction to return to closeout." : "Choose the actual date the work took place, before today in Central time."}</p></>
+                  : <><Label>Confirmed Job Date</Label><DatePicker value={draft.confirmedDate || undefined} onChange={(value) => updateDraft("confirmedDate", value || "")} placeholder="Pick a confirmed job date" /></>}
+              </div>
               <div><Label>Arrival Window</Label><Select value={draft.arrivalWindow || undefined} onValueChange={(value) => updateDraft("arrivalWindow", value)}><SelectTrigger><SelectValue placeholder="Select arrival window" /></SelectTrigger><SelectContent>{draft.arrivalWindow && !isHourlyJobArrivalWindow(draft.arrivalWindow) && <SelectItem value={draft.arrivalWindow}>Current legacy window: {draft.arrivalWindow}</SelectItem>}{JOB_SCHEDULE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div>
               <div><Label>Work Scope</Label><Select value={draft.workScope} onValueChange={(value) => updateDraft("workScope", value as LaborWorkScope)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="load_only">Loading only</SelectItem><SelectItem value="unload_only">Unloading only</SelectItem><SelectItem value="load_unload">Load + unload</SelectItem></SelectContent></Select></div>
               <div><Label>Truck</Label><Select value={draft.truckConfig} onValueChange={(value) => updateDraft("truckConfig", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="no_truck">Labor only — no truck</SelectItem><SelectItem value="company_truck">JC truck (+rate-card truck fee)</SelectItem><SelectItem value="customer_truck">Customer truck</SelectItem></SelectContent></Select></div>
@@ -492,17 +529,24 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
               <div><Label htmlFor="setup-hours">Hours Estimate</Label><Select value={String(draft.confirmedHours)} onValueChange={(value) => updateDraft("confirmedHours", Number(value))}><SelectTrigger id="setup-hours"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 24 }, (_, index) => index + 1).map((hour) => <SelectItem key={hour} value={String(hour)}>{hour} {hour === 1 ? "hour" : "hours"}</SelectItem>)}</SelectContent></Select></div>
             </div>
             <div><Label className="mb-2 block">Crew Size</Label><div className="flex flex-wrap gap-2">{[1, 2, 3, 4].map((size) => <Button key={size} type="button" variant={draft.crewSize === size ? "default" : "outline"} className="min-w-12" onClick={() => updateDraft("crewSize", size)}>{size} {size === 1 ? "mover" : "movers"}</Button>)}</div></div>
-            <div><Label className="mb-2 block">Named Crew</Label><div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2">{approvedEmployees.length ? approvedEmployees.map((employee) => { const checked = draft.crewMembers.includes(employee.id); return <label key={employee.id} className="flex min-h-11 min-w-0 cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted/50"><Checkbox checked={checked} onCheckedChange={(value) => setDraft((current) => { const crewMembers = value ? [...current.crewMembers, employee.id] : current.crewMembers.filter((id) => id !== employee.id); const crewLeadUserId = crewMembers.includes(current.crewLeadUserId) ? current.crewLeadUserId : crewMembers[0] || ""; const crewRoles = { ...current.crewRoles }; if (value) crewRoles[employee.id] = employee.payoutProfile?.payoutClassification || "mover"; else delete crewRoles[employee.id]; return { ...current, crewMembers, crewLeadUserId, crewRoles }; })} /><span className="min-w-0 [overflow-wrap:anywhere]">{employee.firstName} {employee.lastName}</span></label>; }) : <p className="text-sm text-muted-foreground">No approved crew members found.</p>}</div></div>
+            <div id="setup-named-crew" tabIndex={-1}><Label className="mb-2 block">Named Crew</Label><div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2">{approvedEmployees.length ? approvedEmployees.map((employee) => { const checked = draft.crewMembers.includes(employee.id); return <label key={employee.id} className="flex min-h-11 min-w-0 cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted/50"><Checkbox checked={checked} onCheckedChange={(value) => setDraft((current) => { const crewMembers = value ? [...current.crewMembers, employee.id] : current.crewMembers.filter((id) => id !== employee.id); const crewLeadUserId = crewMembers.includes(current.crewLeadUserId) ? current.crewLeadUserId : crewMembers[0] || ""; const crewRoles = { ...current.crewRoles }; if (value) crewRoles[employee.id] = employee.payoutProfile?.payoutClassification || "mover"; else delete crewRoles[employee.id]; return { ...current, crewMembers, crewLeadUserId, crewRoles }; })} /><span className="min-w-0 [overflow-wrap:anywhere]">{employee.firstName} {employee.lastName}</span></label>; }) : <p className="text-sm text-muted-foreground">No approved crew members found.</p>}</div></div>
             <div><Label>Crew lead</Label><Select value={draft.crewLeadUserId || undefined} onValueChange={(value) => updateDraft("crewLeadUserId", value)}><SelectTrigger><SelectValue placeholder="Select the crew lead" /></SelectTrigger><SelectContent>{draft.crewMembers.length ? draft.crewMembers.map((id) => { const employee = approvedEmployees.find((entry) => entry.id === id); return <SelectItem key={id} value={id}>{employee ? `${employee.firstName} ${employee.lastName}` : "Selected crew member"}</SelectItem>; }) : <SelectItem value="__none" disabled>Select a crew member first</SelectItem>}</SelectContent></Select></div>
+            {draft.crewMembers.filter(id => !approvedEmployees.some(employee => employee.id === id)).map(id => <div key={id} className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 p-3 text-sm">
+              <span>Unavailable crew account</span><Button type="button" variant="outline" onClick={() => setDraft(current => {
+                const crewMembers = current.crewMembers.filter(member => member !== id);
+                const crewRoles = { ...current.crewRoles }; delete crewRoles[id];
+                return { ...current, crewMembers, crewRoles, crewLeadUserId: current.crewLeadUserId === id ? crewMembers[0] || "" : current.crewLeadUserId };
+              })}>Remove unavailable crew member</Button>
+            </div>)}
             <p className="text-xs text-muted-foreground">Driver premiums are designated during owner payout review in Finance.</p>
             {draft.crewMembers.length > 0 && <div><Label className="mb-2 block">Job classifications</Label><div className="grid grid-cols-1 gap-2 rounded-lg border p-3 sm:grid-cols-2">{draft.crewMembers.map((id) => { const employee = approvedEmployees.find((entry) => entry.id === id); const isLead = id === draft.crewLeadUserId; return <div key={id} className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center"><span className="min-w-0 flex-1 text-sm [overflow-wrap:anywhere]">{employee ? `${employee.firstName} ${employee.lastName}` : "Crew member"}</span><Select disabled={isLead} value={isLead ? "lead_mover" : (draft.crewRoles[id] || "mover")} onValueChange={(value) => setDraft((current) => ({ ...current, crewRoles: { ...current.crewRoles, [id]: value as "lead_mover" | "mover" | "helper" } }))}><SelectTrigger className="w-full sm:w-36 sm:shrink-0"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="lead_mover">Lead Mover</SelectItem><SelectItem value="mover">Mover</SelectItem><SelectItem value="helper">Helper</SelectItem></SelectContent></Select></div>; })}</div><p className="mt-1 text-xs text-muted-foreground">Per-job classifications override the employee default and feed the payout ledger.</p></div>}
             </div>
           </section>
-          <section hidden={step!=='quote'} aria-label="Review job">{summary}
+          <section hidden={step!=='quote'} aria-label="Review job" id="setup-quote-review" tabIndex={-1}>{summary}
 
             <div className="space-y-3">
           <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end"><div><Label htmlFor="setup-promo-code">Promo / package code</Label><Input id="setup-promo-code" value={draft.promoCode} onChange={(event) => updateDraft("promoCode", event.target.value.toUpperCase())} placeholder="e.g. LOCAL4X4" autoCapitalize="characters" /></div>{draft.promoCode && <Button type="button" variant="ghost" size="sm" onClick={() => updateDraft("promoCode", "")}>Clear code</Button>}</div>
-            {quotePreviewFailed && quotePricingSource === "rate_card_auto" ? (
+            {quoteCannotSave ? (
               <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3">
                 <p className="text-sm font-semibold text-red-300">The quote could not be recalculated.</p>
                 <p className="mt-1 text-xs text-muted-foreground">Job setup will wait so crew, hours, and price cannot be saved out of sync.</p>

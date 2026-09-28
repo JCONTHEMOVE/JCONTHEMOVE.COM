@@ -20,6 +20,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { CrewSuggestionsDialog } from "@/components/crew-suggestions-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AdminJobPaymentShortcut } from "@/components/AdminJobPaymentShortcut";
+import { closeoutRepairs, type JobCloseoutRepair } from "@/lib/job-closeout-repair";
 import { JobOrderTicket } from "@/components/job-order-ticket";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { JobSetupWorkspace, type JobSetupSection } from "@/components/job-setup-workspace";
@@ -547,19 +548,28 @@ export default function LeadDetailPage() {
   const [copiedPaymentLink, setCopiedPaymentLink] = useState(false);
   const [showJobSetup, setShowJobSetup] = useState(true);
   const [setupSection, setSetupSection] = useState<JobSetupSection>("");
+  const [closeoutRepair, setCloseoutRepair] = useState<{ leadId: string; target: JobCloseoutRepair } | null>(null);
+  const [closeoutResume, setCloseoutResume] = useState({ leadId: "", key: 0 });
+  const repairTarget = closeoutRepair?.leadId === params?.id ? closeoutRepair.target : null;
   const jobSetupRef = useRef<HTMLDivElement>(null);
 
-  const openJobSetup = (section: JobSetupSection = "customer") => {
+  const openJobSetup = (section: JobSetupSection = "customer", fieldId?: string) => {
     const targetId = section === "schedule" ? "job-setup-schedule" : "job-setup";
     setShowJobSetup(true);
     setSetupSection(section);
     window.setTimeout(() => {
-      const target = document.getElementById(targetId) || jobSetupRef.current;
+      const target = (fieldId ? document.getElementById(fieldId) : null) || document.getElementById(targetId) || jobSetupRef.current;
       target?.scrollIntoView({ behavior: "smooth", block: "start" });
-      target?.querySelector<HTMLElement>("button, input, [tabindex='0']")?.focus({ preventScroll: true });
+      const focusTarget = target?.matches("input, button, [tabindex]") ? target : target?.querySelector<HTMLElement>("button, input, [tabindex='0']");
+      focusTarget?.focus({ preventScroll: true });
     }, 0);
   };
   const openJobSetupSchedule = () => openJobSetup("schedule");
+  const returnToCloseout = () => {
+    if (!params?.id) return;
+    setCloseoutRepair(null);
+    setCloseoutResume(previous => ({ leadId: params.id, key: previous.key + 1 }));
+  };
 
   const { data: lead, isLoading, isError, error } = useQuery<Lead>({
     queryKey: ["/api/leads", params?.id],
@@ -1022,6 +1032,7 @@ export default function LeadDetailPage() {
     queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id] });
     queryClient.invalidateQueries({ queryKey: ["/api/jobs/planner"] });
     queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id, "alert-deliveries"] });
+    if (repairTarget) returnToCloseout();
   };
 
   const handleOrderApply = (orderData: {
@@ -1497,7 +1508,12 @@ export default function LeadDetailPage() {
               Back
             </Button>
             <div className="flex flex-wrap items-center gap-2">
-            {hasAdminAccess && <AdminJobPaymentShortcut key={lead.id} leadId={lead.id} />}
+            {hasAdminAccess && <AdminJobPaymentShortcut key={lead.id} leadId={lead.id}
+              resumeKey={closeoutResume.leadId === lead.id ? closeoutResume.key : 0}
+              onFixJob={target => {
+                setCloseoutRepair({ leadId: lead.id, target });
+                openJobSetup(closeoutRepairs[target].section, closeoutRepairs[target].fieldId);
+              }} />}
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="outline" className="min-h-11">Actions <ChevronDown className="ml-2 h-4 w-4" /></Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -1620,6 +1636,8 @@ export default function LeadDetailPage() {
               onSaved={handleJobSetupSaved}
               activeSection={setupSection}
               onSectionChange={setSetupSection}
+              closeoutRepair={repairTarget}
+              onReturnToCloseout={returnToCloseout}
             />
           </div>
         )}
