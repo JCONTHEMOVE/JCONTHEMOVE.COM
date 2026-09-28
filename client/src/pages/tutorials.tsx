@@ -27,6 +27,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
+import { MARKETING_WEEKLY_SUMMARY } from "@shared/marketingWeek";
 
 type TutorialRole = "worker" | "admin";
 
@@ -107,7 +108,7 @@ const tutorials: Tutorial[] = [
     minutes: 8,
     steps: [
       { id: "open-marketing", title: "Open Marketing", detail: "Start at the crew marketing screen and confirm your profile is linked to the right rep code.", route: "/crew/marketing", routeLabel: "Open Marketing" },
-      { id: "choose-route", title: "Choose a shared route day", detail: "Match your service angle to Minocqua Monday, Houghton Tuesday, Iron River Wednesday, Ashland Thursday, or an Ironwood/Northwoods opening." },
+      { id: "choose-route", title: "Choose a weekly marketing focus", detail: `Match your service angle to ${MARKETING_WEEKLY_SUMMARY}, or a confirmed Ironwood/Northwoods opening. Confirm service dates and crew availability for each job.` },
       { id: "build-tracked-ad", title: "Build a tracked ad", detail: "Use the ad builder to choose the area and service focus, then keep the promo and booking link attached." },
       { id: "share-ad", title: "Share useful local help", detail: "Post only truthful, useful content in allowed groups, texts, or partner channels. Save a proof link or note on your launch action." },
       { id: "capture-followup", title: "Capture and follow up", detail: "Send interested people to the website request path, respond quickly, and log the result so booked value is credited to the team." },

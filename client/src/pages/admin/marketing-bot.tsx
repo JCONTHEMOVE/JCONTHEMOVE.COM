@@ -157,6 +157,8 @@ const channelLabels: Record<string, string> = {
   google_business: "Google Business",
 };
 
+const primaryCompanyFacebookPageId = "912756211920086";
+
 const jcCompanyFacebookPages = [
   { pageId: "912756211920086", pageName: "JC On The MOVE : CoM" },
   { pageId: "201994456322276", pageName: "JC on the MOVE. com" },
@@ -223,7 +225,9 @@ export default function AdminMarketingBotPage() {
     const available = new Set(connectedFacebookPages.map((connection) => connection.id));
     setSelectedFacebookConnectionIds((current) => {
       const retained = current.filter((id) => available.has(id));
-      return retained.length > 0 ? retained : connectedFacebookPages.map((connection) => connection.id);
+      return retained.length > 0 ? retained : connectedFacebookPages
+        .filter((connection) => connection.pageId === primaryCompanyFacebookPageId)
+        .map((connection) => connection.id);
     });
   }, [connectedFacebookPageKey]);
 
@@ -289,9 +293,9 @@ export default function AdminMarketingBotPage() {
     const pages = jcCompanyFacebookPages.map(({ pageId }) => ({
       pageId,
       accessToken: companyPageTokens[pageId]?.trim() || "",
-    }));
-    if (pages.some((page) => !page.accessToken)) {
-      toast({ title: "All three Page tokens are required", variant: "destructive" });
+    })).filter((page) => page.accessToken.length > 0);
+    if (pages.length === 0) {
+      toast({ title: "Enter a token for the Page you want to connect", variant: "destructive" });
       return;
     }
 
@@ -609,7 +613,7 @@ export default function AdminMarketingBotPage() {
             <div className="mt-5 rounded-xl border border-blue-400/15 bg-slate-950/50 p-4">
               <div>
                 <h4 className="font-bold text-white">Secure one-time Page connection</h4>
-                <p className="mt-1 text-xs text-slate-400">Owner-only. Page tokens are verified by Meta, encrypted on the server, never returned, and cleared from this form after import.</p>
+                <p className="mt-1 text-xs text-slate-400">Enter a token only for each Page you want to reconnect. JC On The MOVE : CoM is the main publishing Page. Tokens are verified by Meta, encrypted on the server, and cleared from this form after import.</p>
               </div>
               <div className="mt-4 grid gap-3">
                 {jcCompanyFacebookPages.map((page) => (
@@ -635,11 +639,11 @@ export default function AdminMarketingBotPage() {
                 <Button
                   type="button"
                   className="bg-blue-600 hover:bg-blue-500"
-                  disabled={companyImportPending || jcCompanyFacebookPages.some((page) => !companyPageTokens[page.pageId]?.trim())}
+                  disabled={companyImportPending || !jcCompanyFacebookPages.some((page) => companyPageTokens[page.pageId]?.trim())}
                   onClick={importCompanyFacebookPages}
                 >
                   {companyImportPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-                  Verify and encrypt all three Pages
+                  Connect entered Pages
                 </Button>
                 <p className="text-xs text-slate-500">Available only while the temporary server import gate is enabled.</p>
               </div>

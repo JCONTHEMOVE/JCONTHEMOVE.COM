@@ -16,7 +16,7 @@ import { ObjectStorageService } from "../objectStorage";
 import { processAshleyBatch } from "../services/ashleyShopAi";
 import { createCommerceCheckout, createCommerceCryptoCheckout, finalizeCommerceOrder, getCommerceOrder } from "../services/ashleyShopCommerce";
 import { getAshleyEmailIntakeStatus, runAshleyEmailIngest } from "../services/ashleyShopEmail";
-import { getDailyFeaturedItem } from "../services/ashleyShopFeatured";
+import { getDailyFeaturedItem, getHighlightedItem } from "../services/ashleyShopFeatured";
 import { getAshleyShopSetup, isAshleyFinalApprovalActor, validateAshleyDraftPublication } from "../services/ashleyShopPolicy";
 import { priceCommerceCart } from "../services/ashleyShopPricing";
 import { ensureAshleyShopSchema } from "../services/ashleyShopSchema";
@@ -72,6 +72,14 @@ function sendRouteError(res: Response, error: unknown, fallback: string) {
 
 export async function registerAshleyShopRoutes(app: Express) {
   await ensureAshleyShopSchema();
+
+  app.get("/api/ashley-shop/highlighted", async (_req, res) => {
+    try {
+      res.json(await getHighlightedItem());
+    } catch (error) {
+      sendRouteError(res, error, "Failed to load featured piece");
+    }
+  });
 
   app.get("/api/ashley-shop/featured", async (_req, res) => {
     try {

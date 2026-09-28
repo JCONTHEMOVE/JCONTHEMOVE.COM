@@ -1,4 +1,6 @@
 import { CatalogImage } from "@/components/catalog-image";
+import { CopperCuffOffer } from "@/components/copper-cuff-offer";
+import { COPPER_CUFF_LISTING, COPPER_CUFF_PHOTOS, COPPER_CUFF_SKU } from "@shared/ashleyCopperPromotion";
 import { ShopSwitcher } from "@/components/shop-switcher";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Link, useLocation } from "wouter";
@@ -58,6 +60,7 @@ function MediaThumb({ src, alt, className }: { src: string; alt: string; classNa
 
 interface JewelryItem {
   id: string;
+  sku?: string;
   postedBy?: string;
   title: string;
   description?: string;
@@ -205,6 +208,7 @@ export default function AshleyShop() {
   const [customOrderForm, setCustomOrderForm] = useState({ name: "", description: "", materials: "", budget: "", contact: "" });
   const [customOrderSubmitting, setCustomOrderSubmitting] = useState(false);
   const [newItemFeatured, setNewItemFeatured] = useState(false);
+  const [newItemSku, setNewItemSku] = useState<string | null>(null);
 
   const toggleWishlist = (id: string) => {
     setWishlist(prev => {
@@ -412,6 +416,8 @@ export default function AshleyShop() {
       setNewItem({ title: "", shortDescription: "", description: "", price: "", category: "", materials: "", imageUrl: "" });
       setPhotoUrls([]);
       setNewItemFeatured(false);
+      setNewItemSku(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/ashley-shop/highlighted"] });
       toast({ title: "Piece added to the shop!" });
     },
     onError: (error: any) => {
@@ -514,6 +520,7 @@ export default function AshleyShop() {
     if (!newItem.title.trim()) { toast({ title: "Title is required", variant: "destructive" }); return; }
     createMutation.mutate({
       ...newItem,
+      ...(newItemSku ? { sku: newItemSku, quantity: 1 } : {}),
       imageUrl: photoUrls[0] || newItem.imageUrl,
       photos: photoUrls,
       featured: newItemFeatured,
@@ -706,6 +713,7 @@ export default function AshleyShop() {
           <div className="p-2.5">
             <h3 className="font-medium text-stone-800 text-sm line-clamp-1">{item.title}</h3>
             <p className="text-stone-400 text-xs line-clamp-1 mt-0.5">{item.shortDescription || item.category || "Handcrafted with love"}</p>
+            <CopperCuffOffer sku={item.sku} available={item.status === "active" && item.inStock !== false} compact />
           </div>
           <button
             type="button"
@@ -873,6 +881,13 @@ export default function AshleyShop() {
                   </DialogHeader>
                   <div className="space-y-4">
                     <div>
+                      <Button type="button" variant="outline" className="mb-3 h-auto whitespace-normal" onClick={() => {
+                        setNewItem({ ...COPPER_CUFF_LISTING });
+                        setNewItemSku(COPPER_CUFF_SKU);
+                        setNewItemFeatured(true);
+                        setPhotoUrls([...COPPER_CUFF_PHOTOS]);
+                      }}>Load copper cuff · $55 · +555 JCMOVES</Button>
+                      {newItemSku && <p className="mb-3 text-xs text-amber-800">One featured bracelet. Publishing requires Ashley’s authorized account. The extra 555 JCMOVES apply after verified regular payment to an enrolled account.</p>}
                       <Label htmlFor="newItem-title">Title *</Label>
                       <Input id="newItem-title" value={newItem.title} onChange={(e) => setNewItem({ ...newItem, title: e.target.value })} placeholder="e.g., Turquoise Drop Earrings" />
                     </div>
@@ -1261,6 +1276,7 @@ export default function AshleyShop() {
                 <p className="text-2xl font-bold text-rose-600">${selectedItem.price}</p>
               )}
 
+              <CopperCuffOffer sku={selectedItem.sku} available={selectedItem.status === "active" && selectedItem.inStock !== false} />
               {selectedItem.materials && (
                 <div className="bg-rose-50 rounded-xl p-3 border border-rose-100">
                   <p className="text-xs font-semibold text-rose-400 uppercase tracking-wide mb-1">Made With</p>

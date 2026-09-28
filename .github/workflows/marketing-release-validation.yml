@@ -1,0 +1,43 @@
+name: Marketing Release Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/marketing-release-validation.yml'
+      - 'client/src/pages/admin/marketing-bot.tsx'
+      - 'client/src/pages/crew/earnings.tsx'
+      - 'client/src/pages/tutorials.tsx'
+      - 'server/services/marketingAdGenerator.ts'
+      - 'server/services/__tests__/marketing*.test.ts'
+      - 'shared/marketingWeek.ts'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marketing-release-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Type check
+        run: npm run check
+      - name: Server behavior and authorization tests
+        run: npm run test:server
+      - name: Build release candidate
+        run: npm run build
+      # No production secrets, database migrations, server startup, or publishing.
