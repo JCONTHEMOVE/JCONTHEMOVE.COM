@@ -511,7 +511,7 @@ export default function AdminQuoteReviewPage() {
   });
 
   const sendMutation = useMutation({
-    mutationFn: async (id: string) => apiRequest("POST", `/api/leads/${id}/send-quote`, {}),
+    mutationFn: async (id: string) => (await apiRequest("POST", `/api/leads/${id}/send-quote`, {})).json(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/chatbot-quotes"] });
       toast({ title: "Quote sent", description: "The approved revision and refreshed payment link were sent to the customer." });

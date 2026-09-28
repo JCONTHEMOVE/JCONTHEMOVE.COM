@@ -1,3 +1,4 @@
+import { JobWorkflowReport } from "@/components/job-workflow-report";
 import { ProjectIntakeSummary } from "@/components/project-intake-summary";
 import { manualDispatchMissingSetup } from "@shared/manualDispatchReadiness";
 import { customerNotesFromDetails } from "@shared/leadDetails";
@@ -548,7 +549,9 @@ export default function LeadDetailPage() {
   const [quoteSentAt, setQuoteSentAt] = useState<string | null>(null);
   const [squarePaymentUrl, setSquarePaymentUrl] = useState<string | null>(null);
   const [copiedPaymentLink, setCopiedPaymentLink] = useState(false);
-  const [showJobSetup, setShowJobSetup] = useState(true);
+  const [showJobSetup, setShowJobSetup] = useState(false);
+  const [setupDirty, setSetupDirty] = useState(false);
+  const [workflowVersion, setWorkflowVersion] = useState("");
   const [setupSection, setSetupSection] = useState<JobSetupSection>("");
   const [closeoutRepair, setCloseoutRepair] = useState<{ leadId: string; target: JobCloseoutRepair } | null>(null);
   const [closeoutResume, setCloseoutResume] = useState({ leadId: "", key: 0 });
@@ -1030,6 +1033,9 @@ export default function LeadDetailPage() {
   const computeEffectiveCrewSize = () => Math.max(1, selectedCrewMembers.length);
 
   const handleJobSetupSaved = () => {
+    setSetupDirty(false);
+    setShowJobSetup(false);
+    window.dispatchEvent(new Event("jc:job-setup-saved"));
     queryClient.invalidateQueries({ queryKey: ["/api/leads"] });
     queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id] });
     queryClient.invalidateQueries({ queryKey: ["/api/jobs/planner"] });
@@ -1410,7 +1416,7 @@ export default function LeadDetailPage() {
         openJobSetup("quote");
         break;
       case "send_quote":
-        setShowQuoteDeliveryDialog(true);
+        window.dispatchEvent(new Event("jc:review-quote"));
         break;
       case "offline_closeout":
         openOfflineCloseout();
@@ -1510,12 +1516,12 @@ export default function LeadDetailPage() {
               Back
             </Button>
             <div className="flex flex-wrap items-center gap-2">
-            {hasAdminAccess && <AdminJobPaymentShortcut key={lead.id} leadId={lead.id}
+            {hasAdminAccess && <span className="hidden"><AdminJobPaymentShortcut key={lead.id} leadId={lead.id}
               resumeKey={closeoutResume.leadId === lead.id ? closeoutResume.key : 0}
               onFixJob={target => {
                 setCloseoutRepair({ leadId: lead.id, target });
                 openJobSetup(closeoutRepairs[target].section, closeoutRepairs[target].fieldId);
-              }} />}
+              }} /></span>}
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="outline" className="min-h-11">Actions <ChevronDown className="ml-2 h-4 w-4" /></Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -1550,56 +1556,12 @@ export default function LeadDetailPage() {
           )}
         </div>
 
-        <JobOrderTicket
-          order={{ ...lead, customerName: lead.workerVisibility?.customerIdentity === false ? "Customer details protected" : `${lead.firstName || ""} ${lead.lastName || ""}`.trim() }}
-          detailPage
-          viewer={hasAdminAccess ? "admin" : "crew"}
-          action={canClaimJob ? ticketAction : undefined}
-          onScheduleEdit={hasAdminAccess ? openJobSetupSchedule : undefined}
-          className="mb-4"
-        />
-
-        <Card className="mb-4 border-blue-500/30 bg-blue-950/10">
-          <CardContent className="pt-4">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-3 min-w-0">
-                <div className="h-10 w-10 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center shrink-0">
-                  <NextIcon className="h-5 w-5 text-blue-300" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-blue-300">Next Step</p>
-                  <h2 className="text-lg font-bold text-foreground">{nextStep.title}</h2>
-                  <p className="text-sm text-muted-foreground mt-0.5">{nextStep.detail}</p>
-                  {packageDraftReady && (
-                    <p className="text-xs text-emerald-300 mt-2">
-                      Package: {packageDraft?.label} {packagePrice ? `- ${formatMoney(packagePrice)}` : ""}
-                    </p>
-                  )}
-                </div>
-              </div>
-              <Button
-                onClick={handleNextStep}
-                disabled={actionPending || nextStep.key === "done" || (nextStep.key === "send_quote" && !leadHasQuote) || (nextStep.key === "dispatch" && dispatchMissingSetup.length > 0)}
-                className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white"
-                data-testid="button-primary-next-step"
-              >
-                {actionPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <NextIcon className="h-4 w-4 mr-2" />}
-                {nextStep.button}
-              </Button>
-            </div>
-            {nextStep.key === "apply_package" && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-3 w-full sm:w-auto"
-                onClick={() => openJobSetup("quote")}
-              >
-                <DollarSign className="h-4 w-4 mr-2" />
-                Adjust Manually Instead
-              </Button>
-            )}
-          </CardContent>
-        </Card>
+        {(hasAdminAccess || isEmployee && lead.workerVisibility?.pricing && ["new", "contacted", "quote_requested", "chatbot_pending", "pending_quote_approval", "quoted"].includes(statusKey)) ? <JobWorkflowReport key={lead.id} lead={lead} employees={employees} dirty={setupDirty}
+          onEdit={openJobSetup} onVersion={setWorkflowVersion}
+          onPayment={() => window.dispatchEvent(new Event("jc:record-job-payment"))}
+          onCloseout={returnToCloseout}
+          onStart={() => updateStatus.mutate("in_progress")} onComplete={() => updateStatus.mutate("completed")} />
+          : <JobOrderTicket order={{ ...lead, customerName: lead.workerVisibility?.customerIdentity === false ? "Customer details protected" : [lead.firstName, lead.lastName].filter(Boolean).join(" ") }} detailPage viewer="crew" action={canClaimJob ? ticketAction : isEmployee && ["start", "complete"].includes(nextStep.key) ? <Button disabled={actionPending} onClick={handleNextStep}>{nextStep.button}</Button> : undefined} className="mb-4" />}
 
         {packageDraft && (
           <details className="mb-4 rounded-xl border" data-testid="selected-package-summary"><summary className="min-h-12 cursor-pointer px-4 py-3 text-sm font-medium">Customer-selected package</summary><Card className="border-0 shadow-none">
@@ -1638,6 +1600,8 @@ export default function LeadDetailPage() {
               onSaved={handleJobSetupSaved}
               activeSection={setupSection}
               onSectionChange={setSetupSection}
+              expectedVersion={workflowVersion || undefined}
+              onDirtyChange={setSetupDirty}
               closeoutRepair={repairTarget}
               onReturnToCloseout={returnToCloseout}
             />
@@ -1855,7 +1819,7 @@ export default function LeadDetailPage() {
               <Button
                 size="sm"
                 className="bg-orange-600 hover:bg-orange-700 text-white"
-                onClick={() => setShowQuoteDeliveryDialog(true)}
+                onClick={() => window.dispatchEvent(new Event("jc:review-quote"))}
               >
                 <Send className="h-3.5 w-3.5 mr-1.5" /> Send Quote
               </Button>

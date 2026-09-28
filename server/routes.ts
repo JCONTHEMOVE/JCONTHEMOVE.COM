@@ -157,6 +157,8 @@ import northwoodsMarketingRouter from "./routes/northwoodsMarketing";
 import { createMarketingExecutionRouter } from "./routes/marketingExecution";
 import bookingsRouter from "./routes/bookings";
 import quotesRouter from "./routes/quotes";
+import jobWorkflowRouter from "./routes/jobWorkflow";
+import { syncSavedQuote, loadWorkflowState, WorkflowError, workflowActor, getJobWorkflow, reviewJobQuote, approveAndSend, readWorkflowQuoteToken, checkWorkflowDispatch, recordWorkflowPayment, executeCrewAction, usableEmail } from "./services/jobWorkflow";
 import pricingV2Router from "./routes/pricingV2";
 import regionalAutomationRouter from "./routes/regionalAutomation";
 import pipelineRouter from "./routes/pipeline";
@@ -167,6 +169,7 @@ import { ensureGiftCardBonusTables } from "./services/giftCardBonuses";
 import { ensureBookingCatalogSeeded } from "./services/bookingCatalogSeed";
 import { getActivePricingSnapshot } from "./services/pricingVersions";
 import {
+  ensureQuoteRevisionInfrastructure,
   approveQuoteRevision,
   getLatestApprovedQuote,
   getLatestQuoteRevision,
@@ -10601,6 +10604,20 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       const existingLead = await storage.getLead(id);
       if (!existingLead) return res.status(404).json({ error: "Lead not found" });
 
+      // An administrative stage correction must still use the dispatch checks
+      // and durable effects when it actually dispatches a crew.
+      if (status === "dispatched") {
+        const actor = await workflowActor(actorId || "");
+        if (!actor?.manage) return res.status(403).json({ error: "Job management permission required" });
+        const current = await getJobWorkflow(id, actor);
+        const dispatchResult = await executeCrewAction(id, actor, {
+          version: req.body?.version || current.version,
+          action: "dispatch",
+          idempotencyKey: req.body?.idempotencyKey || crypto.randomUUID(),
+        });
+        return res.json({ ...await storage.getLead(id), dispatchResult });
+      }
+
       let updatedLead = await storage.updateLeadStatus(id, status);
       if (!updatedLead) return res.status(404).json({ error: "Lead not found" });
 
@@ -10655,6 +10672,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
 
       res.json(updatedLead);
     } catch (error) {
+      if (error instanceof WorkflowError) return res.status(error.status).json({ error: error.message, blockers: error.blockers });
       console.error("Error force-updating lead status:", error);
       res.status(500).json({ error: "Failed to force update lead status" });
     }
@@ -12660,11 +12678,12 @@ Thank you for your business!
   });
 
   const jobSetupSchema = z.object({
-    firstName: z.string().trim().min(1, "First name is required").max(100),
-    lastName: z.string().trim().min(1, "Last name is required").max(100),
+    expectedVersion: z.string().length(64).optional(),
+    firstName: z.string().trim().max(100),
+    lastName: z.string().trim().max(100),
     email: z.string().trim().max(254),
     phone: z.string().trim().max(60),
-    fromAddress: z.string().trim().min(1, "Pickup or service address is required").max(500),
+    fromAddress: z.string().trim().max(500),
     toAddress: z.string().trim().max(500),
     moveDate: z.string().trim().max(50).optional(),
     details: z.string().trim().max(12000),
@@ -12758,6 +12777,8 @@ Thank you for your business!
         lastName: input.lastName,
         email: input.email,
         phone: input.phone,
+        confirmedFromAddress: input.fromAddress,
+        confirmedToAddress: input.toAddress || null,
         fromAddress: input.fromAddress,
         toAddress: input.toAddress || null,
         details: input.details || null,
@@ -12779,7 +12800,7 @@ Thank you for your business!
         if (input.crewMembers !== undefined && currentLead.driverUserId && !effectiveDriver) patch.driverUserId = null;
         if (input.jobPlanDetails !== undefined) {
           const { accessCode, entryInstructions, ...operationalDetails } = input.jobPlanDetails;
-          patch.jobPlanDetails = operationalDetails;
+          patch.jobPlanDetails = { ...((currentLead.jobPlanDetails as Record<string, unknown>) || {}), ...operationalDetails };
           patch.accessInstructionsCiphertext = encryptJobAccessDetails({ accessCode, entryInstructions });
         }
 
@@ -12882,8 +12903,14 @@ Thank you for your business!
         }
       }
 
+      await ensureQuoteRevisionInfrastructure();
       const updatedLead = await db.transaction(async (tx) => {
+        const queryAdapter = { query: async (text: string, values: any[] = []) => tx.execute(sql.join(text.split(/(\$\d+)/).map(part => /^\$\d+$/.test(part) ? sql.param(values[Number(part.slice(1)) - 1]) : sql.raw(part)), sql.raw(""))) };
+        const current = await loadWorkflowState(req.params.id, queryAdapter, true);
+        if (input.expectedVersion && current.version !== input.expectedVersion) throw new WorkflowError(409, "This job changed in another session. Your edits are preserved; review the latest job before saving.");
+        if (patch.jobPlanDetails) patch.jobPlanDetails = { ...(current.lead.jobPlanDetails || {}), ...(patch.jobPlanDetails as object), customerConfirmation: current.lead.jobPlanDetails?.customerConfirmation, quoteDelivery: current.lead.jobPlanDetails?.quoteDelivery };
         const [updated] = await tx.update(leads).set(patch as any).where(eq(leads.id, req.params.id)).returning();
+        if (updated) await syncSavedQuote(queryAdapter, updated, current.lead);
         if (!updated || !assignmentFieldsChanged || !payoutSettings) return updated;
 
         const existingRows = await tx.select().from(jobAssignments).where(eq(jobAssignments.leadId, currentLead.id));
@@ -12943,78 +12970,13 @@ Thank you for your business!
       });
       if (!updatedLead) return res.status(404).json({ error: "Lead not found" });
 
-      const plannedCrew = Array.isArray(updatedLead.crewMembers)
-        ? updatedLead.crewMembers.filter(Boolean)
-        : [];
-      const hasCompleteTentativePlan = plannedCrew.length > 0
-        && Boolean(updatedLead.confirmedDate || updatedLead.moveDate)
-        && Boolean(updatedLead.arrivalWindow);
-      const planFingerprint = crypto.createHash("sha256")
-        .update(JSON.stringify({
-          leadId: updatedLead.id,
-          date: updatedLead.confirmedDate || updatedLead.moveDate || null,
-          arrivalWindow: updatedLead.arrivalWindow || null,
-          crewMembers: [...plannedCrew].sort(),
-          crewSize: updatedLead.crewSize || null,
-          confirmedHours: updatedLead.confirmedHours || null,
-          truckConfig: updatedLead.truckConfig || null,
-          jobPlanDetails: updatedLead.jobPlanDetails || null,
-          hasAccessInstructions: Boolean(updatedLead.accessInstructionsCiphertext),
-        }))
-        .digest("hex");
+      await writeLeadHistory(updatedLead.id, currentLead.status, updatedLead.status, actor.id || null,
+        "Job details saved. No customer or crew notification was requested.").catch(error => console.error("[job-setup] history failed:", error));
 
-      const previousCrew = Array.isArray(currentLead.crewMembers) ? currentLead.crewMembers.filter(Boolean) : [];
-      const newlySelectedCrew = plannedCrew.filter((workerId) => !previousCrew.includes(workerId));
-      const currentPlan = {
-        date: currentLead.confirmedDate || currentLead.moveDate || null,
-        arrivalWindow: currentLead.arrivalWindow || null,
-        crewMembers: [...previousCrew].sort(),
-        crewLeadUserId: currentLead.crewLeadUserId || null,
-        crewSize: currentLead.crewSize || null,
-        confirmedHours: currentLead.confirmedHours || null,
-        truckConfig: currentLead.truckConfig || null,
-        trailerRequested: Boolean(currentLead.trailerRequested),
-        workScope: normalizeLaborWorkScope((currentLead.jobPlanDetails as Record<string, unknown> | null)?.workScope),
-      };
-      const updatedPlan = {
-        date: updatedLead.confirmedDate || updatedLead.moveDate || null,
-        arrivalWindow: updatedLead.arrivalWindow || null,
-        crewMembers: [...plannedCrew].sort(),
-        crewLeadUserId: updatedLead.crewLeadUserId || null,
-        crewSize: updatedLead.crewSize || null,
-        confirmedHours: updatedLead.confirmedHours || null,
-        truckConfig: updatedLead.truckConfig || null,
-        trailerRequested: Boolean(updatedLead.trailerRequested),
-        workScope: normalizeLaborWorkScope((updatedLead.jobPlanDetails as Record<string, unknown> | null)?.workScope),
-      };
-      const operationalPlanChanged = JSON.stringify(currentPlan) !== JSON.stringify(updatedPlan);
-      const shouldNotifyCrew = hasCompleteTentativePlan && operationalPlanChanged;
-      await writeLeadHistory(
-        updatedLead.id,
-        currentLead.status,
-        updatedLead.status || currentLead.status || "updated",
-        actor.id || null,
-        shouldNotifyCrew
-          ? `Job Setup saved; assigned crew notified of tentative plan for ${updatedPlan.date}, ${updatedPlan.arrivalWindow}.`
-          : "Job Setup saved for audit; no customer or crew notification was sent.",
-      ).catch((historyError) => {
-        console.error("[lead_history] Job Setup audit write failed:", historyError);
-      });
-      if (shouldNotifyCrew) {
-        await emitJobEvent(newlySelectedCrew.length > 0 ? "crew_selected" : "crew_plan_saved", updatedLead, {
-          actorId: actor.id || null,
-          source: "lead_setup_save",
-          eventId: `${newlySelectedCrew.length > 0 ? "crew-selected" : "crew-plan"}:${planFingerprint}`,
-          previousStatus: currentLead.status,
-          status: updatedLead.status,
-          note: newlySelectedCrew.length > 0 ? "Crew members selected for the job" : "Tentative crew plan saved",
-          extra: { changedKeys: Object.keys(patch) },
-        });
-      }
-
-      return res.json(updatedLead);
+      return res.json(canManageSetup ? updatedLead : { id: updatedLead.id, saved: true });
     } catch (error) {
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.issues[0]?.message || "Invalid job setup" });
+      if (error instanceof WorkflowError) return res.status(error.status).json({ error: error.message, blockers: error.blockers });
       console.error("Error saving job setup:", error);
       return res.status(500).json({ error: "Failed to save job setup" });
     }
@@ -15443,7 +15405,22 @@ Thank you for your business!
   // internal notes, staff details, payouts, and customer contact information.
   app.get("/api/quote-orders/:id", async (req, res) => {
     try {
-      const token = readPublicQuoteToken(typeof req.query.token === "string" ? req.query.token : null);
+      const rawToken = typeof req.query.token === "string" ? req.query.token : "";
+      const workflowToken = readWorkflowQuoteToken(rawToken);
+      if (workflowToken && workflowToken.leadId === req.params.id) {
+        const { lead: savedLead, row, quote } = await loadWorkflowState(req.params.id);
+        if (!row || row.id !== workflowToken.quoteId || !quote.matches || !["approved", "sent"].includes(row.status) || savedLead.archivedAt || ["closed", "cancelled"].includes(savedLead.status)) return res.status(404).json({ error: "Quote order not found" });
+        const lines = [...quote.lines, ...(quote.addOns || []), ...(quote.discount > 0 ? [{ name: "Discount", quantity: 1, total: -quote.discount }] : [])];
+        const invoice = await pool.query("SELECT payload FROM customer_job_events WHERE event_key=$1", ["workflow-invoice:" + row.id]);
+        return res.json({ order: {
+          id: savedLead.id, orderNumber: savedLead.orderNumber, customerName: [savedLead.firstName,savedLead.lastName].filter(Boolean).join(" "),
+          serviceType: savedLead.serviceType, status: savedLead.status, confirmedDate: savedLead.confirmedDate,
+          moveDate: savedLead.moveDate, arrivalWindow: savedLead.arrivalWindow, crewSize: savedLead.crewSize, confirmedHours: savedLead.confirmedHours,
+          fromAddress: savedLead.confirmedFromAddress || savedLead.fromAddress, toAddress: savedLead.confirmedToAddress || savedLead.toAddress,
+          totalPrice: quote.invoiceTotal ?? quote.total, lineItems: lines, quoteRevisionId: row.id, paymentUrl: invoice.rows[0]?.payload?.paymentUrl || null,
+        } });
+      }
+      const token = readPublicQuoteToken(rawToken);
       if (!token || token.leadId !== req.params.id) {
         return res.status(404).json({ error: "Quote order not found" });
       }
@@ -15526,332 +15503,22 @@ Thank you for your business!
   // Send quote to customer via email + SMS
   app.post("/api/leads/:id/send-quote", isAuthenticated, async (req: any, res) => {
     try {
-      const { id } = req.params;
-      const { message, deliveryMethod, recordSmsConsent } = req.body as {
-        message?: string;
-        deliveryMethod?: CustomerQuoteDeliveryMethod;
-        recordSmsConsent?: boolean;
-      };
-      const actorId = (req.session as any)?.userId ?? req.user?.id ?? null;
-      const actor = actorId ? await storage.getUser(actorId) : null;
-      if (!actor || !(await userCanApproveQuotes(actor))) {
-        return res.status(403).json({ error: "Gold authority or business-owner access is required to send quotes." });
-      }
-      const actorIsOwner = actor.role === "business_owner"
-        || actor.email === "upmichiganstatemovers@gmail.com";
-
-      const lead = await storage.getLead(id);
-      if (!lead) return res.status(404).json({ error: "Lead not found" });
-      const approvedQuote = await getLatestApprovedQuote(id);
-      if (!approvedQuote) {
-        return res.status(409).json({ error: "Approve a quote revision before sending it to the customer." });
-      }
-      if ((approvedQuote.travelEligibility as any)?.requiresOwner === true && !actorIsOwner) {
-        return res.status(403).json({ error: "Only the business owner may send this travel exception quote." });
-      }
-
-      const requestedDelivery = (["email", "sms", "both"] as const).includes(deliveryMethod as CustomerQuoteDeliveryMethod)
-        ? deliveryMethod as CustomerQuoteDeliveryMethod
-        : (isSyntheticOrInvalidCustomerEmail(lead.email) && lead.phone ? "sms" : "email");
-
-      const requiredJobDetails = [
-        !lead.firstName?.trim() || !lead.lastName?.trim() ? "customer name" : null,
-        !lead.confirmedDate?.trim() ? "confirmed date" : null,
-        !lead.arrivalWindow?.trim() ? "arrival window" : null,
-        !lead.fromAddress?.trim() ? "pickup or service address" : null,
-        /(?:moving|residential|commercial|delivery)/i.test(String(lead.serviceType || "")) && !lead.toAddress?.trim()
-          ? "drop-off address"
-          : null,
-        includesEmailDelivery(requestedDelivery) && isSyntheticOrInvalidCustomerEmail(lead.email) ? "valid customer email" : null,
-      ].filter(Boolean);
-      if (requiredJobDetails.length > 0) {
-        return res.status(400).json({ error: `Complete the ${requiredJobDetails.join(", ")} before sending a quote or invoice.` });
-      }
-
-      if (includesSmsDelivery(requestedDelivery)) {
-        if (!lead.phone?.trim()) {
-          return res.status(400).json({ error: "A phone number is required before sending this quote by text message." });
-        }
-        if (!lead.smsConsent && !recordSmsConsent) {
-          return res.status(400).json({ error: "Record the customer's verbal SMS consent before sending a quote by text." });
-        }
-        if (!lead.smsConsent && recordSmsConsent) {
-          await recordVerbalSmsConsent(id, actorId);
-        }
-      }
-
-      const price = approvedQuote.customerTotal;
-      if (!price || price <= 0) {
-        return res.status(400).json({ error: "A quote total must be set before sending. Please build the quote first." });
-      }
-
-      const customerName = `${lead.firstName} ${lead.lastName}`;
-      const serviceLabel = lead.serviceType
-        ? lead.serviceType.charAt(0).toUpperCase() + lead.serviceType.slice(1).replace(/_/g, " ")
-        : "Moving";
-      const totalFormatted = `$${price.toFixed(2)}`;
-      const crewLine = lead.crewSize ? `${lead.crewSize} mover${lead.crewSize !== 1 ? "s" : ""}` : null;
-      const dateLine = lead.confirmedDate || lead.moveDate || null;
-      const windowLine = lead.arrivalWindow || null;
-      const orderLabel = lead.orderNumber != null ? `JC-${lead.orderNumber}` : null;
-      const now = new Date();
-      const quoteAccessToken = createPublicQuoteToken(id, now);
-      const quoteAccessUrl = `${getAppUrl()}/quote-order/${encodeURIComponent(id)}?token=${encodeURIComponent(quoteAccessToken)}`;
-
-      // ── Optional: create a Square invoice silently (no Square delivery email) ──
-      const { squareInvoiceService } = await import('./services/square-invoice');
-      // Re-use existing payment URL if one was already created (avoids duplicate invoices on re-send)
-      // Reuse a link only when re-sending the same already-sent revision.
-      // A newly approved revision must refresh payment at its new total.
-      const existingPaymentUrl = approvedQuote.status === "sent" ? lead.squarePaymentUrl ?? null : null;
-      let squarePaymentUrl: string | null = existingPaymentUrl;
-      let squareInvoiceCreated = false;
-      let pendingShopCardLines: Array<{ id: string; name: string; unitPrice: number; qty: number }> = [];
-      if (!existingPaymentUrl && squareInvoiceService.isConfigured()) {
-        try {
-          // Preserve the approved quote revision as real invoice lines. The
-          // Square order is reconciled to the approved total before it can be
-          // published, so catalog mappings cannot silently change the price.
-          const lineItems: Array<{ id?: string; name: string; qty: number; unitPrice: number; total: number; excludeFromBundleDiscount?: boolean }> =
-            (approvedQuote.lineItems || []).map((line) => ({
-              id: line.serviceCode || line.id,
-              name: line.name,
-              qty: Math.max(1, Number(line.quantity) || 1),
-              unitPrice: Number(line.unitPrice) || (Number(line.total) / Math.max(1, Number(line.quantity) || 1)),
-              total: Number(line.total) || 0,
-              excludeFromBundleDiscount: line.discountEligible === false,
-            }));
-          if (lineItems.length === 0) {
-            lineItems.push({ name: `${serviceLabel} — ${customerName}`, qty: 1, unitPrice: price, total: price });
-          }
-          const quoteGrossTarget = approvedQuote.customerTotal + approvedQuote.discountTotal;
-          const currentGross = lineItems.reduce((sum, line) => sum + line.unitPrice * line.qty, 0);
-          const quoteAdjustment = Math.round((quoteGrossTarget - currentGross) * 100) / 100;
-          const quoteReconciliationDiscount = Math.max(0, -quoteAdjustment);
-          if (quoteAdjustment > 0.01) {
-            lineItems.push({
-              name: "Approved quote adjustment",
-              qty: 1,
-              unitPrice: quoteAdjustment,
-              total: quoteAdjustment,
-              excludeFromBundleDiscount: true,
-            });
-          }
-          try {
-            const { rows: grantRows } = await pool.query<{
-              id: string; addon_id: string; amount_usd: string; metadata: any;
-            }>(
-              `SELECT id, addon_id, amount_usd, metadata
-                 FROM wallet_credit_grants
-                WHERE source_type = 'lead' AND source_id = $1 AND status = 'pending'`,
-              [id],
-            );
-            pendingShopCardLines = grantRows.map(g => ({
-              id: g.id,
-              name: (g.metadata?.name as string) || "JCMOVES Shop Card",
-              unitPrice: parseFloat(g.amount_usd),
-              qty: 1,
-            }));
-            for (const li of pendingShopCardLines) {
-              lineItems.push({
-                name: li.name,
-                qty: 1,
-                unitPrice: li.unitPrice,
-                total: li.unitPrice,
-                excludeFromBundleDiscount: true,
-              });
-            }
-          } catch (grantErr) {
-            console.error("[send-quote] failed to load pending shop-card grants:", (grantErr as Error).message);
-          }
-          const invoiceResult = await squareInvoiceService.createItemizedInvoiceForLead(
-            lead,
-            lineItems,
-            undefined,
-            "none",   // SHARE_MANUALLY: creates invoice but Square sends NO email/SMS
-            {
-              purpose: "legacy_unknown",
-              quoteRevisionId: approvedQuote.id,
-              pricingRevision: approvedQuote.pricingVersionCode,
-              discounts: [
-                ...(approvedQuote.discountTotal > 0
-                  ? [{ code: "APPROVED_QUOTE_DISCOUNT", name: "Eligible discounts", amount: approvedQuote.discountTotal }]
-                  : []),
-                ...(quoteReconciliationDiscount > 0.01
-                  ? [{ code: "QUOTE_RECONCILIATION", name: "Approved quote adjustment", amount: quoteReconciliationDiscount }]
-                  : []),
-              ],
-              expectedTotal: price + pendingShopCardLines.reduce((sum, line) => sum + line.unitPrice * line.qty, 0),
-              idempotencyKey: `quote-${approvedQuote.id}`,
-              description: `${serviceLabel} approved quote`,
-            },
-          );
-          squarePaymentUrl = invoiceResult.invoiceUrl || null;
-          squareInvoiceCreated = true;
-          if (squarePaymentUrl) {
-            await pool.query(`UPDATE leads SET square_payment_url = $1 WHERE id = $2`, [squarePaymentUrl, id]);
-          }
-          if (invoiceResult.squareInvoiceId && pendingShopCardLines.length > 0) {
-            try {
-              const { attachInvoiceToGrants } = await import("./services/bundleBilling");
-              await attachInvoiceToGrants({
-                sourceType: "lead",
-                sourceId: id,
-                squareInvoiceId: invoiceResult.squareInvoiceId,
-              });
-            } catch (attachErr) {
-              console.error("[send-quote] attachInvoiceToGrants failed:", (attachErr as Error).message);
-            }
-          }
-        } catch (sqErr) {
-          console.error("Square invoice creation error (non-fatal, sending quote anyway):", sqErr);
-        }
-      }
-
-      // Build email HTML — show service line, shop-card add-ons, and grand total
-      // separately when bundle add-ons are billed alongside the service quote.
-      const shopCardSubtotal = pendingShopCardLines.reduce((sum, li) => sum + li.unitPrice * li.qty, 0);
-      const grandTotal = price + shopCardSubtotal;
-      const grandTotalFormatted = `$${grandTotal.toFixed(2)}`;
-      const shopCardRows = pendingShopCardLines.map(li =>
-        `<tr><td style="color:#888;padding:4px 0">+ ${li.name}</td><td style="font-weight:600;padding:4px 8px;color:#16a34a">$${(li.unitPrice * li.qty).toFixed(2)}</td></tr>`
-      ).join("");
-      const totalRow = pendingShopCardLines.length > 0
-        ? `<tr><td style="color:#888;padding:4px 0">Service total</td><td style="font-weight:600;padding:4px 8px">${totalFormatted}</td></tr>${shopCardRows}<tr><td style="color:#888;padding:8px 0;border-top:1px solid #eee">Invoice total</td><td style="font-weight:700;font-size:18px;color:#f97316;padding:8px 8px;border-top:1px solid #eee">${grandTotalFormatted}</td></tr>`
-        : `<tr><td style="color:#888;padding:4px 0">Quote total</td><td style="font-weight:700;font-size:18px;color:#f97316;padding:4px 8px">${totalFormatted}</td></tr>`;
-      const detailRows = [
-        orderLabel ? `<tr><td style="color:#888;padding:4px 0">Order #</td><td style="font-weight:700;padding:4px 8px;color:#3b82f6;font-family:monospace">${orderLabel}</td></tr>` : "",
-        `<tr><td style="color:#888;padding:4px 0">Service</td><td style="font-weight:600;padding:4px 8px">${serviceLabel}</td></tr>`,
-        crewLine ? `<tr><td style="color:#888;padding:4px 0">Crew</td><td style="font-weight:600;padding:4px 8px">${crewLine}</td></tr>` : "",
-        dateLine ? `<tr><td style="color:#888;padding:4px 0">Estimated date</td><td style="font-weight:600;padding:4px 8px">${dateLine}</td></tr>` : "",
-        windowLine ? `<tr><td style="color:#888;padding:4px 0">Arrival window</td><td style="font-weight:600;padding:4px 8px">${windowLine}</td></tr>` : "",
-        totalRow,
-      ].join("");
-
-      const noteSection = message ? `<p style="margin:16px 0;padding:12px;background:#f9f9f9;border-left:3px solid #f97316;border-radius:4px;color:#333">${message}</p>` : "";
-
-      // Pay Online button — only injected when Square invoice was created
-      const payButtonSection = squarePaymentUrl
-        ? `<div style="text-align:center;margin:20px 0">
-             <a href="${squarePaymentUrl}" target="_blank" style="display:inline-block;background:#f97316;color:#fff;font-weight:700;font-size:15px;padding:14px 32px;border-radius:8px;text-decoration:none">
-               Pay Online Now →
-             </a>
-             <p style="margin:8px 0 0;font-size:12px;color:#aaa">Secure payment · Card, bank, or CashApp</p>
-           </div>`
-        : "";
-      const orderButtonSection = `
-        <div style="text-align:center;margin:20px 0 14px">
-          <a href="${quoteAccessUrl}" target="_blank" style="display:inline-block;background:#111827;color:#fff;font-weight:700;font-size:15px;padding:14px 28px;border-radius:8px;text-decoration:none">
-            Review Your Job Order →
-          </a>
-          <p style="margin:8px 0 0;font-size:12px;color:#6b7280">Your schedule, service details, and payment options in one place.</p>
-        </div>`;
-
-      const emailHtml = `
-        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;color:#222">
-          <div style="background:#111827;padding:20px 24px;border-radius:8px 8px 0 0">
-            <h2 style="margin:0;color:#fff;font-size:22px">JC on the Move</h2>
-            <p style="margin:4px 0 0;color:#9ca3af;font-size:14px">JOB ORDER · ${orderLabel || "QUOTE READY"}</p>
-          </div>
-          <div style="background:#fff;padding:24px;border:1px solid #eee;border-top:none;border-radius:0 0 8px 8px">
-            <p style="margin:0 0 16px">Hi <strong>${lead.firstName}</strong>,</p>
-            <p style="margin:0 0 16px">Thanks for reaching out! Here's your quote from JC on the Move:</p>
-            <table style="width:100%;border-collapse:collapse;margin-bottom:16px">${detailRows}</table>
-            ${pendingShopCardLines.length > 0 ? `
-              <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:14px;margin:0 0 16px">
-                <p style="margin:0 0 6px;font-weight:700;color:#c2410c;font-size:13px">🛍️ Bundled Shop Card credit included</p>
-                <p style="margin:0;font-size:12px;color:#7c2d12;line-height:1.5">
-                  Your invoice includes ${pendingShopCardLines.map(li => `<strong>${li.name}</strong>`).join(" and ")}. The moment your invoice is paid, the equivalent JCMOVES USD lands in your wallet — spend it on any future JC on the Move service (moving, junk, cleaning, lawn, trash valet, or Ashley's Shop) at $1 = $1 off.
-                </p>
-              </div>
-            ` : ""}
-            ${noteSection}
-            ${orderButtonSection}
-            ${payButtonSection}
-            <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:16px;text-align:center;margin-top:16px">
-              <p style="margin:0 0 8px;font-weight:600;color:#c2410c">${squarePaymentUrl ? "Or call / text us:" : "To confirm your booking:"}</p>
-              <p style="margin:0;font-size:18px;font-weight:700;color:#f97316">Call or text (906) 285-9312</p>
-            </div>
-            <p style="margin-top:20px;font-size:12px;color:#999">JC on the Move · Serving the Upper Peninsula</p>
-          </div>
-        </div>
-      `;
-
-      let emailSent = false;
-
-      if (includesEmailDelivery(requestedDelivery)) {
-      try {
-        emailSent = await sendEmail({
-          to: lead.email,
-          from: "jconthemove@gmail.com",
-          subject: `Your JC on the Move Quote${orderLabel ? ` — Order ${orderLabel}` : ""} — ${serviceLabel}`,
-          html: emailHtml,
-          text: `Hi ${lead.firstName}, your JC on the Move quote is ready${orderLabel ? ` (Order ${orderLabel})` : ""}: ${totalFormatted} total for ${serviceLabel}${crewLine ? `, ${crewLine}` : ""}${dateLine ? `, on ${dateLine}` : ""}${windowLine ? `, arriving ${windowLine}` : ""}. Review your job order: ${quoteAccessUrl}${squarePaymentUrl ? ` Pay online: ${squarePaymentUrl}` : ""} Or call / text (906) 285-9312 to confirm. — JC on the Move`,
-        });
-      } catch (err) {
-        console.error("Quote email send error:", err);
-      }
-      if (!emailSent) {
-        return res.status(502).json({
-          error: "The approved quote and payment link were saved, but the email was not delivered. The quote remains approved and can be retried.",
-          quoteRevisionId: approvedQuote.id,
-          paymentUrl: squarePaymentUrl,
-        });
-      }
-      }
-
-      let smsSent = false;
-      if (includesSmsDelivery(requestedDelivery)) {
-        if (!squarePaymentUrl) {
-          return res.status(503).json({ error: "Square did not return a payment link. The quote was not texted; retry after Square is available." });
-        }
-        const sms = await smsService.sendSMS(
-          lead.phone,
-          `Hi ${lead.firstName}, your JC ON THE MOVE quote is ${totalFormatted} for ${serviceLabel}. View your job order: ${quoteAccessUrl}\nPay securely: ${squarePaymentUrl}${message ? `\n\n${message}` : ""}`,
-        );
-        if (!sms.success) {
-          return res.status(502).json({ error: `The Square invoice was created, but the text message was not sent: ${sms.error || "unknown SMS error"}` });
-        }
-        smsSent = true;
-      }
-
-      await pool.query(`UPDATE leads SET quote_sent_at = $1 WHERE id = $2`, [now, id]);
-      await markQuoteRevisionSent({ quoteId: approvedQuote.id, actorUserId: actorId, sentAt: now });
-      const transitionableStatuses = ["new", "quote_requested", "chatbot_pending"];
-      if (transitionableStatuses.includes(lead.status)) {
-        await storage.updateLeadStatus(id, "quoted");
-        await writeLeadHistory(id, lead.status, "quoted", actorId, "Quote sent to customer");
-      }
-
-      // Invalidate cache so frontend refreshes
-      const updatedLead = await storage.getLead(id);
-      if (updatedLead) {
-        await emitJobEvent("quote_sent", updatedLead, {
-          actorId,
-          source: "lead_send_quote",
-          previousStatus: lead.status,
-          status: updatedLead.status,
-          note: "Quote sent to customer.",
-          extra: {
-            quoteSentAt: now.toISOString(),
-            emailSent,
-            smsSent,
-            deliveryMethod: requestedDelivery,
-            squareInvoiceCreated,
-            paymentUrl: squarePaymentUrl,
-            quoteTotal: price,
-            invoiceTotal: grandTotal,
-            shopCardSubtotal,
-          },
-        });
-      }
-      res.json({ success: true, quoteSentAt: now.toISOString(), quoteRevisionId: approvedQuote.id, emailSent, smsSent, deliveryMethod: requestedDelivery, squareInvoiceCreated, paymentUrl: squarePaymentUrl, quoteAccessUrl, lead: updatedLead });
+      const actor = await workflowActor(req.currentUser?.id || req.user?.id || req.session?.userId || "");
+      if (!actor?.canApproveStandard) return res.status(403).json({ error: "Quote approval authority is required." });
+      const workflow = await getJobWorkflow(req.params.id, actor);
+      if (!workflow.quote.matches || !["approved", "sent"].includes(workflow.quote.status)) return res.status(409).json({ error: "Review and approve the current quote before sending.", blockers: [{ code: "quote_approval", message: "Review the current quote.", target: "quote" }] });
+      const customer = await storage.getLead(req.params.id);
+      const method = ["email", "sms", "both", "copy"].includes(req.body.deliveryMethod) ? req.body.deliveryMethod : usableEmail(customer?.email || "") ? "email" : workflow.capabilities.sms ? "sms" : "copy";
+      const review = await reviewJobQuote(req.params.id, actor, method);
+      const key = typeof req.body.idempotencyKey === "string" ? req.body.idempotencyKey : crypto.createHash("sha256").update("legacy-quote:" + workflow.quote.id + ":" + method).digest("hex");
+      const result = await approveAndSend(req.params.id, actor, { version: review.version, reviewHash: review.reviewHash, idempotencyKey: key, deliveryMethod: method, message: req.body.message, recordSmsConsent: req.body.recordSmsConsent });
+      return res.json({ ...result, success: true, emailSent: result.delivery.email.status === "sent", smsSent: result.delivery.sms.status === "sent", squareInvoiceCreated: result.delivery.invoice.status === "sent", quoteAccessUrl: result.delivery.quoteAccessUrl });
     } catch (error) {
-      console.error("Error sending quote:", error);
-      res.status(500).json({ error: "Failed to send quote" });
+      if (error instanceof WorkflowError) return res.status(error.status).json({ error: error.message, blockers: error.blockers });
+      console.error("[send-quote] delivery status unavailable:", error);
+      return res.status(500).json({ error: "Quote delivery could not finish. Review delivery status before retrying." });
     }
   });
-
   // Create/reuse a Square payment link for a priced job without changing payout mode.
   // Cash payouts stay manual_pending; this only gives crew/admin a collection link.
   app.post("/api/leads/:id/payment-link", isAuthenticated, requireEmployee, async (req: any, res) => {
@@ -18058,87 +17725,16 @@ Thank you for your business!
   // POST /api/admin/leads/:id/dispatch — send scheduled-job emails to each assigned crew member
   app.post("/api/admin/leads/:id/dispatch", isAuthenticated, requireBusinessOwner, async (req: any, res) => {
     try {
-      const leadId = parseInt(req.params.id);
-      if (isNaN(leadId)) return res.status(400).json({ error: "Invalid lead ID" });
-
-      // Load lead
-      const { rows: leadRows } = await pool.query(
-        `SELECT * FROM leads WHERE id = $1 LIMIT 1`,
-        [leadId]
-      );
-      if (!leadRows.length) return res.status(404).json({ error: "Lead not found" });
-      const lead = leadRows[0];
-
-      // Apply any extra dispatch notes from request body
-      const { dispatchNotes } = req.body || {};
-      if (dispatchNotes !== undefined) {
-        await pool.query(`UPDATE leads SET dispatch_notes = $1 WHERE id = $2`, [dispatchNotes || null, leadId]);
-        lead.dispatch_notes = dispatchNotes;
-      }
-      // Normalise ORM-style field names for the email generator
-      const leadForEmail = {
-        ...lead,
-        confirmedFromAddress: lead.confirmed_from_address,
-        confirmedToAddress:   lead.confirmed_to_address,
-        confirmedDate:        lead.confirmed_date,
-        confirmedHours:       lead.confirmed_hours,
-        arrivalWindow:        lead.arrival_window,
-        serviceType:          lead.service_type,
-        firstName:            lead.first_name,
-        quoteNotes:           lead.quote_notes,
-        dispatchNotes:        lead.dispatch_notes,
-      };
-
-      const crewIds: string[] = Array.isArray(lead.crew_members) ? lead.crew_members : [];
-      if (!crewIds.length) {
-        return res.status(400).json({ error: "No crew members assigned to this job. Assign crew first." });
-      }
-
-      // Look up email addresses for each crew member
-      const { generateWorkerDispatchEmail } = await import('./services/email');
-      const { sendEmail } = await import('./services/email');
-
-      const results: { id: string; name: string; email: string | null; sent: boolean; error?: string }[] = [];
-      const companyEmail = process.env.COMPANY_EMAIL || "michigankid906@gmail.com";
-
-      for (const crewId of crewIds) {
-        const { rows: workerRows } = await pool.query(
-          `SELECT id, email, first_name, last_name, username FROM users WHERE id = $1 LIMIT 1`,
-          [crewId]
-        );
-        const worker = workerRows[0];
-        if (!worker) { results.push({ id: crewId, name: "Unknown", email: null, sent: false, error: "User not found" }); continue; }
-        if (!worker.email) { results.push({ id: crewId, name: worker.first_name || worker.username, email: null, sent: false, error: "No email on file" }); continue; }
-
-        try {
-          const { html, text } = generateWorkerDispatchEmail(leadForEmail, {
-            firstName: worker.first_name,
-            username: worker.username,
-          });
-          const jobDate = leadForEmail.confirmedDate || leadForEmail.move_date || "your upcoming job";
-          const sent = await sendEmail({
-            to: worker.email,
-            from: companyEmail,
-            subject: `JC ON THE MOVE — You're Scheduled: ${jobDate}`,
-            html,
-            text,
-          });
-          results.push({ id: crewId, name: worker.first_name || worker.username, email: worker.email, sent });
-        } catch (err: any) {
-          results.push({ id: crewId, name: worker.first_name || worker.username, email: worker.email, sent: false, error: err.message });
-        }
-      }
-
-      // Mark dispatch timestamp on lead
-      await pool.query(`UPDATE leads SET dispatch_sent_at = NOW() WHERE id = $1`, [leadId]);
-
-      const sentCount = results.filter(r => r.sent).length;
-      const failedCount = results.length - sentCount;
-      console.log(`[dispatch] Lead ${leadId}: ${sentCount} emails sent, ${failedCount} failed — crew: ${crewIds.join(', ')}`);
-      res.json({ success: true, sentCount, failedCount, results });
-    } catch (error: any) {
-      console.error("Error dispatching crew emails:", error);
-      res.status(500).json({ error: "Failed to dispatch crew emails" });
+      const actor = await workflowActor(req.currentUser?.id || req.user?.id || req.session?.userId);
+      if (!actor?.manage) return res.status(403).json({ error: "Job management permission required" });
+      if (typeof req.body?.dispatchNotes === "string") await pool.query("UPDATE leads SET dispatch_notes=$2 WHERE id=$1", [req.params.id, req.body.dispatchNotes.slice(0, 4000)]);
+      const current = await getJobWorkflow(req.params.id, actor);
+      const result = await executeCrewAction(req.params.id, actor, { version: req.body?.version || current.version, action: "dispatch", idempotencyKey: req.body?.idempotencyKey || crypto.randomUUID() });
+      const sentCount = result.notifications.filter(n => n.outcome.status === "sent").length;
+      return res.json({ ...result, success: true, sentCount, failedCount: result.notifications.length - sentCount, results: result.notifications });
+    } catch (error) {
+      if (error instanceof WorkflowError) return res.status(error.status).json({ error: error.message, blockers: error.blockers });
+      return res.status(500).json({ error: "Dispatch could not finish. Review current status before retrying." });
     }
   });
 
@@ -30984,120 +30580,45 @@ Thank you for your business!
         }
       }
 
-      const missingSetup = manualDispatchMissingSetup(lead);
-      if (missingSetup.length) {
-        return res.status(409).json({ error: `Save ${missingSetup.join(", ")} before dispatching.`, missingSetup });
+      const recordOnly = req.body?.dispatch === false;
+      const actor = await workflowActor(user.id);
+      if (!actor?.manage) return res.status(403).json({ error: "Job management permission required" });
+      if (!recordOnly) {
+        const blockers = (await checkWorkflowDispatch(req.params.id)).filter(item => item.code !== "payment_required");
+        if (blockers.length) return res.status(409).json({ error: "Finish dispatch setup first.", blockers });
       }
-
-      // Record 'paid' transition first, then 'dispatched'
-      await db.update(leads)
-        .set({
-          status: "paid" as any,
-          depositPaid: true as any,
-          lastQuoteUpdatedAt: new Date(),
-        })
-        .where(eq(leads.id, req.params.id));
-      await pool.query(
-        `UPDATE leads
-            SET payment_paid_at = COALESCE(payment_paid_at, NOW()),
-                deposit_paid = true
-          WHERE id = $1`,
-        [req.params.id],
-      );
-      try {
-        await writeLeadHistory(req.params.id, lead.status, "paid", user.id, "Payment confirmed by admin");
-      } catch (_) {}
-      await emitJobEvent("job_updated", { ...lead, status: "paid", depositPaid: true } as any, {
-        actorId: user.id,
-        source: "admin_mark_paid",
-        previousStatus: lead.status,
-        status: "paid",
-        note: "Payment confirmed manually. Job is ready for dispatch/payment paperwork.",
-        extra: { paymentReceived: true },
+      const current = await getJobWorkflow(req.params.id, actor);
+      const result = await recordWorkflowPayment(req.params.id, actor, {
+        version: recordOnly ? req.body.expectedVersion : current.version,
+        method: recordOnly ? req.body.method : "cash",
+        attested: recordOnly ? req.body.paymentConfirmed === true : true,
       });
-
-      // Record treasury revenue split on admin payment confirmation
-      const totalPriceUsd = parseFloat(lead.totalPrice || lead.basePrice || "0");
-      if (totalPriceUsd > 0) {
-        await recordRevenueSplit(totalPriceUsd, req.params.id, 'admin_confirmation');
-        await creditJcMovesUsd(req.params.id, totalPriceUsd, 'admin_mark_paid');
-      }
-
-      // Task #199 — admin "mark paid" is also a "payment RECEIVED" signal,
-      // so disburse any pending shop-card wallet grants tied to this lead.
-      // Idempotent inside grantWalletCreditForSource (pending → granted).
+      let accountingPending = false;
       try {
-        const { rows: pendingGrants } = await pool.query<{ source_type: string; source_id: string }>(
-          `SELECT DISTINCT source_type, source_id
-             FROM wallet_credit_grants
-            WHERE source_type = 'lead' AND source_id = $1 AND status = 'pending'`,
-          [req.params.id],
-        );
-        if (pendingGrants.length > 0) {
+        await recordRevenueSplit(result.total, req.params.id, "admin_confirmation");
+        await creditJcMovesUsd(req.params.id, result.total, "admin_mark_paid");
+        const { rows: pendingGrants } = await pool.query("SELECT DISTINCT source_id FROM wallet_credit_grants WHERE source_type='lead' AND source_id=$1 AND status='pending'", [req.params.id]);
+        if (pendingGrants.length) {
           const { grantWalletCreditForSource } = await import("./services/bundleBilling");
-          for (const src of pendingGrants) {
-            await grantWalletCreditForSource({
-              sourceType: 'lead',
-              sourceId: src.source_id,
-              paymentReference: `admin_mark_paid:${user.id}`,
-            });
-          }
+          for (const grant of pendingGrants) await grantWalletCreditForSource({ sourceType: "lead", sourceId: grant.source_id, paymentReference: "admin_mark_paid:" + req.params.id });
         }
-      } catch (grantErr) {
-        console.error("[admin mark-paid] shop-card grant disbursement failed:", (grantErr as Error).message);
+      } catch (error) {
+        accountingPending = true;
+        console.error("[job-workflow] Payment recorded; accounting reconciliation pending:", error);
       }
-
-      await db.update(leads)
-        .set({ status: "dispatched" as any, lastQuoteUpdatedAt: new Date() })
-        .where(eq(leads.id, req.params.id));
+      if (recordOnly) return res.json({ ...result, success: true, dispatched: false, accountingPending });
+      // Compatibility callers retain the explicit paid-and-dispatch operation,
+      // while all readiness and notification effects use the shared service.
       try {
-        await writeLeadHistory(req.params.id, "paid", "dispatched", user.id, "Crew dispatched by admin");
-      } catch (_) {}
-      const dispatchedLead = await storage.getLead(req.params.id);
-      if (dispatchedLead) {
-        await emitJobEvent("crew_assigned", dispatchedLead, {
-          actorId: user.id,
-          source: "admin_mark_paid_dispatch",
-          previousStatus: "paid",
-          status: "dispatched",
-          note: "Crew dispatched after admin payment confirmation.",
-        });
+        const updated = await getJobWorkflow(req.params.id, actor);
+        const dispatch = await executeCrewAction(req.params.id, actor, { version: updated.version, action: "dispatch", idempotencyKey: req.body?.idempotencyKey || crypto.randomUUID() });
+        return res.json({ ...result, ...dispatch, success: true, status: "dispatched", accountingPending });
+      } catch (error) {
+        return res.json({ ...result, success: true, dispatched: false, accountingPending, dispatchError: error instanceof Error ? error.message : "Review dispatch readiness" });
       }
-
-      // Email assigned crew members if any
-      const crewIds: string[] = (lead.crewMembers as string[] | null) || [];
-      const emailResults: any[] = [];
-      if (crewIds.length > 0) {
-        for (const crewId of crewIds) {
-          try {
-            const crewMember = await storage.getUser(crewId);
-            if (crewMember?.email) {
-              const customerName = `${lead.firstName || ""} ${lead.lastName || ""}`.trim();
-              const sent = await sendNotificationEmail(
-                crewMember.email,
-                `JC ON THE MOVE — Dispatch Alert: New Job Assigned`,
-                `<h2>You've been assigned a job!</h2><p><strong>Customer:</strong> ${customerName}<br><strong>Service:</strong> ${lead.serviceType || "Move"}<br><strong>Date:</strong> ${lead.confirmedDate || lead.moveDate || "TBD"}<br><strong>Pickup:</strong> ${lead.confirmedFromAddress || lead.fromAddress || "TBD"}</p><p>Open the app for full details. Questions? Call Darrell.</p>`
-              );
-              emailResults.push({ crewId, success: sent });
-            }
-          } catch (_) {}
-        }
-      }
-
-      // Also email customer if email available
-      if (lead.email) {
-        try {
-          await sendNotificationEmail(
-            lead.email,
-            "Your JC on the Move Crew Has Been Dispatched!",
-            `<p>Hi ${lead.firstName || "there"}, your JC on the Move crew has been dispatched! They'll reach out before arrival. Questions? Call (906) 222-6009.</p>`
-          );
-        } catch (_) {}
-      }
-
-      res.json({ success: true, status: "dispatched", emailResults });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
+    } catch (error) {
+      if (error instanceof WorkflowError) return res.status(error.status).json({ error: error.message, blockers: error.blockers });
+      return res.status(500).json({ error: "Payment could not be recorded. Review the job before retrying." });
     }
   });
 
@@ -33215,6 +32736,7 @@ Thank you for your business!
   app.use("/api/pricing-training-team", createPricingTrainingTeamRouter(isAuthenticated, requireEmployee, requireBusinessOwner, pool, { reward: rewardTrainingContribution, thank: thankTrainingContributor }));
   app.use("/api", bookingsRouter);
   app.use("/api/rewards/phone", phoneRewardsRouter);
+  app.use("/api", jobWorkflowRouter);
   app.use("/api", quotesRouter);
   app.use("/api", pricingV2Router);
   app.use("/api", commerceCatalogRouter);

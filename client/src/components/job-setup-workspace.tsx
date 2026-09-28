@@ -202,6 +202,8 @@ interface JobSetupWorkspaceProps {
   employees: JobSetupEmployee[];
   canManageSetup: boolean;
   onSaved: () => void;
+  expectedVersion?: string;
+  onDirtyChange?: (dirty: boolean) => void;
   closeoutRepair?: JobCloseoutRepair | null;
   onReturnToCloseout?: () => void;
 }
@@ -210,11 +212,14 @@ interface JobSetupWorkspaceProps {
  * One place to collect the information needed to turn a request into a ready job.
  * Quote selection is staged locally and only becomes real when Save Job Setup is pressed.
  */
-export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, activeSection, onSectionChange, closeoutRepair, onReturnToCloseout }: JobSetupWorkspaceProps) {
+export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, activeSection, onSectionChange, closeoutRepair, onReturnToCloseout, expectedVersion, onDirtyChange }: JobSetupWorkspaceProps) {
   const { toast } = useToast();
   const [draft, setDraft] = useState<SetupDraft>(() => setupDraftFromLead(lead));
   const [quoteDraft, setQuoteDraft] = useState<JobQuoteDraft | null>(() => savedQuote(lead));
   const [quoteDirty, setQuoteDirty] = useState(false);
+  const [recalculateQuote, setRecalculateQuote] = useState(false);
+  const [editingVersion, setEditingVersion] = useState(expectedVersion);
+  const [saveError, setSaveError] = useState("");
   const [quotePricingSource, setQuotePricingSource] = useState<"rate_card_auto" | "manual_override">(
     lead.quoteSnapshot?.manualQuoteOverride ? "manual_override" : "rate_card_auto",
   );
@@ -239,16 +244,6 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (!draft.firstName.trim() || !draft.lastName.trim()) {
-        onSectionChange("customer");
-        window.setTimeout(() => document.getElementById(!draft.firstName.trim() ? "setup-first-name" : "setup-last-name")?.focus(), 0);
-        throw new Error("Enter the customer's first and last name.");
-      }
-      if (!draft.fromAddress.trim()) {
-        onSectionChange("details");
-        window.setTimeout(() => document.getElementById("setup-from-address")?.focus(), 0);
-        throw new Error("Enter the pickup or service address.");
-      }
       if (closeoutRepair === "date" && !isPastJobDate(draft.confirmedDate)) {
         onSectionChange("schedule");
         window.setTimeout(() => document.getElementById("setup-closeout-date")?.focus(), 0);
@@ -259,6 +254,7 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
         || draft.crewLeadUserId !== original.crewLeadUserId
         || JSON.stringify(draft.crewRoles) !== JSON.stringify(original.crewRoles);
       return apiRequest("PATCH", `/api/leads/${lead.id}/setup`, {
+        expectedVersion: editingVersion,
         firstName: draft.firstName.trim(),
         lastName: draft.lastName.trim(),
         email: draft.email.trim(),
@@ -294,12 +290,16 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
       });
     },
     onSuccess: () => {
-      toast({ title: "Job setup saved", description: "Nothing was sent to the customer. Assigned crew are notified only when a complete crew or schedule plan changed." });
+      toast({ title: "Job details saved", description: "No customer or crew messages were sent." });
+      setSaveError("");
       setQuoteDirty(false);
       onSectionChange("");
       onSaved();
     },
     onError: (error: Error) => {
+      let message = error.message;
+      try { message = JSON.parse(message.slice(message.indexOf("{"))).error || message; } catch {}
+      setSaveError(message);
       toast({ title: "Could not save job setup", description: error.message || "Please review the job details and try again.", variant: "destructive" });
     },
   });
@@ -308,7 +308,7 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
   const hasDraftChanges = JSON.stringify(draft) !== JSON.stringify(setupDraftFromLead(lead));
   const savedDraft = setupDraftFromLead(lead);
   // Opening an existing job or correcting its date/crew must preserve its saved price.
-  const needsQuote = !savedQuote(lead)
+  const needsQuote = recalculateQuote || (!savedQuote(lead) && activeSection === "quote")
     || [...PRICED_DRAFT_KEYS].some(key => draft[key] !== savedDraft[key])
     || (Boolean(lead.quoteSnapshot?.manualQuoteOverride) && quotePricingSource === "rate_card_auto");
   useEffect(() => {
@@ -369,7 +369,7 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
       });
       return response.json();
     },
-    enabled: canManageSetup && needsQuote && (activeSection !== "" || hasDraftChanges),
+    enabled: canManageSetup && Boolean(draft.fromAddress.trim()) && needsQuote && (activeSection !== "" || hasDraftChanges),
   });
 
   useEffect(() => {
@@ -435,18 +435,15 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
   const quoteCannotSave = canManageSetup && needsQuote && quotePricingSource === "rate_card_auto" && quotePreviewFailed;
 
   const hasChanges = hasDraftChanges
-    || (quoteDirty && Number(quoteDraft?.totalPrice || 0) !== Number(lead.totalPrice || lead.basePrice || 0))
+    || quoteDirty
     || quotePricingSource !== (lead.quoteSnapshot?.manualQuoteOverride ? "manual_override" : "rate_card_auto");
 
   useUnsavedTask(hasChanges && !saveMutation.isPending);
+  useEffect(() => { onDirtyChange?.(hasChanges); }, [hasChanges, onDirtyChange]);
   const steps = [{id:'customer',label:'Customer'},{id:'details',label:'Service / location'},...(canManageSetup?[{id:'schedule',label:'Schedule / crew'}]:[]),{id:'quote',label:'Review'}];
   const step = activeSection || 'customer';
   const stepIndex = steps.findIndex(item=>item.id===step);
   const changeStep = (next:string) => {
-    if(steps.findIndex(item=>item.id===next)>stepIndex){
-      const missing = !draft.firstName.trim() ? 'setup-first-name' : !draft.lastName.trim() ? 'setup-last-name' : steps.findIndex(item=>item.id===next)>1&&!draft.fromAddress.trim() ? 'setup-from-address' : null;
-      if(missing){onSectionChange(missing==='setup-from-address'?'details':'customer');window.setTimeout(()=>document.getElementById(missing)?.focus(),0);toast({title:'Complete the required fields',variant:'destructive'});return;}
-    }
     onSectionChange(next as JobSetupSection);
   };
   const summary = <dl className="grid gap-2 rounded-xl border p-3 text-sm"><div><dt className="text-muted-foreground">Customer</dt><dd>{draft.firstName} {draft.lastName} · {draft.phone || draft.email || 'No contact supplied'}</dd></div><div><dt className="text-muted-foreground">Location</dt><dd className="break-words">{draft.fromAddress}{draft.toAddress ? ' → '+draft.toAddress : ''}</dd></div>{canManageSetup&&<div><dt className="text-muted-foreground">Schedule / crew</dt><dd>{draft.confirmedDate || 'Date not set'} · {draft.arrivalWindow || 'Arrival not set'} · {draft.crewSize} movers · {draft.confirmedHours} hours</dd></div>}</dl>;
@@ -455,6 +452,7 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
     <Card id="job-setup" className="mb-4 scroll-mt-4 border-blue-500/35 bg-gradient-to-b from-blue-950/20 to-background" data-testid="job-setup-workspace">
       <CardHeader className="px-4 py-3"><CardTitle className="text-base">Edit job</CardTitle></CardHeader>
       <CardContent className="px-4 pb-3 [&_input]:min-h-11 [&_input]:text-base [&_textarea]:text-base [&_button[role=combobox]]:min-h-11 [&_button[role=combobox]]:text-base">
+        {saveError && <p role="alert" className="mb-3 rounded-lg border border-red-500/30 p-3 text-sm text-red-500">{saveError}</p>}
         {closeoutRepair && canManageSetup && <div className="mb-4 space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3" data-testid="closeout-repair-panel">
           <p className="font-semibold">{closeoutRepairs[closeoutRepair].label} to continue closeout</p>
           <p className="text-sm text-muted-foreground">{closeoutRepairs[closeoutRepair].help}</p>
@@ -515,7 +513,7 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
                 {closeoutRepair === "date" ? <><Label htmlFor="setup-closeout-date">Actual job date</Label><Input id="setup-closeout-date" type="date" value={draft.confirmedDate} onChange={event => updateDraft("confirmedDate", event.target.value)} aria-describedby="setup-closeout-date-help" aria-invalid={!isPastJobDate(draft.confirmedDate)} /><p id="setup-closeout-date-help" className="mt-2 text-sm text-amber-400">{isPastJobDate(draft.confirmedDate) ? "Save this correction to return to closeout." : "Choose the actual date the work took place, before today in Central time."}</p></>
                   : <><Label>Confirmed Job Date</Label><DatePicker value={draft.confirmedDate || undefined} onChange={(value) => updateDraft("confirmedDate", value || "")} placeholder="Pick a confirmed job date" /></>}
               </div>
-              <div><Label>Arrival Window</Label><Select value={draft.arrivalWindow || undefined} onValueChange={(value) => updateDraft("arrivalWindow", value)}><SelectTrigger><SelectValue placeholder="Select arrival window" /></SelectTrigger><SelectContent>{draft.arrivalWindow && !isHourlyJobArrivalWindow(draft.arrivalWindow) && <SelectItem value={draft.arrivalWindow}>Current legacy window: {draft.arrivalWindow}</SelectItem>}{JOB_SCHEDULE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div>
+              <div><Label htmlFor="setup-arrival-window">Arrival Window</Label><Select value={draft.arrivalWindow || undefined} onValueChange={(value) => updateDraft("arrivalWindow", value)}><SelectTrigger id="setup-arrival-window"><SelectValue placeholder="Select arrival window" /></SelectTrigger><SelectContent>{draft.arrivalWindow && !isHourlyJobArrivalWindow(draft.arrivalWindow) && <SelectItem value={draft.arrivalWindow}>Current legacy window: {draft.arrivalWindow}</SelectItem>}{JOB_SCHEDULE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div>
               <div><Label>Work Scope</Label><Select value={draft.workScope} onValueChange={(value) => updateDraft("workScope", value as LaborWorkScope)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="load_only">Loading only</SelectItem><SelectItem value="unload_only">Unloading only</SelectItem><SelectItem value="load_unload">Load + unload</SelectItem></SelectContent></Select></div>
               <div><Label>Truck</Label><Select value={draft.truckConfig} onValueChange={(value) => updateDraft("truckConfig", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="no_truck">Labor only — no truck</SelectItem><SelectItem value="company_truck">JC truck (+rate-card truck fee)</SelectItem><SelectItem value="customer_truck">Customer truck</SelectItem></SelectContent></Select></div>
               <label className="flex items-center gap-3 rounded-lg border p-3 text-sm"><Checkbox checked={draft.trailerRequested} onCheckedChange={(value) => updateDraft("trailerRequested", value === true)} />Trailer (+rate-card trailer fee)</label>
@@ -558,6 +556,7 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
                   <p className="text-2xl font-bold text-emerald-300">${quoteTotal.toFixed(2)}</p>
                 </div>
 
+                {!needsQuote && <Button type="button" variant="outline" className="mt-3" onClick={() => setRecalculateQuote(true)}>Recalculate from saved details</Button>}
                 {quotePricingSource === "manual_override" ? (
                   <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => setQuotePricingSource("rate_card_auto")}>Replace with current rate-card quote</Button>
                 ) : autoQuotePreview ? (
@@ -587,9 +586,9 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
             <Button type="button" className="min-h-11 whitespace-normal" disabled={!hasChanges || saveMutation.isPending || quoteIsUpdating || quoteCannotSave || (closeoutRepair === "date" && !isPastJobDate(draft.confirmedDate))}
               onClick={() => saveMutation.mutate()} data-testid="button-save-return-closeout">{saveMutation.isPending ? "Saving…" : "Save and return to closeout"}</Button>
           </> : <>
-          <Button type="button" variant="outline" className="min-h-11" onClick={() => { setDraft(setupDraftFromLead(lead)); setQuoteDraft(savedQuote(lead)); setQuoteDirty(false); setQuotePricingSource(lead.quoteSnapshot?.manualQuoteOverride ? "manual_override" : "rate_card_auto"); }} disabled={saveMutation.isPending}>Reset</Button>
+          <Button type="button" variant="outline" className="min-h-11" onClick={() => { setEditingVersion(expectedVersion); setRecalculateQuote(false); setSaveError(""); setDraft(setupDraftFromLead(lead)); setQuoteDraft(savedQuote(lead)); setQuoteDirty(false); setQuotePricingSource(lead.quoteSnapshot?.manualQuoteOverride ? "manual_override" : "rate_card_auto"); }} disabled={saveMutation.isPending}>Reset</Button>
           {stepIndex>0&&<Button type="button" variant="outline" disabled={saveMutation.isPending} onClick={()=>changeStep(steps[stepIndex-1].id)}>Back</Button>}
-          {step!=='quote'?<Button type="button" disabled={saveMutation.isPending} onClick={()=>changeStep(steps[stepIndex+1].id)}>Next</Button>:<Button type="button" onClick={() => saveMutation.mutate()} disabled={!hasChanges || saveMutation.isPending || quoteIsUpdating || quoteCannotSave} className="min-h-11 bg-blue-600 hover:bg-blue-700" data-testid="button-save-job-setup">{saveMutation.isPending || quoteIsUpdating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}{quoteIsUpdating ? "Updating Quote" : "Save changes"}</Button>}
+          <Button type="button" onClick={() => saveMutation.mutate()} disabled={!hasChanges || saveMutation.isPending || quoteIsUpdating || quoteCannotSave} className="min-h-11 bg-blue-600 hover:bg-blue-700" data-testid="button-save-job-setup">{saveMutation.isPending || quoteIsUpdating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}{quoteIsUpdating ? "Updating Quote" : "Save and return"}</Button>
           </>}
         </TaskActionBar>
       </CardContent>

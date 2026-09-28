@@ -150,3 +150,15 @@ test("visibility metadata explains every locked group and tier", () => {
   assert.ok(visibility.locked.some((item) => item.key === "pricing" && item.unlockAt === "Gold"));
   assert.ok(visibility.locked.some((item) => item.key === "payment" && item.unlockAt === "Platinum"));
 });
+
+test("workflow links, receipts and staff attestations stay out of crew projections", () => {
+  const privateOrder = { ...order, flow: { ...order.flow, operations: { delivery: { quoteAccessUrl: "private-quote-link" } } }, jobPlanDetails: { inventory: "boxes", customerConfirmation: { note: "private attestation" }, quoteDelivery: { quoteAccessUrl: "private-quote-link" }, paymentReceipt: { amount: 500, actorId: "owner" } } };
+  for (const tier of ["worker", "silver", "gold", "platinum"]) {
+    const visible = projectWorkerOrder(privateOrder, tier, "assigned");
+    assert.equal(visible.flow.operations, undefined);
+    assert.equal(visible.jobPlanDetails?.customerConfirmation, undefined);
+    assert.equal(visible.jobPlanDetails?.quoteDelivery, undefined);
+    assert.equal(visible.jobPlanDetails?.paymentReceipt, undefined);
+  }
+  assert.deepEqual(projectWorkerOrder(privateOrder, "platinum", "admin").jobPlanDetails, privateOrder.jobPlanDetails);
+});

@@ -48,6 +48,7 @@ export type JobPayoutSummary = {
 };
 
 export type JobFlow = {
+  operations?: import("./job-workflow").JobWorkflow;
   stage: JobFlowStage;
   label: string;
   nextAction: {

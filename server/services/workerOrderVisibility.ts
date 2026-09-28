@@ -103,6 +103,7 @@ function hiddenFlow(flow: any, visibility: WorkerOrderVisibility) {
   if (!flow || typeof flow !== "object") return flow;
   return {
     ...flow,
+    operations: undefined,
     ...(visibility.pricing ? {} : { quote: { ready: false, sent: false } }),
     ...(visibility.payment ? {} : { payment: { key: "restricted", label: "Payment details restricted" } }),
     ...(visibility.payment ? {} : {
@@ -135,6 +136,12 @@ export function projectWorkerOrder<T extends Record<string, any>>(
     ...withoutRawAccessCiphertext(record),
     workerVisibility: visibility,
   };
+  // Operational sharing links and staff agreement notes are never part of a
+  // crew order, even when that worker can see the physical work scope.
+  if (result.jobPlanDetails) {
+    const { customerConfirmation, quoteDelivery, paymentReceipt, ...scope } = result.jobPlanDetails;
+    result.jobPlanDetails = scope;
+  }
 
   if (!visibility.customerIdentity) {
     result.firstName = null;
