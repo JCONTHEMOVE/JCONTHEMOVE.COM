@@ -181,7 +181,7 @@ try {
     await input(document.getElementById("setup-closeout-date"), "2026-01-01");
     patchHandler = () => response({ error: "Schedule could not be saved" }, 409);
     await click(byTestId("button-save-return-closeout"));
-    await until(() => byTestId("closeout-repair-panel")?.textContent.includes("Schedule could not be saved"), "save error next to correction");
+    await until(() => byTestId("job-setup-workspace")?.querySelector("[role='alert']")?.textContent.includes("Schedule could not be saved"), "save error next to correction");
     assert.equal(byTestId("admin-payment-dialog"), null);
     assert.equal(document.getElementById("setup-closeout-date").value, "2026-01-01");
     await click(button("Return without saving"));

@@ -19,7 +19,7 @@ export function TaskDetails({title,children,defaultOpen=false}:{title:string;chi
 export function RewardsLink(){return <Link href="/marketplace?view=crew" className="inline-flex min-h-11 items-center text-sm font-semibold text-blue-400 underline">Rewards</Link>;}
 
 export function TaskStepNav({steps,value,onChange,disabled=false}:{steps:{id:string;label:string}[];value:string;onChange:(id:string)=>void;disabled?:boolean}) {
-  return <nav aria-label="Form steps" className="mb-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">{steps.map((step,index)=><Button key={step.id} type="button" variant={step.id===value?'default':'outline'} disabled={disabled} aria-current={step.id===value?'step':undefined} className="min-h-11 justify-start text-sm" onClick={()=>onChange(step.id)}>{index+1}. {step.label}</Button>)}</nav>;
+  return <nav aria-label="Form steps" className="mb-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">{steps.map((step,index)=><Button key={step.id} type="button" variant={step.id===value?'default':'outline'} disabled={disabled} aria-current={step.id===value?'step':undefined} className="h-auto min-h-11 min-w-0 justify-start whitespace-normal text-left text-sm" onClick={()=>onChange(step.id)}>{index+1}. {step.label}</Button>)}</nav>;
 }
 
 export function TaskActionBar({children}:{children:ReactNode}) {

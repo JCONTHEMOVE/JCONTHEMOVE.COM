@@ -551,7 +551,7 @@ export default function LeadDetailPage() {
   const [setupSection, setSetupSection] = useState<JobSetupSection>("");
   const [closeoutRepair, setCloseoutRepair] = useState<{ leadId: string; target: JobCloseoutRepair } | null>(null);
   const [closeoutResume, setCloseoutResume] = useState({ leadId: "", key: 0 });
-  const repairTarget = closeoutRepair?.leadId === params?.id ? closeoutRepair.target : null;
+  const repairTarget = closeoutRepair && closeoutRepair.leadId === params?.id ? closeoutRepair.target : null;
   const jobSetupRef = useRef<HTMLDivElement>(null);
 
   const openJobSetup = (section: JobSetupSection = "customer", fieldId?: string) => {

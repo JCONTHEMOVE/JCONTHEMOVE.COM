@@ -459,13 +459,6 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
           <p className="font-semibold">{closeoutRepairs[closeoutRepair].label} to continue closeout</p>
           <p className="text-sm text-muted-foreground">{closeoutRepairs[closeoutRepair].help}</p>
           <p className="text-xs text-muted-foreground">Saving returns you to payment review. You will still confirm payment and completion there.</p>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" className="min-h-11 whitespace-normal" disabled={!hasChanges || saveMutation.isPending || quoteIsUpdating || quoteCannotSave || (closeoutRepair === "date" && !isPastJobDate(draft.confirmedDate))}
-              onClick={() => saveMutation.mutate()} data-testid="button-save-return-closeout">{saveMutation.isPending ? "Saving…" : "Save and return to closeout"}</Button>
-            <Button type="button" variant="outline" className="min-h-11 whitespace-normal" disabled={saveMutation.isPending}
-              onClick={onReturnToCloseout}>Return without saving</Button>
-          </div>
-          {saveMutation.isError && <p role="alert" className="text-sm text-destructive">{saveMutation.error.message || "Could not save. Review the details and try again."}</p>}
         </div>}
         <TaskStepNav steps={steps} value={step} onChange={changeStep} disabled={saveMutation.isPending}/><fieldset disabled={saveMutation.isPending} className="min-w-0">
         <section hidden={step!=='customer'} aria-label="customer">
@@ -586,10 +579,18 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
 
         {!canManageSetup&&step==='quote'&&summary}</fieldset>
         <TaskActionBar>
+          {closeoutRepair && saveMutation.isError && <p role="alert" className="w-full text-sm text-destructive">{saveMutation.error.message || "Could not save. Review the details and try again."}</p>}
           <p className="mr-auto text-sm" role="status">{quoteIsUpdating ? "Updating estimate…" : quoteCannotSave ? "Quote unavailable — open Review to retry" : `${hasChanges ? "Unsaved changes" : "Saved"}${canManageSetup && quoteDraft ? ` · Estimate $${quoteTotal.toFixed(2)}` : ""}`}</p>
+          {closeoutRepair && canManageSetup ? <>
+            <Button type="button" variant="outline" className="min-h-11 whitespace-normal" disabled={saveMutation.isPending}
+              onClick={onReturnToCloseout}>Return without saving</Button>
+            <Button type="button" className="min-h-11 whitespace-normal" disabled={!hasChanges || saveMutation.isPending || quoteIsUpdating || quoteCannotSave || (closeoutRepair === "date" && !isPastJobDate(draft.confirmedDate))}
+              onClick={() => saveMutation.mutate()} data-testid="button-save-return-closeout">{saveMutation.isPending ? "Saving…" : "Save and return to closeout"}</Button>
+          </> : <>
           <Button type="button" variant="outline" className="min-h-11" onClick={() => { setDraft(setupDraftFromLead(lead)); setQuoteDraft(savedQuote(lead)); setQuoteDirty(false); setQuotePricingSource(lead.quoteSnapshot?.manualQuoteOverride ? "manual_override" : "rate_card_auto"); }} disabled={saveMutation.isPending}>Reset</Button>
           {stepIndex>0&&<Button type="button" variant="outline" disabled={saveMutation.isPending} onClick={()=>changeStep(steps[stepIndex-1].id)}>Back</Button>}
           {step!=='quote'?<Button type="button" disabled={saveMutation.isPending} onClick={()=>changeStep(steps[stepIndex+1].id)}>Next</Button>:<Button type="button" onClick={() => saveMutation.mutate()} disabled={!hasChanges || saveMutation.isPending || quoteIsUpdating || quoteCannotSave} className="min-h-11 bg-blue-600 hover:bg-blue-700" data-testid="button-save-job-setup">{saveMutation.isPending || quoteIsUpdating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}{quoteIsUpdating ? "Updating Quote" : "Save changes"}</Button>}
+          </>}
         </TaskActionBar>
       </CardContent>
     </Card>
