@@ -9,6 +9,13 @@ import { build } from "esbuild";
 
 const require = createRequire(path.join(process.env.JC_UI_TEST_RUNTIME || process.cwd(), "package.json"));
 const { JSDOM } = require("jsdom");
+// Toast removal and mutation garbage collection must not keep a completed test alive.
+const nativeSetTimeout = globalThis.setTimeout;
+globalThis.setTimeout = (callback, delay, ...args) => {
+  const timer = nativeSetTimeout(callback, delay, ...args);
+  if (delay >= 60_000) timer.unref();
+  return timer;
+};
 const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { url: "https://example.test", pretendToBeVisual: true });
 for (const key of ["window", "document", "navigator", "HTMLElement", "HTMLInputElement", "HTMLButtonElement", "HTMLSelectElement", "Element", "Node", "NodeFilter", "DocumentFragment", "MutationObserver", "CustomEvent", "Event", "MouseEvent", "KeyboardEvent", "getComputedStyle", "localStorage"]) {
   Object.defineProperty(globalThis, key, { configurable: true, value: key === "getComputedStyle" ? dom.window.getComputedStyle.bind(dom.window) : dom.window[key] });
@@ -148,6 +155,8 @@ try {
       const payload = JSON.parse(options.body);
       assert.equal(payload.confirmedDate, "2026-01-01");
       assert.equal(payload.quote, undefined, "date correction must not replace $1,225 with a recalculated quote");
+      assert.equal(payload.crewAssignments, undefined, "date correction must not rewrite payout assignments");
+      assert.equal(payload.confirmedHours, undefined, "unchanged hours must not trigger finalized-earnings locks");
       fixture.lead = { ...fixture.lead, confirmedDate: payload.confirmedDate };
       return response(fixture.lead);
     };
@@ -180,6 +189,22 @@ try {
     assert.match(byTestId("admin-payment-job-summary").textContent, /2099-09-29/);
     assert.ok(byTestId("button-review-admin-payment").disabled);
     assert.equal(posts().length, 0);
+  });
+  await test("pricing edits still recalculate; Reset restores the saved price", async () => {
+    await click(button("3. Schedule / crew"));
+    assert.equal(posts().length, 0, "opening Schedule preserves the saved price");
+    postHandler = (url, options) => {
+      assert.equal(url, "/api/leads/test-job/quote-preview");
+      assert.equal(JSON.parse(options.body).crewSize, 3);
+      return response({ labor: 1800, truck: 0, trailer: 0, stairs: 0, elevator: 0, total: 1800,
+        rewardEligibleTotal: 1800, projectedCustomerJcMoves: 27000, projectedCrewPoolJcMoves: 27000,
+        location: { pricingScope: "local", zoneCode: null, label: "Local", reason: "Test rate card" } });
+    };
+    await click(button("3 movers"));
+    await until(() => byTestId("job-setup-quote-summary")?.textContent.includes("$1800.00"), "updated quote after pricing edit");
+    await click(button("Reset"));
+    await until(() => byTestId("job-setup-quote-summary")?.textContent.includes("$1225.00"), "saved quote restored");
+    assert.equal(requests.filter(request => request.method === "PATCH").length, 0);
   });
   editorEnabled = false;
   await test("five clicks open a read-only dialog; four clicks and cancellation have no effect", async () => {
@@ -320,6 +345,7 @@ try {
   }
   console.log(`Admin payment shortcut: ${passed} acceptance scenarios passed. All requests used synthetic fixtures.`);
 } finally {
+  globalThis.setTimeout = nativeSetTimeout;
   dom.window.close();
   await rm(outputDir, { recursive: true, force: true });
 }
