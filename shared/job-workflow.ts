@@ -60,7 +60,9 @@ export function workflowDetailsBlockers(lead: any): WorkflowBlocker[] {
   if (!lead.firstName?.trim() || !lead.lastName?.trim()) result.push({ code: "customer_name", message: "Add the customer's name.", target: "customer", field: !lead.firstName?.trim() ? "setup-first-name" : "setup-last-name" });
   if (!lead.phone?.trim()) result.push({ code: "customer_phone", message: "Add a customer phone number.", target: "customer", field: "setup-phone" });
   if (!(lead.fromAddress || "").trim()) result.push({ code: "service_address", message: "Add the pickup or project address.", target: "details", field: "setup-from-address" });
-  if (/(moving|residential|commercial|delivery)/i.test(lead.serviceType || "") && !lead.toAddress?.trim()) result.push({ code: "destination", message: "Add the destination for this job.", target: "details", field: "setup-to-address" });
+  const service = String(lead.serviceType || "");
+  const sameSite = ["load_only", "unload_only"].includes(lead.jobPlanDetails?.workScope);
+  if ((/delivery/i.test(service) || /moving|residential|commercial/i.test(service) && !sameSite) && !lead.toAddress?.trim()) result.push({ code: "destination", message: "Add the destination for this job.", target: "details", field: "setup-to-address" });
   return result;
 }
 

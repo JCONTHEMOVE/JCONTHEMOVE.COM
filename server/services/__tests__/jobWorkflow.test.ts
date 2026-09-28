@@ -20,6 +20,7 @@ assert.ok(dispatchBlockers({ ...confirmed, depositRequired: true, depositPaid: f
 assert.ok(dispatchBlockers({ ...lead, confirmedDate: "2026-02-30" }, approved, true).some(b => b.code === "service_date"));
 assert.ok(dispatchBlockers({ ...lead, serviceType: "delivery", toAddress: "" }, approved, true).some(b => b.code === "destination"));
 assert.ok(!dispatchBlockers(lead, approved, true).some(b => b.code === "destination"));
+assert.ok(!dispatchBlockers({ ...lead, serviceType: "moving", jobPlanDetails: { workScope: "load_only" } }, approved, true).some(b => b.code === "destination"), "Load-only work does not invent a destination requirement");
 const snapshot = customerAgreementSnapshot(lead, "q1");
 assert.deepEqual(customerAgreementSnapshot({ ...lead, crewMembers: ["x"], dispatchNotes: "Internal" }, "q1"), snapshot);
 for (const change of [{ totalPrice: "480" }, { confirmedDate: "2099-10-03" }, { fromAddress: "Other street" }, { jobPlanDetails: { workScope: "unload_only" } }]) assert.notDeepEqual(customerAgreementSnapshot({ ...lead, ...change }, "q1"), snapshot);
