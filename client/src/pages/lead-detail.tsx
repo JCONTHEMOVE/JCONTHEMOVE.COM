@@ -1864,7 +1864,7 @@ export default function LeadDetailPage() {
         )}
 
         {/* === 4-Tab Interface === */}
-        <ProjectIntakeSummary details={lead.details} />
+        <ProjectIntakeSummary details={lead.details} status={lead.status} confirmedDate={lead.confirmedDate} />
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="mb-6 grid h-auto w-full grid-cols-2">
             <TabsTrigger className="min-h-11 text-sm" value="notes">Notes & Media</TabsTrigger>
