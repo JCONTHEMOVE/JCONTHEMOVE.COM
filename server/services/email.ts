@@ -178,6 +178,7 @@ export async function notifyCustomerBookingRequestReceived(data: BookingRequestR
 }
 
 export async function notifyAdminNewLead(data: {
+  recipient?: string;
   customerName: string;
   serviceType: string;
   phone?: string;
@@ -196,7 +197,7 @@ export async function notifyAdminNewLead(data: {
     <p>Check the dashboard to review.</p>
   `;
   const text = `NEW LEAD CREATED\n\nCustomer: ${data.customerName}\nService: ${data.serviceType}\nPhone: ${data.phone || 'Not provided'}${data.email ? `\nEmail: ${data.email}` : ''}${data.createdBy ? `\nCreated by: ${data.createdBy}` : ''}${data.mediaLink ? `\nCustomer media: ${data.mediaLink}` : ''}\n\nCheck the dashboard to review.`;
-  return sendEmail({ to: ADMIN_EMAIL, from: FROM_EMAIL, subject: `New Lead Created — ${data.customerName} (${data.serviceType})`, html, text });
+  return sendEmail({ to: data.recipient || ADMIN_EMAIL, from: FROM_EMAIL, subject: `New Lead Created — ${data.customerName} (${data.serviceType})`, html, text });
 }
 
 export async function notifyAdminJobCompleted(data: {

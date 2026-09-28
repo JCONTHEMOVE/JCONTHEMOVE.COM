@@ -5999,11 +5999,12 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         }
         try {
           const adminEmailSent = await notifyAdminNewLead({
+            ...(projectRequest ? { recipient: "upmichiganstatemovers@gmail.com" } : {}),
             customerName: `${parsed.firstName} ${parsed.lastName}`,
             serviceType: service.label,
             phone: parsed.phone,
             email: lead.email,
-            createdBy: "Quick request",
+            createdBy: projectRequest ? "Public project request" : "Quick request",
             mediaLink: parsed.mediaLink || undefined,
           });
           if (!adminEmailSent) {
@@ -6012,7 +6013,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         } catch (notifyErr) {
           console.error("[quick-request] admin notification failed:", (notifyErr as Error).message);
         }
-        if (process.env.ADMIN_PHONE_NUMBER) {
+        if (!projectRequest && process.env.ADMIN_PHONE_NUMBER) {
           try {
             const smsResult = await smsService.notifyNewLead({
               customerName: `${parsed.firstName} ${parsed.lastName}`,

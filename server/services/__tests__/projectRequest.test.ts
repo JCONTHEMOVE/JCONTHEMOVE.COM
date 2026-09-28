@@ -82,7 +82,7 @@ const deps = {
   and: (...filters: any[]) => (row: any) => filters.every(filter => typeof filter === "function" ? filter(row) : filter.phoneExpression && String(row.phone).replace(/\D/g, "") === filter.values[1]),
   eq: (column: any, value: any) => (row: any) => columnValue(column, row) === value,
   gte: (column: any, value: any) => (row: any) => columnValue(column, row) >= value, desc: (column: any) => column,
-  notifyAdminNewLead: async () => { notifications++; if (failure === "notification") throw Error("notification failed"); return failure !== "email"; },
+  notifyAdminNewLead: async (data: any) => { assert.equal(data.recipient, "upmichiganstatemovers@gmail.com"); notifications++; if (failure === "notification") throw Error("notification failed"); return failure !== "email"; },
   emitJobEvent: async (_event: string, _lead: any, options: any) => { events++; assert.equal(options.ownerReviewOnly, true); if (failure === "event") throw Error("event failed"); },
   process: { env: {} }, console: { error() {}, warn() {} },
   respondLeadError: (res: any, error: any) => res.status(error.name === "ZodError" ? 400 : 500).json({ error: error.message }),

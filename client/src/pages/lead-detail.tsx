@@ -1864,6 +1864,7 @@ export default function LeadDetailPage() {
         )}
 
         {/* === 4-Tab Interface === */}
+        <ProjectIntakeSummary details={lead.details} />
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="mb-6 grid h-auto w-full grid-cols-2">
             <TabsTrigger className="min-h-11 text-sm" value="notes">Notes & Media</TabsTrigger>
@@ -2183,7 +2184,6 @@ export default function LeadDetailPage() {
                 <CardTitle className="text-base">Notes</CardTitle>
               </CardHeader>
               <CardContent>
-                <ProjectIntakeSummary details={lead.details} />
                 {customerNotesFromDetails(lead.details) && (
                   <div className="mb-3 rounded-lg bg-muted p-3">
                     <p className="mb-1 text-xs text-muted-foreground">Customer notes</p>
