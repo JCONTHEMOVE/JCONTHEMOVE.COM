@@ -997,6 +997,9 @@ function Router() {
       </Route>
       
       {/* Authenticated vs unauthenticated routing */}
+      <Route path="/rewards">
+        {isLoading ? <PageLoader /> : isAuthenticated ? <AuthenticatedApp /> : <Redirect to="/login?redirect=%2Frewards" />}
+      </Route>
       <Route>
         {shouldHoldProtectedRoute ? (
           <div className="min-h-screen bg-background text-foreground font-sans flex items-center justify-center">

@@ -1,3 +1,5 @@
+import { quickRequestSchema, projectIntakeInput } from "./services/quickRequest";
+import { projectIntakeSchema, projectScheduleLabel, projectServiceLabel } from "@shared/projectRequest";
 import { manualDispatchMissingSetup } from "@shared/manualDispatchReadiness";
 import { phoneRewardsRouter } from "./routes/phoneRewards";
 import { findPhoneRewardsCustomer, rewardsPhone } from "./services/phoneRewards";
@@ -5666,71 +5668,6 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       phone: lead.phone, email: lead.email, createdBy: "Carpet removal / home project campaign" });
   }));
 
-  const quickRequestSchema = z.object({
-    requestType: z.enum(["callback", "scheduled"]).optional().default("callback"),
-    firstName: z.string().trim().min(1).max(80),
-    lastName: z.string().trim().min(1).max(80),
-    email: z.string().trim().email().max(255).optional().default(""),
-    phone: leadPhoneNumberSchema,
-    serviceCode: z.string().trim().min(1).max(80),
-    serviceAddress: z.string().trim().max(500).optional().default(""),
-    zip: z.string().trim().max(12).optional().default(""),
-    workScope: z.string().trim().max(1500).optional().default(""),
-    sizingBasis: z.enum(["square_footage", "truck"]).optional(),
-    squareFootage: z.number().int().min(1).max(100000).optional(),
-    truckSize: z.enum(["pickup_van_10", "15_ft", "20_ft", "26_ft"]).optional(),
-    selectedCrewSize: z.union([z.literal(2), z.literal(3), z.literal(4)]).optional(),
-    preferredDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    preferredStartTime: z.string().regex(/^\d{2}:00$/).optional(),
-    notes: z.string().trim().max(2500).optional().default(""),
-    mediaLink: z.string().trim().max(1000).optional().default(""),
-    promoCode: z.string().trim().max(50).optional().default(""),
-    referralSlug: z.string().trim().max(80).optional().default(""),
-    marketingCampaignId: z.string().trim().max(120).optional().default(""),
-    marketingTracking: z.record(z.any()).optional().default({}),
-    photos: z.array(z.object({
-      name: z.string().max(255),
-      type: z.string().max(100).optional().default(""),
-      mimeType: z.string().max(100).optional().default(""),
-      size: z.number().optional().default(0),
-      url: z.string().max(4_500_000).optional().default(""),
-    }).superRefine((photo, ctx) => {
-      if (photo.url && !photo.url.startsWith("data:image/")) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["url"],
-          message: "Quick request photos must be image data URLs.",
-        });
-      }
-      if ((photo.size || 0) > 3 * 1024 * 1024) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["size"],
-          message: "Quick request photos must be 3 MB or smaller.",
-        });
-      }
-    })).max(5).optional().default([]),
-  }).superRefine((value, ctx) => {
-    if (value.requestType !== "scheduled") return;
-    const required: Array<[keyof typeof value, unknown, string]> = [
-      ["email", value.email, "Enter your email"],
-      ["serviceAddress", value.serviceAddress, "Enter the service address"],
-      ["zip", value.zip, "Enter the service ZIP code"],
-      ["workScope", value.workScope, "Describe the work"],
-      ["sizingBasis", value.sizingBasis, "Choose home size or truck size"],
-      ["preferredDate", value.preferredDate, "Choose a preferred date"],
-      ["preferredStartTime", value.preferredStartTime, "Choose a preferred start time"],
-    ];
-    for (const [field, current, message] of required) {
-      if (!current) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message });
-    }
-    if (value.sizingBasis === "square_footage" && !value.squareFootage) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["squareFootage"], message: "Enter the approximate home square footage" });
-    }
-    if (value.sizingBasis === "truck" && !value.truckSize) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["truckSize"], message: "Choose the truck size" });
-    }
-  });
 
   const QUICK_REQUEST_SERVICE_MAP: Record<string, { serviceType: string; label: string }> = {
     moving: { serviceType: "residential", label: "Moving" },
@@ -5754,6 +5691,8 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     demolition: { serviceType: "demolition", label: "Demolition" },
     roofing: { serviceType: "roofing", label: "Roofing" },
     painting: { serviceType: "painting", label: "Painting" },
+    flooring: { serviceType: "flooring", label: "Flooring" },
+    trash_valet: { serviceType: "trash_valet", label: "Trash Valet" },
   };
 
   app.post(
@@ -5790,9 +5729,14 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
           : marketingTracking.jcCampaign || marketingTracking.utmContent || "";
         const photoNames = parsed.photos.map((photo) => photo.name).filter(Boolean);
         const scheduledRequest = parsed.requestType === "scheduled";
-        const leadSource = scheduledRequest ? "scheduled_request" : "quick_request";
-        const details = [
-          scheduledRequest ? "[DATE-FIRST REQUEST - CONFIRMATION REQUIRED]" : "[QUICK REQUEST - CALL REQUIRED]",
+        const projectRequest = parsed.requestType === "project";
+        const projectIntake = projectRequest ? projectIntakeSchema.parse(projectIntakeInput(parsed)) : null;
+        const leadSource = projectRequest ? "project_request" : scheduledRequest ? "scheduled_request" : "quick_request";
+        const detailsText = [
+          projectIntake ? "[PROJECT REQUEST - CONFIRMATION REQUIRED]" : "",
+          projectIntake ? projectScheduleLabel(projectIntake) : "",
+          projectIntake?.additionalServices.length ? "Also interested in: " + projectIntake.additionalServices.map(projectServiceLabel).join(", ") : "",
+          projectRequest ? "" : scheduledRequest ? "[DATE-FIRST REQUEST - CONFIRMATION REQUIRED]" : "[QUICK REQUEST - CALL REQUIRED]",
           scheduledRequest ? `Preferred start: ${parsed.preferredDate} at ${parsed.preferredStartTime} Central (tentative)` : "Customer needs quote",
           `Service: ${service.label}`,
           scheduledRequest ? `Work scope: ${parsed.workScope}` : "Source: 60-second quick request",
@@ -5812,11 +5756,62 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
           parsed.notes ? `Notes: ${parsed.notes}` : "",
           photoNames.length ? `Photo files mentioned: ${photoNames.join(", ")}` : "",
         ].filter(Boolean).join("\n");
+        const details = projectIntake ? JSON.stringify({
+          projectIntake, customerNotes: detailsText,
+          requestContact: { firstName: parsed.firstName, lastName: parsed.lastName, email: parsed.email },
+          mediaFingerprint: crypto.createHash("sha256").update(JSON.stringify(parsed.photos)).digest("hex"),
+        }) : detailsText;
+
 
         // A callback is a lead, not a temporary record. Keep an accidental
         // double-tap / retry from creating two copies of the same callback
         // while still allowing a customer to contact us again later.
-        const recentQuickRequest = await db.select()
+        const leadData = insertLeadSchema.parse({
+          firstName: parsed.firstName,
+          lastName: parsed.lastName,
+          // A callback does not collect an email. The old phone-only address
+          // was deterministic, so retrying the same number could collide with
+          // a production uniqueness constraint. This stays synthetic but is
+          // unique for every lead.
+          email: scheduledRequest || (projectRequest && parsed.email)
+            ? parsed.email
+            : `quick-request+${phoneDigits || "callback"}-${crypto.randomUUID()}@jconthemove.local`,
+          phone: parsed.phone,
+          serviceType: service.serviceType,
+          fromAddress: scheduledRequest || projectRequest ? parsed.serviceAddress : "Callback requested",
+          toAddress: projectIntake?.destinationAddress || "",
+          moveDate: "",
+          propertySize: scheduledRequest
+            ? (parsed.sizingBasis === "square_footage" ? `${parsed.squareFootage}-sq-ft` : parsed.truckSize)
+            : "quick-request",
+          details,
+          truckConfig: "quote_needed",
+          crewSize: projectRequest ? null : parsed.selectedCrewSize || 2,
+          photos: parsed.photos.map((photo) => ({
+            url: photo.url || "",
+            name: photo.name,
+            mimeType: photo.mimeType || photo.type || "image/*",
+            type: photo.type || photo.mimeType || "image/*",
+            size: photo.size || 0,
+            source: "quick_request",
+            timestamp: new Date().toISOString(),
+          })),
+          urgency: "normal",
+          source: leadSource,
+          promoCode: normalizedPromoCode || null,
+          quoteSnapshot: marketingCampaignId || Object.keys(marketingTracking).length
+            ? {
+                marketingCampaignId: marketingCampaignId || null,
+                marketingTracking,
+              }
+            : {},
+        });
+
+
+        // The transaction lock serializes identical retries across app instances.
+        const result = await db.transaction(async tx => {
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${leadSource}), hashtext(${phoneDigits}))`);
+        const recentQuickRequest = await tx.select()
           .from(leads)
           .where(and(
             eq(leads.source, leadSource),
@@ -5827,9 +5822,16 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
           ))
           .orderBy(desc(leads.createdAt))
           .limit(1);
+          if (recentQuickRequest[0]) return { lead: recentQuickRequest[0], duplicate: true };
+          const [lead] = await tx.insert(leads).values({ ...leadData, status: "quote_requested" }).returning();
+          if (!lead) throw new Error("Quick request lead insert returned no record");
+          return { lead, duplicate: false };
+        });
+        const lead = result.lead;
 
-        if (recentQuickRequest[0]) {
-          const existingLead = recentQuickRequest[0];
+
+        if (result.duplicate) {
+          const existingLead = lead;
           const existingSchedule = scheduledRequest
             ? await import("./services/jcOperations").then(async ({ createLeadScheduleRequest, rotateScheduleManageToken }) => (
                 await rotateScheduleManageToken(existingLead.id)
@@ -5871,54 +5873,6 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
           });
         }
 
-        const leadData = insertLeadSchema.parse({
-          firstName: parsed.firstName,
-          lastName: parsed.lastName,
-          // A callback does not collect an email. The old phone-only address
-          // was deterministic, so retrying the same number could collide with
-          // a production uniqueness constraint. This stays synthetic but is
-          // unique for every lead.
-          email: scheduledRequest
-            ? parsed.email
-            : `quick-request+${phoneDigits || "callback"}-${crypto.randomUUID()}@jconthemove.local`,
-          phone: parsed.phone,
-          serviceType: service.serviceType,
-          fromAddress: scheduledRequest ? parsed.serviceAddress : "Callback requested",
-          toAddress: "",
-          moveDate: "",
-          propertySize: scheduledRequest
-            ? (parsed.sizingBasis === "square_footage" ? `${parsed.squareFootage}-sq-ft` : parsed.truckSize)
-            : "quick-request",
-          details,
-          truckConfig: "quote_needed",
-          crewSize: parsed.selectedCrewSize || 2,
-          photos: parsed.photos.map((photo) => ({
-            url: photo.url || "",
-            name: photo.name,
-            mimeType: photo.mimeType || photo.type || "image/*",
-            type: photo.type || photo.mimeType || "image/*",
-            size: photo.size || 0,
-            source: "quick_request",
-            timestamp: new Date().toISOString(),
-          })),
-          urgency: "normal",
-          source: leadSource,
-          promoCode: normalizedPromoCode || null,
-          quoteSnapshot: marketingCampaignId || Object.keys(marketingTracking).length
-            ? {
-                marketingCampaignId: marketingCampaignId || null,
-                marketingTracking,
-              }
-            : {},
-        });
-
-        // Insert the lead in its real initial state. Previously this required
-        // a follow-up update after the insert, which could report a 500 even
-        // though the callback was already saved.
-        const [lead] = await db.insert(leads)
-          .values({ ...leadData, status: "quote_requested" })
-          .returning();
-        if (!lead) throw new Error("Quick request lead insert returned no record");
         let scheduleResult = null;
         if (scheduledRequest) {
           try {
@@ -6045,11 +5999,12 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         }
         try {
           const adminEmailSent = await notifyAdminNewLead({
+            ...(projectRequest ? { recipient: "upmichiganstatemovers@gmail.com" } : {}),
             customerName: `${parsed.firstName} ${parsed.lastName}`,
             serviceType: service.label,
             phone: parsed.phone,
             email: lead.email,
-            createdBy: "Quick request",
+            createdBy: projectRequest ? "Public project request" : "Quick request",
             mediaLink: parsed.mediaLink || undefined,
           });
           if (!adminEmailSent) {
@@ -6058,7 +6013,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         } catch (notifyErr) {
           console.error("[quick-request] admin notification failed:", (notifyErr as Error).message);
         }
-        if (process.env.ADMIN_PHONE_NUMBER) {
+        if (!projectRequest && process.env.ADMIN_PHONE_NUMBER) {
           try {
             const smsResult = await smsService.notifyNewLead({
               customerName: `${parsed.firstName} ${parsed.lastName}`,
@@ -6074,21 +6029,24 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
             console.error("[quick-request] admin SMS notification failed:", notifyErr instanceof Error ? notifyErr.message : notifyErr);
           }
         }
+        try {
         await emitJobEvent("quote_requested", lead, {
           actorId: creatorUserId,
-          source: "quick_request",
+          source: leadSource,
+          ...(projectRequest ? { ownerReviewOnly: true } : {}),
           extra: {
             displayOrderNumber: formatOrderNumber(lead.orderNumber),
             serviceCode: parsed.serviceCode,
             serviceType: service.serviceType,
             mediaLink: parsed.mediaLink || null,
             requestType: parsed.requestType,
-            preferredDate: parsed.preferredDate || null,
-            preferredStartTime: parsed.preferredStartTime || null,
+            preferredDate: projectIntake ? projectIntake.preferredDate || null : parsed.preferredDate || null,
+            preferredStartTime: projectIntake ? projectIntake.preferredStartTime || null : parsed.preferredStartTime || null,
             marketingCampaignId: marketingCampaignId || null,
             marketingTracking,
           },
         });
+        } catch (eventError) { console.error("[quick-request] request saved; event delivery failed:", eventError instanceof Error ? eventError.message : eventError); }
 
         res.status(201).json({
           success: true,
@@ -29505,10 +29463,10 @@ Thank you for your business!
 
   app.get("/api/maps-config", (req, res) => {
     const referrer = String(req.get("referer") || req.get("referrer") || "");
-    if (/\/book(?:\?|$|\/)/i.test(referrer)) {
+    if (/\/book(?:\?|$|\/)/i.test(referrer) && req.query.client !== "project-request") {
       return res.json({ key: "", disabled: true });
     }
-    const key = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_PLACES_API_KEY || "";
+    const key = process.env.GOOGLE_PLACES_BROWSER_API_KEY || process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_PLACES_API_KEY || "";
     res.json({ key });
   });
 
