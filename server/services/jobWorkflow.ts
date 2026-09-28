@@ -72,7 +72,13 @@ const loadState = loadWorkflowState;
 export async function getJobWorkflow(leadId: string, actor: WorkflowActor) {
   await ensureQuoteRevisionInfrastructure();
   const state = await loadState(leadId);
-  const delivery = state.lead.jobPlanDetails?.quoteDelivery;
+  let delivery = state.lead.jobPlanDetails?.quoteDelivery;
+  if (delivery?.quoteId !== state.quote.id) delivery = undefined;
+  if (delivery && actor.manage) {
+    const outcomes = await pool.query("SELECT d.channel,d.status,d.error,d.provider_reference FROM customer_notification_deliveries d JOIN customer_job_events e ON e.id=d.event_id WHERE e.event_key=ANY($1::text[])", [[`workflow-delivery:${state.quote.id}`, `workflow-invoice:${state.quote.id}`]]);
+    delivery = { ...delivery };
+    for (const row of outcomes.rows) if (["email", "sms", "invoice"].includes(row.channel)) delivery[row.channel] = { status: row.status === "pending" ? "unknown" : row.status, message: row.error || undefined, reference: row.provider_reference || undefined };
+  }
   const workflow = projectJobWorkflow({ ...state, capabilities: { approve: actor.canApproveStandard, manage: actor.manage, sms: smsConfigured() }, delivery });
   if (!actor.manage) { workflow.delivery = undefined; workflow.payment = { ready: false, label: "Managed by staff" }; }
   return workflow;

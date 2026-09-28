@@ -12958,7 +12958,7 @@ Thank you for your business!
       await writeLeadHistory(updatedLead.id, currentLead.status, updatedLead.status, actor.id || null,
         "Job details saved. No customer or crew notification was requested.").catch(error => console.error("[job-setup] history failed:", error));
 
-      return res.json(updatedLead);
+      return res.json(canManageSetup ? updatedLead : { id: updatedLead.id, saved: true });
     } catch (error) {
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.issues[0]?.message || "Invalid job setup" });
       if (error instanceof WorkflowError) return res.status(error.status).json({ error: error.message, blockers: error.blockers });
