@@ -200,6 +200,9 @@ test('missing history never produces a misleading completed count and a cached e
   const { client, interact, render } = await mount(t, h(WorkerMonthlyProgress));
   await interact(async () => {
     await client.fetchQuery({ queryKey: ['/api/leads/my-jobs'], staleTime: 0, queryFn: async () => { throw new Error('history unavailable'); } }).catch(() => {});
+    // Query observers notify on the next timer turn, after fetchQuery settles.
+    // Flush that notification within act before inspecting the rendered alert.
+    await new Promise(resolve => setTimeout(resolve, 0));
   });
   assert.match(screen.getByRole('alert').textContent, /last loaded records/);
   assert.ok(screen.getByRole('group', { name: 'Monthly job stages' }));
