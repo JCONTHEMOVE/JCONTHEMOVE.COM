@@ -109,7 +109,16 @@ for (const variant of ["feed", "og"] as const) {
         }
         assert.ok(pixels > 100, `${variant}: text must be visible: ${text.textContent}`);
         assert.ok(minX >= left - 1 && maxX <= right, `${variant}: text must fit its banner (${minX}..${maxX}, allowed ${left}..${right}): ${text.textContent}`);
-        assert.ok(minY >= y - Number(text.getAttribute("font-size")) - 1 && maxY <= y + 1, `${variant}: uppercase text must fit above its baseline`);
+        // DejaVu's slash extends below the baseline on Linux. Check the actual
+        // layout slot, including spacing between title lines and banner edges.
+        const [top, bottom] = variant === "feed"
+          ? centered ? [50, 122] : y === 730 ? [660, 748] : y === 800 ? [748, 840]
+            : y === 770 ? [660, 840] : y === 922 ? [850, 962]
+              : y === 1043 ? [986, 1072] : [1170, 1300]
+          : centered ? [48, 102] : y === 238 ? [180, 251] : y === 296 ? [251, 323]
+            : y === 267 ? [180, 323] : y === 379 ? [333, 401]
+              : y === 448 ? [420, 490] : [500, 590];
+        assert.ok(minY >= top && maxY < bottom, `${variant}: text must fit its vertical slot (${minY}..${maxY}, allowed ${top}..${bottom}): ${text.textContent}`);
       }
     } finally {
       window.close();
