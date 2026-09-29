@@ -10,6 +10,7 @@ import {
   SERVICE_ADDRESS_DISCOUNT_NOTE,
 } from "@shared/routeDays";
 import { marketingCreativeSourceSchema } from "@shared/marketingCreative";
+import type { PersonalPromoCopy } from "@shared/personalPromo";
 import { MARKETING_WEEKLY_NOTE, MARKETING_WEEKLY_THEMES } from "@shared/marketingWeek";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
@@ -98,11 +99,21 @@ function isQuoteRequestCampaign(input: MarketingAdDraftInput) {
     || MARKETING_WEEKLY_THEMES.some((theme) => theme === input.area);
 }
 
-export function buildApprovedMarketingFacebookPost(input: MarketingAdDraftInput) {
+export function buildApprovedMarketingFacebookPost(input: MarketingAdDraftInput, personalOffer?: PersonalPromoCopy) {
   const area = cleanWords(input.area, "the Northwoods");
   const focus = cleanWords(input.focus, "moving help");
   const rawNote = String(input.rawText || "").trim();
   const extra = rawNote && !/route-day scheduling:/i.test(rawNote) ? rawNote : "";
+  if (personalOffer) {
+    return [
+      `Need ${focus} around ${area}?`,
+      "JC ON THE MOVE can help with moving, loading, unloading, delivery, cleanup, and local labor.",
+      personalOffer.caption,
+      "Send your address/ZIP, preferred date, job details, and photos. We will confirm scope, price, and crew availability before booking.",
+      input.referralLink,
+      `Use code ${input.promoCode}.`,
+    ].join("\n\n");
+  }
   if (isQuoteRequestCampaign(input)) {
     const appreciation = focus.toLowerCase() === "crew appreciation";
     return [
@@ -131,18 +142,18 @@ export function buildApprovedMarketingFacebookPost(input: MarketingAdDraftInput)
   ].join("\n\n");
 }
 
-function fallbackDraft(input: MarketingAdDraftInput, reason?: string): MarketingAdDraftResult {
+function fallbackDraft(input: MarketingAdDraftInput, reason?: string, personalOffer?: PersonalPromoCopy): MarketingAdDraftResult {
   const area = cleanWords(input.area, "the Northwoods");
   const focus = cleanWords(input.focus, "moving help");
-  const facebookPost = buildApprovedMarketingFacebookPost(input);
+  const facebookPost = buildApprovedMarketingFacebookPost(input, personalOffer);
   const quoteRequest = isQuoteRequestCampaign(input);
 
   return {
-    headline: quoteRequest
+    headline: personalOffer ? `${focus} in ${area}` : quoteRequest
       ? focus.toLowerCase() === "crew appreciation" ? "Thank you to our crew" : `${area}: request a quote`
       : `${focus} available in ${area}`,
     facebookPost,
-    shortText: quoteRequest
+    shortText: personalOffer ? `Need ${focus}? ${personalOffer.caption} Request a quote: ${input.referralLink} Code ${input.promoCode}.` : quoteRequest
       ? `Thank you for supporting JC ON THE MOVE. Request a quote: ${input.referralLink}${input.promoCode ? ` Referral code ${input.promoCode}.` : ""}`
       : `Need ${focus}? ${ROUTE_DAY_DISCOUNT} ${IRONWOOD_DAILY_DISCOUNT} Book JC ON THE MOVE: ${input.referralLink}${input.promoCode ? ` Code ${input.promoCode}.` : ""}`,
     hashtags: ["#JCONTHEMOVE", "#Northwoods", "#MovingHelp"],
@@ -178,8 +189,10 @@ function extractOutputText(response: any): string {
   return chunks.join("");
 }
 
-export async function generateMarketingAdDraft(rawInput: MarketingAdDraftInput): Promise<MarketingAdDraftResult> {
+export async function generateMarketingAdDraft(rawInput: MarketingAdDraftInput, personalOffer?: PersonalPromoCopy): Promise<MarketingAdDraftResult> {
   const input = marketingAdDraftSchema.parse(rawInput);
+  // Personal offer terms and referral attribution never come from generated copy.
+  if (personalOffer) return { ...fallbackDraft(input, undefined, personalOffer), fallbackUsed: false, model: "approved-personal-promo-template" };
   const quoteRequest = isQuoteRequestCampaign(input);
   const apiKey = process.env.OPENAI_API_KEY;
   const model = process.env.OPENAI_MARKETING_MODEL || process.env.OPENAI_BOOKING_MODEL || DEFAULT_MODEL;

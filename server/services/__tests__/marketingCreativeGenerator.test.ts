@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { JSDOM } from "jsdom";
 import sharp from "sharp";
 import {
   buildMarketingOverlaySvg,
@@ -18,6 +20,7 @@ const overlay = {
 };
 
 const approvedPhoto = await loadApprovedMarketingPhoto("crew-ramp");
+execFileSync(process.execPath, ["scripts/check-marketing-fonts.mjs"], { stdio: "inherit" });
 
 for (const [variant, expected] of Object.entries({
   feed: { width: 1080, height: 1350 },
@@ -30,7 +33,7 @@ for (const [variant, expected] of Object.entries({
   assert.equal(metadata.height, expected.height);
 }
 
-const feedSvg = buildMarketingOverlaySvg("feed", overlay).toString("utf8");
+const feedSvg = (await buildMarketingOverlaySvg("feed", overlay)).toString("utf8");
 for (const exactText of [
   "JC ON THE MOVE",
   "NORTHWOODS U-HAUL",
@@ -43,28 +46,91 @@ for (const exactText of [
 }
 
 assert.equal(escapeMarketingCreativeXml(`A&B <move> "today" 'now'`), "A&amp;B &lt;move&gt; &quot;today&quot; &apos;now&apos;");
-const escapedSvg = buildMarketingOverlaySvg("og", {
+const escapedSvg = (await buildMarketingOverlaySvg("og", {
   area: "North < Woods & More",
   focus: "U-Haul load/unload",
   promoCode: `A&B<'`,
-}).toString("utf8");
+})).toString("utf8");
 assert.ok(escapedSvg.includes("NORTH &lt; WOODS &amp; MORE U-HAUL"));
 assert.ok(escapedSvg.includes("CODE A&amp;B&lt;&apos;"));
 assert.ok(!escapedSvg.includes("NORTH < WOODS"));
 
-const northwoodsSvg = buildMarketingOverlaySvg("feed", {
+const northwoodsSvg = (await buildMarketingOverlaySvg("feed", {
   ...overlay,
   brandName: "NORTHWOODS MOVING",
   siteLabel: "BOOK THROUGH MOVING HELP",
   promoCode: "BOOK ON MOVING HELP",
-}).toString("utf8");
+})).toString("utf8");
 assert.ok(northwoodsSvg.includes("NORTHWOODS MOVING"));
 assert.ok(northwoodsSvg.includes("BOOK THROUGH MOVING HELP • BOOK ON MOVING HELP"));
 assert.ok(!northwoodsSvg.includes("JC ON THE MOVE"));
 
+for (const variant of ["feed", "og"] as const) {
+  for (const copy of [overlay, {
+    area: "W".repeat(34),
+    focus: "W".repeat(48),
+    promoCode: "W".repeat(32),
+    offerLine: "W".repeat(52),
+    secondaryLine: "W".repeat(52),
+    brandName: "W".repeat(34),
+    siteLabel: "W".repeat(38),
+  }]) {
+    const svg = await buildMarketingOverlaySvg(variant, copy);
+    const { window } = new JSDOM(svg.toString(), { contentType: "image/svg+xml" });
+    try {
+      const root = window.document.documentElement;
+      for (const text of Array.from(root.querySelectorAll("text"))) {
+        const x = Number(text.getAttribute("x"));
+        const y = Number(text.getAttribute("y"));
+        const centered = text.getAttribute("text-anchor") === "middle";
+        const maxWidth = variant === "feed"
+          ? centered ? 512 : y === 922 || y === 1043 ? 898 : 956
+          : centered ? 422 : y === 379 ? 527 : y === 448 || y === 545 ? 1080 : 1084;
+        const left = centered ? x - maxWidth / 2 : variant === "feed"
+          ? y === 922 || y === 1043 ? 91 : 62
+          : y === 379 ? 82 : y === 448 || y === 545 ? 60 : 58;
+        const right = left + maxWidth;
+        const { data, info } = await sharp(Buffer.from(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="${root.getAttribute("width")}" height="${root.getAttribute("height")}">${text.outerHTML}</svg>`,
+        )).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+        let pixels = 0;
+        let minX = info.width;
+        let maxX = 0;
+        let minY = info.height;
+        let maxY = 0;
+        for (let offset = 3; offset < data.length; offset += info.channels) {
+          if (data[offset] <= 128) continue;
+          const pixel = (offset - 3) / info.channels;
+          const px = pixel % info.width;
+          const py = Math.floor(pixel / info.width);
+          pixels += 1;
+          minX = Math.min(minX, px);
+          maxX = Math.max(maxX, px);
+          minY = Math.min(minY, py);
+          maxY = Math.max(maxY, py);
+        }
+        assert.ok(pixels > 100, `${variant}: text must be visible: ${text.textContent}`);
+        assert.ok(minX >= left - 1 && maxX <= right, `${variant}: text must fit its banner (${minX}..${maxX}, allowed ${left}..${right}): ${text.textContent}`);
+        // DejaVu's slash extends below the baseline on Linux. Check the actual
+        // layout slot, including spacing between title lines and banner edges.
+        const [top, bottom] = variant === "feed"
+          ? centered ? [50, 122] : y === 730 ? [660, 748] : y === 800 ? [748, 840]
+            : y === 770 ? [660, 840] : y === 922 ? [850, 962]
+              : y === 1043 ? [986, 1072] : [1170, 1300]
+          : centered ? [48, 102] : y === 238 ? [180, 251] : y === 296 ? [251, 323]
+            : y === 267 ? [180, 323] : y === 379 ? [333, 401]
+              : y === 448 ? [420, 490] : [500, 590];
+        assert.ok(minY >= top && maxY < bottom, `${variant}: text must fit its vertical slot (${minY}..${maxY}, allowed ${top}..${bottom}): ${text.textContent}`);
+      }
+    } finally {
+      window.close();
+    }
+  }
+}
+
 assert.equal(
   marketingCreativeImageUrl("campaign-123", "feed", 4, "https://www.jconthemove.com"),
-  "https://www.jconthemove.com/api/public/marketing/campaigns/campaign-123/creative/feed.jpg?v=4",
+  "https://www.jconthemove.com/api/public/marketing/campaigns/campaign-123/creative/feed.jpg?v=4&render=2",
 );
 assert.equal(
   marketingCampaignShareUrl("campaign-123", 4, "https://www.jconthemove.com"),
@@ -86,8 +152,8 @@ try {
   assert.equal(fallback.provider, "jc_photo");
   assert.equal(fallback.fallbackUsed, true);
   assert.match(fallback.reason || "", /object storage is not configured/i);
-  assert.match(fallback.feedImageUrl, /creative\/feed\.jpg\?v=1$/);
-  assert.match(fallback.ogImageUrl, /creative\/og\.jpg\?v=1$/);
+  assert.match(fallback.feedImageUrl, /creative\/feed\.jpg\?v=1&render=2$/);
+  assert.match(fallback.ogImageUrl, /creative\/og\.jpg\?v=1&render=2$/);
 
   const uploadFallback = await createMarketingCreative({
     campaignId: "campaign-upload-fallback",

@@ -38,6 +38,10 @@ import type { Express, Request, Response } from "express";
 import { createAccountRecoveryRouter } from "./routes/accountRecovery";
 import { RECOVERY_SCHEMA, type RecoveryDatabase } from "./services/accountRecovery";
 import { createPricingTrainingRouter } from "./routes/pricingTraining";
+import { createPersonalPromoRouter } from "./routes/personalPromoCodes";
+import { PersonalPromoCodes, PersonalPromoError, resolvePersonalPromoAttribution } from "./services/personalPromoCodes";
+import type { PersonalPromoCopy } from "@shared/personalPromo";
+import { personalPromoAdInput, personalPromoSnapshotMatches } from "./services/personalPromoMarketing";
 import { createPricingTrainingTeamRouter } from "./routes/pricingTrainingTeam";
 import { rewardTrainingContribution, thankTrainingContributor } from "./services/pricingTrainingTeam";
 import { createServer, type Server } from "http";
@@ -1142,26 +1146,6 @@ async function seedDefaultPromoCodes() {
   }
 }
 
-async function linkEmployeePromoCodes() {
-  try {
-    const knownLinks = [
-      { code: 'MATTMOVES',   email: 'dawsonsdad8176@gmail.com' },
-      { code: 'TIM',         email: 'timothymewbourn3@gmail.com' },
-      { code: 'TIMMOVES',    email: 'timothymewbourn3@gmail.com' },
-      { code: 'TIMTHEMOVER', email: 'timothymewbourn3@gmail.com' },
-    ];
-    for (const { code, email } of knownLinks) {
-      const user = await findUserByEmail(email);
-      if (!user) continue;
-      // Always update — ensures link is correct even if re-seeded
-      await db.update(promoCodes).set({ referralUserId: user.id }).where(eq(promoCodes.code, code));
-      console.log(`✅ Promo code ${code} linked to ${email}`);
-    }
-  } catch (err) {
-    console.error('Failed to link employee promo codes:', err);
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 async function seedMarketingNetwork() {
   try {
@@ -1185,16 +1169,7 @@ async function seedMarketingNetwork() {
         rewardTokens: "0.00",
         referralRewardTokens: "0.00",
         isActive: true,
-      }).onConflictDoUpdate({
-        target: promoCodes.code,
-        set: {
-          description: promo.description,
-          discountPercent: "5.00",
-          discountPercentJewelry: "0.00",
-          isActive: true,
-          updatedAt: new Date(),
-        },
-      });
+      }).onConflictDoNothing();
     }
 
     for (const rep of DEFAULT_MARKETING_REPS) {
@@ -1206,15 +1181,7 @@ async function seedMarketingNetwork() {
         rewardTokens: "0.00",
         referralRewardTokens: "0.00",
         isActive: true,
-      }).onConflictDoUpdate({
-        target: promoCodes.code,
-        set: {
-          description: `${rep.brandName} marketing network code - 10% off JC ON THE MOVE services`,
-          discountPercent: "10.00",
-          isActive: true,
-          updatedAt: new Date(),
-        },
-      });
+      }).onConflictDoNothing();
 
       await db.insert(marketingReps).values({
         slug: rep.slug,
@@ -1230,24 +1197,7 @@ async function seedMarketingNetwork() {
         contentStrategy: rep.contentStrategy,
         isActive: true,
         sortOrder: rep.sortOrder,
-      }).onConflictDoUpdate({
-        target: marketingReps.slug,
-        set: {
-          displayName: rep.displayName,
-          brandName: rep.brandName,
-          tagline: rep.tagline,
-          promoCode: rep.promoCode,
-          serviceFocus: rep.serviceFocus,
-          territory: rep.territory,
-          audience: rep.audience,
-          ctaLabel: rep.ctaLabel,
-          phoneNumber: rep.phoneNumber,
-          contentStrategy: rep.contentStrategy,
-          isActive: true,
-          sortOrder: rep.sortOrder,
-          updatedAt: new Date(),
-        },
-      });
+      }).onConflictDoNothing();
     }
     console.log("marketing network reps ready");
   } catch (err) {
@@ -2983,7 +2933,6 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
   await ensureRewardSettingsSeeded();
   await ensureReviewTipAllocationsTable();
   await seedDefaultPromoCodes();
-  await linkEmployeePromoCodes();
   await seedMarketingNetwork();
   await ensureJackpotsSeeded();
 
@@ -5944,6 +5893,17 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
                 marketingAttributionInserted = true;
               }
             }
+            if (!marketingAttributionInserted && normalizedPromoCode) {
+              const owned = await resolvePersonalPromoAttribution(pool.query.bind(pool), normalizedPromoCode);
+              if (owned) {
+                await db.insert(quoteAttributions).values({
+                  leadId: lead.id, userId: owned.userId, promoCode: owned.code,
+                  attributionType: "personal_promo_quick_request",
+                  metadata: { source: "quick_request", serviceCode: parsed.serviceCode, marketingCampaignId: marketingCampaignId || null, marketingTracking },
+                });
+                marketingAttributionInserted = true;
+              }
+            }
             if (!marketingAttributionInserted && marketingCampaignId) {
               await db.insert(quoteAttributions).values({
                 leadId: lead.id,
@@ -6697,6 +6657,9 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       .slice(0, 90) || "local-service"
   );
 
+  const personalPromoCodes = new PersonalPromoCodes(pool);
+  app.use("/api", createPersonalPromoRouter(isAuthenticated, requireEmployee, requireBusinessOwner, personalPromoCodes));
+
   const addCampaignTrackingToUrl = (rawUrl: string, campaignId: string, area: string, focus: string, promoCode?: string) => {
     try {
       const url = new URL(rawUrl);
@@ -6736,7 +6699,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       referralLink: shareUrl,
       promoCode: row.promo_code || "",
       workerName: row.payload?.workerName || "JC crew",
-    }));
+    }), row.payload?.personalPromo?.offer);
   };
 
   const updateCampaignCreative = async (input: {
@@ -6776,6 +6739,8 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       previous,
       brandName: previous?.overlay?.brandName,
       siteLabel: previous?.overlay?.siteLabel,
+      offerLine: row.payload?.personalPromo?.offer?.offerLine || previous?.overlay?.offerLine,
+      secondaryLine: row.payload?.personalPromo?.offer?.secondaryLine || previous?.overlay?.secondaryLine,
     });
     const trackedLink = safeMarketingCampaignDestination(row.cta_url);
     const facebookPost = input.refreshCaption
@@ -6827,6 +6792,8 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     shareUrl: string;
     creativeSource: z.infer<typeof marketingCreativeRequestSchema>["source"];
     draft: Awaited<ReturnType<typeof generateMarketingAdDraft>>;
+    personalPromo?: { id: string; code: string; offer: PersonalPromoCopy };
+    repSlug?: string | null;
   }) => {
     try {
       await pool.query(
@@ -6848,7 +6815,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
           input.trackedLink,
           input.draft.ctaLabel || "Book / Quote",
           input.promoCode || null,
-          null,
+          input.repSlug || null,
           "crew_facebook_ad",
           input.actorId,
           JSON.stringify({
@@ -6856,6 +6823,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
             campaignId: input.campaignId,
             trackedLink: input.trackedLink,
             shareUrl: input.shareUrl,
+            personalPromo: input.personalPromo,
             creativeSource: {
               kind: input.creativeSource.kind,
               approvedPhotoKey: input.creativeSource.approvedPhotoKey,
@@ -6951,7 +6919,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       const revision = Math.max(1, Number(creative?.revision || currentRevision));
       const destination = safeMarketingCampaignDestination(row.cta_url);
       const shareUrl = marketingCampaignShareUrl(campaignId, revision);
-      const imageUrl = creative?.ogImageUrl || marketingCreativeImageUrl(campaignId, "og", revision);
+      const imageUrl = marketingCreativeImageUrl(campaignId, "og", revision);
       const title = row.title || `${row.area || "Northwoods"} ${row.focus || "moving help"}`;
       const description = String(row.message || "JC ON THE MOVE local moving and labor help.")
         .replace(/https?:\/\/\S+/g, "")
@@ -7091,11 +7059,9 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     try {
       const user = req.currentUser || req.user || {};
       const authority = await getWorkerAuthority(user);
-      const workerName = [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email || "JC crew";
-      const payload = marketingAdDraftSchema.parse({
-        ...(req.body || {}),
-        workerName: req.body?.workerName || workerName,
-      });
+      const workerName = [user.firstName, user.lastName].filter(Boolean).join(" ") || "JC crew";
+      const approved = await personalPromoCodes.forAd(user.id);
+      const payload = personalPromoAdInput(req.body || {}, workerName, approved, getAppUrl());
       const campaignId = crypto.randomUUID();
       const trackedLink = addCampaignTrackingToUrl(payload.referralLink, campaignId, payload.area, payload.focus, payload.promoCode);
       const shareUrl = marketingCampaignShareUrl(campaignId, 1);
@@ -7103,7 +7069,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         ...payload.creativeSource,
         photoDataUrl: payload.creativeSource.photoDataUrl || payload.photoDataUrl,
       });
-      const draft = await generateMarketingAdDraft({ ...payload, referralLink: shareUrl });
+      const draft = await generateMarketingAdDraft({ ...payload, referralLink: shareUrl }, approved.offer);
       await logCrewMarketingCampaign({
         campaignId,
         actorId: user.id || null,
@@ -7116,6 +7082,8 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         shareUrl,
         creativeSource,
         draft,
+        personalPromo: { id: approved.promo.id, code: approved.promo.code, offer: approved.offer },
+        repSlug: approved.repSlug,
       });
       const creativeUpdate = await updateCampaignCreative({
         campaignId,
@@ -7156,6 +7124,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         marketingReward,
       });
     } catch (error) {
+      if (error instanceof PersonalPromoError) return res.status(error.status).json({ error: error.message });
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid ad request", issues: error.issues });
       }
@@ -7170,7 +7139,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       const request = marketingCreativeRequestSchema.parse(req.body || {});
       const user = req.currentUser || req.user || {};
       const campaignResult = await pool.query(
-        `SELECT id, actor_id
+        `SELECT id, actor_id, payload
            FROM marketing_webhook_campaigns
           WHERE id = $1
           LIMIT 1`,
@@ -7180,6 +7149,14 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       if (!campaign) return res.status(404).json({ error: "Campaign not found" });
       if (!canEditMarketingCampaign(campaign.actor_id, user)) {
         return res.status(403).json({ error: "You cannot edit this campaign" });
+      }
+
+      if (campaign.payload?.personalPromo) {
+        const approved = await personalPromoCodes.forAd(campaign.actor_id);
+        const snapshot = campaign.payload.personalPromo;
+        if (!personalPromoSnapshotMatches(snapshot, approved)) {
+          return res.status(409).json({ error: "This campaign's code or offer has changed. Create a new ad to use the current approved offer." });
+        }
       }
 
       const updated = await updateCampaignCreative({
@@ -7198,6 +7175,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         rewardIssued: false,
       });
     } catch (error) {
+      if (error instanceof PersonalPromoError) return res.status(error.status).json({ error: error.message });
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid creative request", issues: error.issues });
       }
@@ -20220,6 +20198,10 @@ Thank you for your business!
                 repUserId = workerProfile?.userId || null;
               }
             }
+          }
+          if (!repUserId && promoCode) {
+            const owned = await resolvePersonalPromoAttribution(pool.query.bind(pool), promoCode);
+            if (owned) { repUserId = owned.userId; attributedPromoCode = owned.code; }
           }
           await db.insert(quoteAttributions).values({
             leadId: lead.id,

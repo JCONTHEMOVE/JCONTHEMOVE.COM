@@ -78,16 +78,23 @@ function normalizeTitleLines(overlay: MarketingCreativeOverlay) {
   return [area, focus];
 }
 
-function svgTextLine(text: string, x: number, y: number, size: number, options: {
-  weight?: number;
+async function svgTextLine(text: string, x: number, y: number, size: number, maxWidth: number, options: {
   fill?: string;
-  letterSpacing?: number;
   anchor?: "start" | "middle";
 } = {}) {
-  return `<text x="${x}" y="${y}" font-family="Arial, Helvetica, sans-serif" font-size="${size}" font-weight="${options.weight || 800}" fill="${options.fill || "#ffffff"}" letter-spacing="${options.letterSpacing || 0}" text-anchor="${options.anchor || "start"}">${escapeMarketingCreativeXml(text)}</text>`;
+  const escapedText = escapeMarketingCreativeXml(text);
+  const fontFamily = "DejaVu Sans, Arial, Helvetica, sans-serif";
+  const measured = await sharp({
+    text: { text: escapedText, font: `${fontFamily} Bold ${size}`, dpi: 72, rgba: true },
+  }).metadata();
+  // Reserve space for glyph bearings (e.g. DejaVu's J overhangs its origin)
+  // as well as rasterization rounding on both sides of the layout slot.
+  const fittedSize = Math.min(size, Math.floor(size * (maxWidth - 16) / (measured.width || maxWidth)));
+  const textX = options.anchor === "middle" ? x : x + 6;
+  return `<text x="${textX}" y="${y}" font-family="${fontFamily}" font-size="${fittedSize}" font-weight="700" fill="${options.fill || "#ffffff"}" text-anchor="${options.anchor || "start"}">${escapedText}</text>`;
 }
 
-export function buildMarketingOverlaySvg(
+export async function buildMarketingOverlaySvg(
   variant: MarketingCreativeVariant,
   overlay: MarketingCreativeOverlay,
 ) {
@@ -102,8 +109,8 @@ export function buildMarketingOverlaySvg(
 
   if (variant === "og") {
     const title = titleLines.length === 1
-      ? svgTextLine(titleLines[0], 58, 267, 50)
-      : `${svgTextLine(titleLines[0], 58, 238, 48)}${svgTextLine(titleLines[1], 58, 296, 48)}`;
+      ? await svgTextLine(titleLines[0], 58, 267, 50, 1084)
+      : `${await svgTextLine(titleLines[0], 58, 238, 48, 1084)}${await svgTextLine(titleLines[1], 58, 296, 48, 1084)}`;
     return Buffer.from(`
       <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -115,20 +122,20 @@ export function buildMarketingOverlaySvg(
         </defs>
         <rect width="${width}" height="${height}" fill="url(#shade)"/>
         <rect x="58" y="48" width="470" height="54" rx="27" fill="#2563eb"/>
-        ${svgTextLine(brandName, 293, 85, 25, { anchor: "middle", letterSpacing: 1.4 })}
+        ${await svgTextLine(brandName, 293, 85, 25, 422, { anchor: "middle" })}
         <rect x="58" y="130" width="112" height="9" rx="4.5" fill="#f97316"/>
         ${title}
         <rect x="58" y="333" width="575" height="68" rx="14" fill="#f97316" fill-opacity="0.96"/>
-        ${svgTextLine(offerLine, 82, 379, 27)}
-        ${svgTextLine(secondaryLine, 60, 448, 24, { fill: "#dbeafe" })}
-        ${svgTextLine(footerLabel, 60, 545, 25, { letterSpacing: 0.45 })}
+        ${await svgTextLine(offerLine, 82, 379, 27, 527)}
+        ${await svgTextLine(secondaryLine, 60, 448, 24, 1080, { fill: "#dbeafe" })}
+        ${await svgTextLine(footerLabel, 60, 545, 25, 1080)}
       </svg>
     `);
   }
 
   const title = titleLines.length === 1
-    ? svgTextLine(titleLines[0], 62, 770, 61)
-    : `${svgTextLine(titleLines[0], 62, 730, 58)}${svgTextLine(titleLines[1], 62, 800, 58)}`;
+    ? await svgTextLine(titleLines[0], 62, 770, 61, 956)
+    : `${await svgTextLine(titleLines[0], 62, 730, 58, 956)}${await svgTextLine(titleLines[1], 62, 800, 58, 956)}`;
   return Buffer.from(`
     <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -145,14 +152,14 @@ export function buildMarketingOverlaySvg(
       <rect width="${width}" height="310" fill="url(#top)"/>
       <rect y="450" width="${width}" height="900" fill="url(#bottom)"/>
       <rect x="54" y="50" width="560" height="72" rx="36" fill="#2563eb"/>
-      ${svgTextLine(brandName, 334, 98, 32, { anchor: "middle", letterSpacing: 1.8 })}
+      ${await svgTextLine(brandName, 334, 98, 32, 512, { anchor: "middle" })}
       <rect x="62" y="642" width="132" height="10" rx="5" fill="#f97316"/>
       ${title}
       <rect x="54" y="850" width="972" height="112" rx="22" fill="#f97316" fill-opacity="0.96"/>
-      ${svgTextLine(offerLine, 91, 922, 43)}
+      ${await svgTextLine(offerLine, 91, 922, 43, 898)}
       <rect x="54" y="986" width="972" height="86" rx="18" fill="#1d4ed8" fill-opacity="0.92"/>
-      ${svgTextLine(secondaryLine, 91, 1043, 35)}
-      ${svgTextLine(footerLabel, 62, 1260, 35, { letterSpacing: 0.6 })}
+      ${await svgTextLine(secondaryLine, 91, 1043, 35, 898)}
+      ${await svgTextLine(footerLabel, 62, 1260, 35, 956)}
     </svg>
   `);
 }
@@ -174,7 +181,7 @@ export async function renderMarketingCreativeBuffer(input: {
     .toBuffer();
 
   return sharp(background)
-    .composite([{ input: buildMarketingOverlaySvg(input.variant, input.overlay) }])
+    .composite([{ input: await buildMarketingOverlaySvg(input.variant, input.overlay) }])
     .jpeg({ quality: 90, mozjpeg: true })
     .toBuffer();
 }
@@ -185,7 +192,7 @@ export function marketingCreativeImageUrl(
   revision: number,
   appUrl = getAppUrl(),
 ) {
-  return `${appUrl}/api/public/marketing/campaigns/${encodeURIComponent(campaignId)}/creative/${variant}.jpg?v=${revision}`;
+  return `${appUrl}/api/public/marketing/campaigns/${encodeURIComponent(campaignId)}/creative/${variant}.jpg?v=${revision}&render=2`;
 }
 
 export function marketingCampaignShareUrl(campaignId: string, revision: number, appUrl = getAppUrl()) {
