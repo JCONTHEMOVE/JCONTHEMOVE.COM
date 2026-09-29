@@ -93,31 +93,47 @@ assert.equal(posts[0].preferredStartTime,"10:00");
 assert.equal(posts[0].email,"test@example.test");
 assert.match(posts[0].destinationAddress,/456 Second/);
 await unmount();
-// Staff see normalized intent, including callback requests, after details edits.
-class TestPlacesWidget extends HTMLElement {}
-dom.window.customElements.define("test-places-widget",TestPlacesWidget);
-window.google={maps:{importLibrary:async()=>({PlaceAutocompleteElement:TestPlacesWidget})}};
-googleAvailable=true;
-await mount();
-await click("Continue");
-const widget=document.querySelector("test-places-widget");
-assert.ok(widget,"The current Google widget mounts once its library is ready");
-const selection=new Event("gmp-select");
-selection.placePrediction={toPlace:()=>({fetchFields:async()=>{},addressComponents:[
+// The shared Places data API fills the structured address without changing the form flow.
+const predictionRequests=[];
+const selectedPlace={formattedAddress:"213 South Marquette Street, Ironwood, MI 49938, USA",fetchFields:async()=>{},addressComponents:[
  {types:["street_number"],longText:"213",shortText:"213"},
  {types:["route"],longText:"South Marquette Street",shortText:"S Marquette St"},
  {types:["locality"],longText:"Ironwood",shortText:"Ironwood"},
  {types:["administrative_area_level_1"],longText:"Michigan",shortText:"MI"},
  {types:["postal_code"],longText:"49938",shortText:"49938"},
-]})};
-await act(async()=>widget.dispatchEvent(selection));
+ {types:["country"],longText:"United States",shortText:"US"},
+]};
+window.google={maps:{importLibrary:async(name)=>{
+ assert.equal(name,"places");
+ return {AutocompleteSessionToken:class {},AutocompleteSuggestion:{fetchAutocompleteSuggestions:async(request)=>{
+  predictionRequests.push(request);
+  return {suggestions:[{placePrediction:{placeId:"fixture-marquette",text:{toString:()=>selectedPlace.formattedAddress},toPlace:()=>selectedPlace}}]};
+ }}};
+}}};
+googleAvailable=true;
+await mount();
+await click("Continue");
+await act(async()=>userEvent.click(screen.getByRole("combobox",{name:"Street address"})));
+await fill("Street address","213 South Mar");
+await act(async()=>new Promise(resolve=>nativeTimeout(resolve,400)));
+assert.equal(predictionRequests.length,1);
+assert.equal(predictionRequests[0].input,"213 South Mar");
+assert.ok(predictionRequests[0].sessionToken);
+await act(async()=>userEvent.click(screen.getByRole("option",{name:selectedPlace.formattedAddress})));
 assert.equal(screen.getByLabelText("Street address").value,"213 South Marquette Street");
 assert.equal(screen.getByLabelText("City").value,"Ironwood");
 assert.equal(screen.getByLabelText("State").value,"MI");
 assert.equal(screen.getByLabelText("ZIP code").value,"49938");
 await fill("Street address","213 South Marquette Street, Unit 2");
 assert.match(screen.getByLabelText("Street address").value,/Unit 2/);
+await act(async()=>userEvent.click(screen.getByRole("checkbox",{name:/representative/})));
+await click("Continue");await contact();await click("Send my request");
+assert.equal(posts.length,1);
+assert.equal(posts[0].serviceAddress,"213 South Marquette Street, Unit 2, Ironwood, MI, 49938");
+assert.equal(posts[0].city,"Ironwood");assert.equal(posts[0].state,"MI");assert.equal(posts[0].zip,"49938");
+assert.equal(posts[0].schedulingPreference,"callback");
 await unmount();
+// Staff see normalized intent, including callback requests, after details edits.
 root=createRoot(document.getElementById("root"));
 const staffDetails=JSON.stringify({projectIntake:{version:1,serviceCode:"moving",additionalServices:["painting"],serviceAddress:"123 Main St, Ironwood, MI, 49938",city:"Ironwood",state:"MI",zip:"49938",destinationAddress:"",schedulingPreference:"callback",timeZone:"America/Chicago"}});
 await act(async()=>root.render(React.createElement(ProjectIntakeSummary,{details:staffDetails,status:"quote_requested"})));

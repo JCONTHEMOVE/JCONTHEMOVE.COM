@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -526,11 +527,12 @@ export default function CartPage() {
                     <MapPin className="h-3.5 w-3.5 text-blue-400" />
                     Shipping Address *
                   </Label>
-                  <Input
+                  <PlacesAutocomplete
                     value={shippingAddress}
-                    onChange={(e) => setShippingAddress(e.target.value)}
+                    onChange={setShippingAddress}
                     placeholder="123 Main St, City, State, ZIP"
-                    className="bg-slate-700 border-slate-600 text-white"
+                    inputClassName="bg-slate-700 border-slate-600 text-white"
+                    aria-label="Shipping address"
                   />
                 </div>
               )}
@@ -742,14 +744,14 @@ export default function CartPage() {
                       <MapPin className="h-4 w-4 text-blue-400" />
                       Pickup Address *
                     </Label>
-                    <Input value={form.fromAddress} onChange={(e) => updateField("fromAddress", e.target.value)} placeholder="123 Main St, Marquette, MI" className="bg-slate-700 border-slate-600 text-white" required />
+                    <PlacesAutocomplete value={form.fromAddress} onChange={(value) => updateField("fromAddress", value)} placeholder="123 Main St, Marquette, MI" inputClassName="bg-slate-700 border-slate-600 text-white" aria-label="Pickup address" required />
                   </div>
                   <div>
                     <Label className="text-white flex items-center gap-2">
                       <MapPin className="h-4 w-4 text-green-400" />
                       Drop-off Address (optional)
                     </Label>
-                    <Input value={form.toAddress} onChange={(e) => updateField("toAddress", e.target.value)} placeholder="456 Oak Ave, Ishpeming, MI" className="bg-slate-700 border-slate-600 text-white" />
+                    <PlacesAutocomplete value={form.toAddress} onChange={(value) => updateField("toAddress", value)} placeholder="456 Oak Ave, Ishpeming, MI" inputClassName="bg-slate-700 border-slate-600 text-white" aria-label="Drop-off address" />
                   </div>
                   <div>
                     <Label className="text-white flex items-center gap-2">

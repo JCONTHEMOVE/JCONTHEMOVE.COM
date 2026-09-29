@@ -5,6 +5,7 @@ import { Calculator, CheckCircle2, ClipboardCheck, Loader2, MapPin, Route, Truck
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -180,11 +181,11 @@ export function StaffJobForm({ prefilledDate, onSaved }: StaffJobFormProps) {
           <CardContent className="grid gap-4 md:grid-cols-2">
             <div className="md:col-span-2">
               <Label htmlFor="staff-from-address">Pickup / service address *</Label>
-              <Input id="staff-from-address" required value={fromAddress} onChange={(event) => { const value = event.target.value; setFromAddress(value); const embeddedZip = value.match(/\b\d{5}(?:-\d{4})?\b/); if (embeddedZip) setZip(embeddedZip[0]); }} placeholder="Street address and city (ZIP can be included)" data-testid="input-staff-from-address" />
+              <PlacesAutocomplete id="staff-from-address" required value={fromAddress} onChange={(value) => { setFromAddress(value); const embeddedZip = value.match(/\b\d{5}(?:-\d{4})?\b/); if (embeddedZip) setZip(embeddedZip[0]); }} onPlaceSelect={(place) => { setFromAddress(place.fullAddress); setZip(place.zip); }} placeholder="Start typing the pickup address" inputTestId="input-staff-from-address" />
             </div>
             <div className="md:col-span-2">
               <Label htmlFor="staff-to-address">Drop-off address <span className="text-muted-foreground">(leave blank for labor-only / same-site jobs)</span></Label>
-              <Input id="staff-to-address" value={toAddress} onChange={(event) => setToAddress(event.target.value)} placeholder="Street address and city" data-testid="input-staff-to-address" />
+              <PlacesAutocomplete id="staff-to-address" value={toAddress} onChange={setToAddress} placeholder="Start typing the drop-off address" inputTestId="input-staff-to-address" />
             </div>
             <div>
               <Label htmlFor="staff-zip">Service ZIP *</Label>

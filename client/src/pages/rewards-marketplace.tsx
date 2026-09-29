@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
@@ -1295,11 +1296,14 @@ export default function RewardsMarketplacePage() {
                         onChange={e => setShipName(e.target.value)}
                         className="h-8 text-sm bg-card border-border"
                       />
-                      <Input
+                      <PlacesAutocomplete
                         placeholder="Street Address *"
                         value={shipStreet}
-                        onChange={e => setShipStreet(e.target.value)}
-                        className="h-8 text-sm bg-card border-border"
+                        onChange={setShipStreet}
+                        addressValue="street"
+                        onPlaceSelect={place => { setShipCity(place.city); setShipState(place.state); setShipZip(place.zip); }}
+                        inputClassName="h-8 text-sm bg-card border-border"
+                        aria-label="Shipping street address"
                       />
                       <div className="grid grid-cols-5 gap-2">
                         <Input

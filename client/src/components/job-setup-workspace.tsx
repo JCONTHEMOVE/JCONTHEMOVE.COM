@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -479,8 +480,8 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
 
           <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="sm:col-span-2"><Label htmlFor="setup-from-address">Pickup / Service Address</Label><Input id="setup-from-address" value={draft.fromAddress} onChange={(event) => updateDraft("fromAddress", event.target.value)} /></div>
-            <div className="sm:col-span-2"><Label htmlFor="setup-to-address">Drop-off Address <span className="text-muted-foreground">(if applicable)</span></Label><Input id="setup-to-address" value={draft.toAddress} onChange={(event) => updateDraft("toAddress", event.target.value)} /></div>
+            <div className="sm:col-span-2"><Label htmlFor="setup-from-address">Pickup / Service Address</Label><PlacesAutocomplete id="setup-from-address" value={draft.fromAddress} onChange={(value) => updateDraft("fromAddress", value)} /></div>
+            <div className="sm:col-span-2"><Label htmlFor="setup-to-address">Drop-off Address <span className="text-muted-foreground">(if applicable)</span></Label><PlacesAutocomplete id="setup-to-address" value={draft.toAddress} onChange={(value) => updateDraft("toAddress", value)} /></div>
             {autoQuotePreview?.location && <div className="sm:col-span-2"><Badge variant={autoQuotePreview.location.pricingScope === "local" ? "default" : "secondary"} data-testid="job-setup-location-classification">{autoQuotePreview.location.label}</Badge><p className="mt-1 text-xs text-muted-foreground">{autoQuotePreview.location.reason}</p></div>}
           </div>
           <div><Label htmlFor="setup-details">Job Notes & Details</Label><Textarea id="setup-details" rows={4} value={draft.details} onChange={(event) => updateDraft("details", event.target.value)} placeholder="Items, access instructions, customer requests, and anything the crew needs to know." /></div>
@@ -497,7 +498,7 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
               <div><Label htmlFor="setup-entry-instructions">Entry instructions</Label><Input id="setup-entry-instructions" autoComplete="off" value={draft.entryInstructions} onChange={(event) => updateDraft("entryInstructions", event.target.value)} placeholder="Gate, lockbox, parking, or contact instructions" /></div>
             </div>
             <div><Label htmlFor="setup-special-items-notes">Special item details</Label><Textarea id="setup-special-items-notes" rows={2} value={draft.specialItemsNotes} onChange={(event) => updateDraft("specialItemsNotes", event.target.value)} placeholder="Weights, fragile items, disassembly needs, or equipment notes" /></div>
-            <div className="space-y-2"><div className="flex items-center justify-between gap-3"><Label>Additional stops</Label><Button type="button" size="sm" variant="outline" onClick={() => updateDraft("additionalStops", [...draft.additionalStops, { address: "", note: "" }])}>Add stop</Button></div>{draft.additionalStops.map((stop, index) => <div key={index} className="grid gap-2 rounded-lg border p-3 sm:grid-cols-[1fr_1fr_auto]"><Input value={stop.address} onChange={(event) => updateAdditionalStop(index, "address", event.target.value)} placeholder="Stop address" /><Input value={stop.note} onChange={(event) => updateAdditionalStop(index, "note", event.target.value)} placeholder="Stop note (optional)" /><Button type="button" variant="ghost" size="sm" onClick={() => updateDraft("additionalStops", draft.additionalStops.filter((_, stopIndex) => stopIndex !== index))}>Remove</Button></div>)}</div>
+            <div className="space-y-2"><div className="flex items-center justify-between gap-3"><Label>Additional stops</Label><Button type="button" size="sm" variant="outline" onClick={() => updateDraft("additionalStops", [...draft.additionalStops, { address: "", note: "" }])}>Add stop</Button></div>{draft.additionalStops.map((stop, index) => <div key={index} className="grid gap-2 rounded-lg border p-3 sm:grid-cols-[1fr_1fr_auto]"><PlacesAutocomplete value={stop.address} onChange={(value) => updateAdditionalStop(index, "address", value)} aria-label={`Additional stop ${index + 1} address`} placeholder="Stop address" /><Input value={stop.note} onChange={(event) => updateAdditionalStop(index, "note", event.target.value)} placeholder="Stop note (optional)" /><Button type="button" variant="ghost" size="sm" onClick={() => updateDraft("additionalStops", draft.additionalStops.filter((_, stopIndex) => stopIndex !== index))}>Remove</Button></div>)}</div>
           </section>
         </>}
           </div>

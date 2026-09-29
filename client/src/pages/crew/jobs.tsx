@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
@@ -1136,20 +1137,22 @@ function JobDetailSheet({
                   <div className="grid sm:grid-cols-2 gap-3">
                     <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                       Pickup
-                      <Textarea
+                      <PlacesAutocomplete
                         value={editForm.fromAddress}
-                        onChange={e => setEditForm(form => form ? { ...form, fromAddress: e.target.value } : form)}
-                        className="mt-1 bg-slate-950/60 border-slate-700 text-white text-sm resize-none"
-                        rows={2}
+                        onChange={value => setEditForm(form => form ? { ...form, fromAddress: value } : form)}
+                        className="mt-1"
+                        inputClassName="min-h-11 w-full rounded-md border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-white"
+                        aria-label="Pickup address"
                       />
                     </label>
                     <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                       Dropoff / delivery
-                      <Textarea
+                      <PlacesAutocomplete
                         value={editForm.toAddress}
-                        onChange={e => setEditForm(form => form ? { ...form, toAddress: e.target.value } : form)}
-                        className="mt-1 bg-slate-950/60 border-slate-700 text-white text-sm resize-none"
-                        rows={2}
+                        onChange={value => setEditForm(form => form ? { ...form, toAddress: value } : form)}
+                        className="mt-1"
+                        inputClassName="min-h-11 w-full rounded-md border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-white"
+                        aria-label="Drop-off or delivery address"
                       />
                     </label>
                   </div>

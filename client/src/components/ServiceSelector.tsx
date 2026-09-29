@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Truck, Trash2, Wrench, Snowflake, ChevronRight, Clock, ArrowLeft, Loader2, Plus, Minus, Users, AlertCircle } from "lucide-react";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { createJob } from "@/lib/createJob";
@@ -405,13 +406,13 @@ function LaborFlow({ user, onBooked }: { user: any; onBooked: (id: string, price
         <label className="text-xs text-zinc-500 font-semibold block mb-1">
           Job Address <span className="text-red-400">*</span>
         </label>
-        <input
-          type="text"
+        <PlacesAutocomplete
           value={address}
-          onChange={e => setAddress(e.target.value)}
+          onChange={setAddress}
           onBlur={() => setAddressTouched(true)}
           placeholder="123 Main St, City, State"
-          className={`w-full bg-zinc-800 border rounded-xl px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none transition-colors ${
+          aria-label="Job address"
+          inputClassName={`w-full bg-zinc-800 border rounded-xl px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none transition-colors ${
             addressError ? "border-red-500 focus:border-red-400" : "border-zinc-700 focus:border-amber-500"
           }`}
         />

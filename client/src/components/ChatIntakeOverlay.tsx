@@ -17,9 +17,10 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { cn } from "@/lib/utils";
 import {
-  X, Send, Loader2, Sparkles, ArrowRight, MessageCircle, Tag, MapPin,
+  X, Send, Loader2, Sparkles, ArrowRight, MessageCircle, Tag,
 } from "lucide-react";
 import {
   parseJobIntake, friendlyServiceLabel, bundleHintName, ADDON_CHIPS, formatLaborBreakdownLine,
@@ -952,10 +953,11 @@ export default function ChatIntakeOverlay({
           >
             {step === "ask_location" ? (
               <div className="relative flex-1">
-                <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-blue-300" />
-                <Input
+                <PlacesAutocomplete
+                  suggestionPlacement="above"
                   value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
+                  onChange={setDraft}
+                  onPlaceSelect={place => setDraft(place.fullAddress)}
                   onBlur={(e) => {
                     const normalized = normalizeLocalAddress(e.currentTarget.value);
                     if (normalized && normalized !== draft) setDraft(normalized);
@@ -964,7 +966,7 @@ export default function ChatIntakeOverlay({
                   autoFocus
                   autoComplete="street-address"
                   name="street-address"
-                  className="bg-slate-800 border-slate-700 pl-10 pr-3.5 text-white placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/40"
+                  inputClassName="bg-slate-800 border-slate-700 px-3.5 text-white placeholder:text-slate-500 focus:border-blue-500/60 focus:ring-2 focus:ring-blue-500/40"
                   data-testid="chat-location-input"
                 />
                 {addressSuggestions.length > 0 && (

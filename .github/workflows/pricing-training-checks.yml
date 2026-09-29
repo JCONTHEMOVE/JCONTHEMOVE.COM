@@ -13,6 +13,8 @@ on:
       - 'package*.json'
       - 'scripts/store-*.test.mjs'
       - 'scripts/work-insights.test.mjs'
+      - 'scripts/address-autocomplete.test.mjs'
+      - 'scripts/quick-book-address.test.mjs'
       - '.github/workflows/pricing-training-checks.yml'
   workflow_dispatch:
 permissions:
@@ -34,4 +36,6 @@ jobs:
       - run: npm run test:server
       - run: npm run test:store
       - run: node --test scripts/work-insights.test.mjs
+      - run: node --test scripts/address-autocomplete.test.mjs
+      - run: node --test scripts/quick-book-address.test.mjs
       - run: npm run build
