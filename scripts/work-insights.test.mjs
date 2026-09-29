@@ -34,19 +34,24 @@ const complete = { id: 'ready', orderNumber: 101, serviceType: 'moving', status:
 const incomplete = { id: 'needs/details', orderNumber: 102, serviceType: 'flooring', status: 'quote_requested', moveDate: '2026-02-30', workerVisibility: { exactLocation: false, jobScope: false } };
 const jobs = [complete, incomplete, { id: 'done', serviceType: 'junk', status: 'completed' }];
 
-async function mount(t, component, data) {
+async function mount(t, component, data, options = {}) {
   requests.length = 0;
-  const client = new QueryClient({ defaultOptions: { queries: { queryFn: () => { throw new Error('Unseeded query'); }, retry: false, staleTime: Infinity, gcTime: Infinity } } });
+  globalThis.fetch = async (...args) => {
+    requests.push(args);
+    if (options.fetch) return options.fetch(...args);
+    throw new Error('No network is allowed in this fixture');
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { queryFn: options.queryFn || (() => { throw new Error('Unseeded query'); }), retry: false, staleTime: Infinity, gcTime: Infinity }, mutations: { gcTime: 0, retry: false } } });
   if (data) client.setQueryData(['/api/crew/marketing/daily-home'], data);
   client.setQueryData(['/api/jobs/planner'], { items: jobs, viewer: { isAdmin: false, canAddJob: false } });
   client.setQueryData(['/api/admin/lead-safety/status'], { leads: [] });
-  client.setQueryData(['/api/jobs/my-pending'], [{ id: 'request', serviceType: 'delivery', status: 'assigned' }]);
+  client.setQueryData(['/api/jobs/my-pending'], options.pending || [{ id: 'request', serviceType: 'delivery', status: 'assigned' }]);
   client.setQueryData(['/api/leads/my-jobs'], [{ id: 'done', serviceType: 'junk', status: 'completed', confirmedDate: '2026-09-02' }]);
   const node = document.createElement('div'); document.body.append(node);
   const reactRoot = createRoot(node);
   const render = async (child) => act(async () => reactRoot.render(h(QueryClientProvider, { client }, child)));
   await render(component);
-  t.after(async () => { await act(async () => reactRoot.unmount()); client.clear(); node.remove(); assert.equal(requests.length, 0, 'Charts and progress selection must never submit or send messages'); });
+  t.after(async () => { await act(async () => reactRoot.unmount()); client.clear(); node.remove(); if (!options.fetch) assert.equal(requests.length, 0, 'Charts and progress selection must never submit or send messages'); });
   const user = userEvent.setup({ document });
   return { client, user, render, interact: (fn) => act(fn) };
 }
@@ -178,6 +183,73 @@ test('worker homepage puts requests and current work before materials, monthly p
   await interact(() => user.click(screen.getByRole('button', { name: 'leads', exact: true })));
   assert.equal(within(work).queryByRole('link', { name: /moving/ }), null);
   assert.equal(within(work).getByRole('link', { name: /flooring/ }).getAttribute('href'), '/lead/needs%2Fdetails?returnTo=%2Fcrew');
+});
+
+const assignedRequest = { id: 'request/fixture', orderNumber: 315, serviceType: 'delivery', status: 'assigned', confirmedDate: '2026-10-02', arrivalWindow: '9–11 am' };
+const flushNotifications = () => new Promise(resolve => setTimeout(resolve, 0));
+
+for (const decision of ['accept', 'decline']) {
+  test(`worker request ${decision} saves once, shows its schedule, and refreshes affected work`, async t => {
+    let finish;
+    let pending = [assignedRequest];
+    const refreshed = [];
+    const { user, interact, client } = await mount(t, h(CrewHome), undefined, {
+      pending,
+      fetch: async () => new Promise(resolve => { finish = () => { pending = []; resolve(new Response(JSON.stringify({ success: true }), { status: 200 })); }; }),
+      queryFn: async ({ queryKey }) => {
+        refreshed.push(queryKey[0]);
+        if (queryKey[0] === '/api/jobs/my-pending') return pending;
+        if (queryKey[0] === '/api/jobs/planner') return { items: decision === 'accept' ? [assignedRequest] : [], viewer: { canAddJob: false } };
+        if (queryKey[0] === '/api/leads/my-jobs') return [];
+        throw new Error(`Unexpected query: ${queryKey}`);
+      },
+    });
+    assert.match(screen.getByRole('link', { name: /delivery #315/ }).textContent, /Oct 2, 9–11 am/);
+    const button = screen.getByRole('button', { name: `${decision === 'accept' ? 'Accept' : 'Decline'} job #315` });
+    await interact(async () => { await user.click(button); await flushNotifications(); });
+    assert.equal(button.disabled, true);
+    assert.equal(screen.getByRole('button', { name: `${decision === 'accept' ? 'Decline' : 'Accept'} job #315` }).disabled, true);
+    await interact(() => user.click(button));
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0][0], `/api/jobs/request%2Ffixture/${decision}`);
+    assert.equal(requests[0][1].method, 'POST');
+    assert.equal(requests[0][1].credentials, 'include');
+    assert.equal(requests[0][1].body, '{}');
+    await interact(async () => { finish(); await flushNotifications(); await flushNotifications(); });
+    assert.ok(screen.getByText(`Job #315 ${decision === 'accept' ? 'accepted' : 'declined'}.`));
+    assert.ok(screen.getByText('No job requests awaiting your response.'));
+    assert.deepEqual(client.getQueryData(['/api/jobs/my-pending']), []);
+    assert.deepEqual(new Set(refreshed), new Set(['/api/jobs/my-pending', '/api/jobs/planner', '/api/leads/my-jobs']));
+    assert.equal(screen.queryByRole('button', { name: 'Accept job #315' }), null);
+    assert.equal(Boolean(screen.queryByRole('link', { name: /delivery #315/ })), decision === 'accept');
+  });
+}
+
+test('failed request response stays visible, preserves the request, and never retries automatically', async t => {
+  const { user, interact } = await mount(t, h(CrewHome), undefined, {
+    pending: [assignedRequest],
+    fetch: async () => new Response(JSON.stringify({ error: 'Could not save job response' }), { status: 500 }),
+  });
+  await interact(async () => { await user.click(screen.getByRole('button', { name: 'Accept job #315' })); await flushNotifications(); });
+  assert.match(screen.getByRole('alert').textContent, /Could not save your response\. Could not save job response/);
+  assert.ok(screen.getByRole('link', { name: /delivery #315/ }));
+  assert.equal(screen.getByRole('button', { name: 'Accept job #315' }).disabled, false);
+  assert.equal(requests.length, 1);
+  assert.equal(screen.queryByText('Job #315 accepted.'), null);
+});
+
+test('a stale response refreshes the request list without claiming acceptance', async t => {
+  const { user, interact } = await mount(t, h(CrewHome), undefined, {
+    pending: [assignedRequest, { ...assignedRequest, id: 'archived', archivedAt: '2026-09-29' }],
+    fetch: async () => new Response(JSON.stringify({ error: 'Job is no longer awaiting a response' }), { status: 409 }),
+    queryFn: async ({ queryKey }) => { assert.equal(queryKey[0], '/api/jobs/my-pending'); return []; },
+  });
+  assert.equal(screen.getAllByRole('button', { name: 'Accept job #315' }).length, 1);
+  await interact(async () => { await user.click(screen.getByRole('button', { name: 'Accept job #315' })); await flushNotifications(); await flushNotifications(); });
+  assert.match(screen.getByRole('alert').textContent, /no longer awaiting a response/);
+  assert.ok(screen.getByText('No job requests awaiting your response.'));
+  assert.equal(requests.length, 1);
+  assert.equal(screen.queryByText('Job #315 accepted.'), null);
 });
 
 test('monthly chart controls include completed work, change months, and expose safe drill-through links', async t => {
