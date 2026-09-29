@@ -8617,12 +8617,12 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     }
   });
 
-  // POST /api/jobs/:id/decline — crew member declines; re-dispatch replaces them
+  // Guided declines return to owner review; legacy assignments seek a replacement.
   app.post("/api/jobs/:id/decline", isAuthenticated, requireEmployee, async (req: any, res) => {
     try {
       const leadId = req.params.id;
       const userId = req.currentUser.id;
-      await declineAssignedJob(db, leadId, userId, async (tx, crewSize, remainingCrew) => {
+      const result = await declineAssignedJob(db, leadId, userId, async (tx, crewSize, remainingCrew) => {
         await runDispatch(
           leadId,
           crewSize,
@@ -8633,6 +8633,14 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
           tx,
         );
       });
+      if (result.needsCrewReview) {
+        await emitJobEvent("job_updated", leadId, {
+          actorId: userId,
+          source: "assigned_job_decline",
+          note: "Crew member declined. Review the replacement crew before dispatching this job again.",
+          extra: { declinedByUserId: userId, needsCrewReview: true },
+        });
+      }
 
       res.json({ success: true, message: "Job declined" });
     } catch (err) {
