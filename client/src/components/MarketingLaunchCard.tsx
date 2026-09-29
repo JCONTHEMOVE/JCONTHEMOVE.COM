@@ -35,7 +35,7 @@ type MyLaunch = {
   discordInviteUrl: string;
 };
 
-export function MarketingLaunchCard() {
+export function MarketingLaunchCard({ approvedCode }: { approvedCode: string }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [proofNotes, setProofNotes] = useState<Record<string, string>>({});
@@ -63,7 +63,7 @@ export function MarketingLaunchCard() {
     return (
       <Card className="border-amber-500/25 bg-amber-500/10">
         <CardContent className="p-4">
-          <div className="flex items-start gap-3"><Target className="mt-0.5 h-5 w-5 text-amber-300" /><div><p className="font-black text-white">Marketing profile still needs linking</p><p className="mt-1 text-sm text-slate-300">Your admin will connect your crew account to Matt, Bill, Evan, Troy, or Darrell’s promo profile. You can still use the ad builder while that is being finished.</p></div></div>
+          <div className="flex items-start gap-3"><Target className="mt-0.5 h-5 w-5 text-amber-300" /><div><p className="font-black text-white">Marketing profile still needs linking</p><p className="mt-1 text-sm text-slate-300">Your owner needs to verify your marketing profile. Ad generation requires an approved personal code.</p></div></div>
         </CardContent>
       </Card>
     );
@@ -74,8 +74,8 @@ export function MarketingLaunchCard() {
     <div className="space-y-4"><MarketingBotSetupCard /><details><summary className="min-h-11 cursor-pointer rounded-xl border border-slate-700 p-3 text-sm font-semibold">Launch actions · {completed}/{data.actions.length} completed</summary><Card className="mt-3 border-emerald-400/25 bg-emerald-500/10">
       <CardHeader className="pb-2"><CardTitle className="flex items-start justify-between gap-3 text-white"><span><span className="block text-xs uppercase tracking-[0.18em] text-emerald-200">Marketing launch</span><span className="mt-1 block text-lg">{data.rep.brand_name}</span></span><Megaphone className="h-5 w-5 text-emerald-300" /></CardTitle></CardHeader>
       <CardContent className="space-y-3">
-        <p className="text-sm text-slate-200">Use <strong>{data.rep.promo_code}</strong> and your verified rep page whenever you share JC ON THE MOVE.</p>
-        <div className="flex flex-wrap gap-2"><a href={data.rep.profileUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="outline" className="border-emerald-300/35"><ExternalLink className="mr-2 h-3.5 w-3.5" />Open rep page</Button></a><a href={data.discordInviteUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="outline" className="border-indigo-300/35">Crew Discord</Button></a><span className="rounded-full border border-emerald-300/30 px-2 py-1 text-xs text-emerald-100">{completed}/{data.actions.length} actions</span></div>
+        <p className="text-sm text-slate-200">{approvedCode ? <>Use <strong>{approvedCode}</strong> whenever you share JC ON THE MOVE.</> : "Your personal code needs owner approval before sharing."}</p>
+        <div className="flex flex-wrap gap-2">{approvedCode === data.rep.promo_code && <a href={data.rep.profileUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="outline" className="border-emerald-300/35"><ExternalLink className="mr-2 h-3.5 w-3.5" />Open rep page</Button></a>}<a href={data.discordInviteUrl} target="_blank" rel="noreferrer"><Button size="sm" variant="outline" className="border-indigo-300/35">Crew Discord</Button></a><span className="rounded-full border border-emerald-300/30 px-2 py-1 text-xs text-emerald-100">{completed}/{data.actions.length} actions</span></div>
         <div className="space-y-3">
           {data.actions.map((action) => (
             <div key={action.id} className="rounded-xl border border-emerald-200/15 bg-slate-950/40 p-3">

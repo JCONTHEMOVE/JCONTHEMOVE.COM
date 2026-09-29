@@ -2525,6 +2525,23 @@ export const insertPromoCodeSchema = createInsertSchema(promoCodes).omit({
 export type PromoCode = typeof promoCodes.$inferSelect;
 export type InsertPromoCode = z.infer<typeof insertPromoCodeSchema>;
 
+export const personalPromoRequests = pgTable("personal_promo_requests", {
+  id: varchar("id").primaryKey(),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  requestedCode: text("requested_code").notNull(),
+  status: text("status").notNull().default("pending"),
+  feedback: text("feedback").notNull().default(""),
+  approvedPromoId: varchar("approved_promo_id").references(() => promoCodes.id, { onDelete: "set null" }),
+  approvedCode: text("approved_code"),
+  reviewFingerprint: text("review_fingerprint"),
+  reviewedByUserId: varchar("reviewed_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+}, table => [
+  uniqueIndex("personal_promo_one_pending_worker").on(table.userId).where(sql`${table.status}='pending'`),
+  uniqueIndex("personal_promo_pending_name").on(sql`UPPER(${table.requestedCode})`).where(sql`${table.status}='pending'`),
+]);
+
 // Marketing network reps and call-click attribution. Promo codes remain the
 // primary booking attribution key; call events fill the top of the funnel.
 export const marketingReps = pgTable("marketing_reps", {
