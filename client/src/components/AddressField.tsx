@@ -27,8 +27,7 @@ interface AddressFieldProps {
   onStateChange: (v: string) => void;
   onZipChange: (v: string) => void;
 
-  /** Fired when EITHER a Places suggestion is clicked OR the geocode-on-blur
-   *  fallback resolves the typed/pasted/autofilled address. The wrapper
+  /** Fired when a Places suggestion is selected. The wrapper
    *  already calls the city/state/zip setters before invoking this — it's
    *  here for consumers that need to trigger side effects (e.g. lot-size
    *  detection on the lawn-care flow). */
@@ -48,7 +47,7 @@ interface AddressFieldProps {
   hint?: React.ReactNode;
   /** Inline error from the parent form (e.g. react-hook-form). */
   error?: string;
-  /** Disable Google Places and use fast typed-address parsing only. */
+  /** Allow manual entry without Google Places. */
   disableGoogle?: boolean;
   "data-testid"?: string;
 }
@@ -72,7 +71,7 @@ export default function AddressField({
   disableGoogle = false,
   "data-testid": dataTestId,
 }: AddressFieldProps) {
-  // True after a Places suggestion or a geocode-on-blur successfully resolved
+  // True after a selected Places suggestion successfully resolved
   // the current `value`. Drives the green pill vs. the manual-fields fallback.
   const [resolved, setResolved] = useState<boolean>(false);
   // True when the customer has clicked "Edit" on the pill or has begun
@@ -83,7 +82,6 @@ export default function AddressField({
   // input value drifts away from this, we treat the address as no-longer-
   // resolved and re-open the manual fields.
   const resolvedValueRef = useRef<string>("");
-  const verifyRequestRef = useRef<number>(0);
 
   useEffect(() => {
     // Drift detection isn't gated by `resolved` because the onChange handler
@@ -93,8 +91,8 @@ export default function AddressField({
     if (resolvedValueRef.current && value !== resolvedValueRef.current) {
       // Clear the now-stale city/state/zip so the customer can't accidentally
       // submit "555 Oak St" with the previously-resolved "Ironwood, MI 49938"
-      // still attached to it. The geocode-on-blur will re-fill them as soon
-      // as the new address resolves; until then the manual fields are open.
+      // still attached to it. A new selection fills them again; the manual
+      // fields remain available for addresses entered without a suggestion.
       if (resolved) setResolved(false);
       onCityChange("");
       onStateChange("");
@@ -106,87 +104,14 @@ export default function AddressField({
   }, [value, resolved, showManualFields, onCityChange, onStateChange, onZipChange]);
 
   function handlePlace(place: PlaceResult) {
-    if (place.city) onCityChange(place.city);
-    if (place.state) onStateChange(place.state);
-    if (place.zip) onZipChange(place.zip);
+    onCityChange(place.city);
+    onStateChange(place.state);
+    onZipChange(place.zip);
     resolvedValueRef.current = place.fullAddress;
-    setResolved(true);
-    setManualOpen(false);
+    const complete = Boolean(place.city && place.state && place.zip);
+    setResolved(complete);
+    setManualOpen(!complete);
     onResolved?.(place);
-  }
-
-  function parseTypedAddress(raw: string): PlaceResult | null {
-    const trimmed = raw.trim().replace(/\s+/g, " ");
-    if (trimmed.length < 6) return null;
-    const zipMatch = trimmed.match(/\b(\d{5})(?:-\d{4})?\b/);
-    const stateZipMatch = trimmed.match(/\b([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/i);
-    const cityStateZipMatch = trimmed.match(/,\s*([^,]+?)\s*,?\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\s*$/i);
-    if (cityStateZipMatch) {
-      return {
-        fullAddress: trimmed,
-        city: cityStateZipMatch[1].trim(),
-        state: cityStateZipMatch[2].toUpperCase(),
-        zip: cityStateZipMatch[3],
-      };
-    }
-    if (stateZipMatch) {
-      const beforeState = trimmed.slice(0, stateZipMatch.index).replace(/,\s*$/, "");
-      const city = beforeState.split(",").map((part) => part.trim()).filter(Boolean).pop() || "";
-      return {
-        fullAddress: trimmed,
-        city,
-        state: stateZipMatch[1].toUpperCase(),
-        zip: stateZipMatch[2],
-      };
-    }
-    if (zipMatch) {
-      return {
-        fullAddress: trimmed,
-        city,
-        state,
-        zip: zipMatch[1],
-      };
-    }
-    return null;
-  }
-
-  function tryLocalResolve(raw: string) {
-    const parsed = parseTypedAddress(raw);
-    if (!parsed || (!parsed.city && !parsed.state && !parsed.zip)) return false;
-    if (parsed.city) onCityChange(parsed.city);
-    if (parsed.state) onStateChange(parsed.state);
-    if (parsed.zip) onZipChange(parsed.zip);
-    if (parsed.city && parsed.state && parsed.zip) {
-      resolvedValueRef.current = parsed.fullAddress;
-      setResolved(true);
-      setManualOpen(false);
-      onResolved?.(parsed);
-      return true;
-    }
-    if (showManualFields) setManualOpen(true);
-    return false;
-  }
-
-  async function verifyTypedAddress(raw: string) {
-    const trimmed = raw.trim();
-    if (trimmed.length < 6) return false;
-    const requestId = verifyRequestRef.current + 1;
-    verifyRequestRef.current = requestId;
-    try {
-      const response = await fetch(`/api/utility/verify-address?address=${encodeURIComponent(trimmed)}`);
-      if (!response.ok || verifyRequestRef.current !== requestId) return false;
-      const data = await response.json() as Partial<PlaceResult> & { verified?: boolean };
-      if (!data.verified || !data.fullAddress) return false;
-      handlePlace({
-        fullAddress: data.fullAddress,
-        city: data.city || "",
-        state: data.state || "",
-        zip: data.zip || "",
-      });
-      return true;
-    } catch {
-      return false;
-    }
   }
 
   const inputs = theme === "zinc"
@@ -208,33 +133,22 @@ export default function AddressField({
         value={value}
         onChange={(v) => {
           onChange(v);
-          if (disableGoogle) tryLocalResolve(v);
           if (resolved && v !== resolvedValueRef.current) {
             setResolved(false);
             if (showManualFields) setManualOpen(true);
           }
         }}
         onPlaceSelect={handlePlace}
-        // Fired after every blur / autofill resolve attempt. When the
-        // attempt fails (typo, out-of-area, partial street) we reveal the
-        // manual City / State / ZIP inputs so the customer can finish the
-        // address by hand — required for the green pill UX to be honest.
+        // Manual entry never silently selects or replaces an address on blur.
         onResolveAttempt={(success) => {
-          const locallyResolved = !success && disableGoogle ? tryLocalResolve(value) : false;
-          if (!success && disableGoogle && value.trim().length > 0) {
-            void verifyTypedAddress(value).then((verified) => {
-              if (!verified && !locallyResolved && showManualFields) setManualOpen(true);
-            });
-            return;
-          }
-          if (!success && !locallyResolved && showManualFields && value.trim().length > 0) {
+          if (!success && showManualFields && value.trim().length > 0) {
             setManualOpen(true);
           }
         }}
         placeholder={placeholder}
+        aria-label="Street address"
         inputClassName={inputClassName || inputs}
         disableGoogle={disableGoogle}
-        resolveOnBlur={!disableGoogle}
       />
 
       {error && <p className="text-red-400 text-xs mt-1">{error}</p>}
@@ -267,6 +181,8 @@ export default function AddressField({
         <div className="mt-2 grid grid-cols-3 gap-2">
           <input
             type="text"
+            aria-label="City"
+            autoComplete="address-level2"
             value={city}
             onChange={(e) => onCityChange(e.target.value)}
             placeholder="City"
@@ -277,6 +193,9 @@ export default function AddressField({
           />
           <input
             type="text"
+            aria-label="ZIP code"
+            autoComplete="postal-code"
+            inputMode="numeric"
             value={zip}
             onChange={(e) => onZipChange(e.target.value)}
             placeholder="ZIP"
@@ -288,6 +207,8 @@ export default function AddressField({
           />
           <input
             type="text"
+            aria-label="State"
+            autoComplete="address-level1"
             value={state}
             onChange={(e) => onStateChange(e.target.value)}
             placeholder="State"

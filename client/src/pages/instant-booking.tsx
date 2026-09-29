@@ -4,6 +4,7 @@ import { CalendarClock, CheckCircle2, Clock3, PhoneCall, ShieldCheck, Truck, Use
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { Textarea } from "@/components/ui/textarea";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -335,11 +336,11 @@ export default function InstantBookingPage() {
                   <Field label={form.service === "junk" ? "Expected job time" : "Requested hours"}><Input type="number" min="1" max="12" step="0.5" value={form.requestedHours} onChange={(e) => update("requestedHours", e.target.value)} disabled={form.service === "junk"} required /></Field>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label={form.service === "moving" ? "Pickup address" : "Service address"}><Input autoComplete="street-address" value={form.serviceAddress} onChange={(e) => update("serviceAddress", e.target.value)} required /></Field>
+                  <Field label={form.service === "moving" ? "Pickup address" : "Service address"}><PlacesAutocomplete value={form.serviceAddress} onChange={(value) => update("serviceAddress", value)} onPlaceSelect={(place) => update("zip", place.zip)} required /></Field>
                   <Field label="ZIP code"><Input inputMode="numeric" maxLength={10} value={form.zip} onChange={(e) => update("zip", e.target.value)} required /></Field>
                 </div>
                 {form.service === "moving" && (
-                  <Field label="Destination address"><Input autoComplete="street-address" value={form.destinationAddress} onChange={(e) => update("destinationAddress", e.target.value)} required /></Field>
+                  <Field label="Destination address"><PlacesAutocomplete value={form.destinationAddress} onChange={(value) => update("destinationAddress", value)} required /></Field>
                 )}
                 {form.service === "junk" ? (
                   <Field label="How much truck space?"><select className="field-select" value={form.junkVolume} onChange={(e) => update("junkVolume", e.target.value as BookingForm["junkVolume"])}><option value="quarter">¼ truckload</option><option value="half">½ truckload</option><option value="three_quarter">¾ truckload</option><option value="full">Full truckload</option></select></Field>

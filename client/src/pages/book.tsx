@@ -3080,8 +3080,7 @@ function DetailedBookPage() {
                 onResolved={(p) => setServiceAddress(p.fullAddress)}
                 placeholder="123 Main St, Ironwood, MI"
                 theme="zinc"
-                hint="Pick a suggestion or just keep typing — we'll confirm the city, state, and ZIP automatically."
-                disableGoogle
+                hint="Choose a suggestion to fill city, state, and ZIP, or enter the address manually."
                 data-testid="address-field-multi"
               />
             </section>

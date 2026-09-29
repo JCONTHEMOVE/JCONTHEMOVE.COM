@@ -28985,10 +28985,6 @@ Thank you for your business!
   });
 
   app.get("/api/maps-config", (req, res) => {
-    const referrer = String(req.get("referer") || req.get("referrer") || "");
-    if (/\/book(?:\?|$|\/)/i.test(referrer) && req.query.client !== "project-request") {
-      return res.json({ key: "", disabled: true });
-    }
     const key = process.env.GOOGLE_PLACES_BROWSER_API_KEY || process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_PLACES_API_KEY || "";
     res.json({ key });
   });

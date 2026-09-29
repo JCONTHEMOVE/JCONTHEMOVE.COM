@@ -12,6 +12,7 @@ import { calculateJCMovesReward, LOYALTY_TIERS, formatTokens, type LoyaltyTierKe
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -775,12 +776,17 @@ export default function LeadsPage() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div>
                         <Label htmlFor="fromAddress" className="text-slate-300">From Address *</Label>
-                        <Input
+                        <PlacesAutocomplete
                           id="fromAddress"
                           placeholder="Current address"
-                          className="bg-slate-700/50 border-slate-600 text-white placeholder:text-slate-500"
-                          {...form.register("fromAddress")}
-                          data-testid="input-from-address"
+                          inputClassName="min-h-11 w-full rounded-md border bg-slate-700/50 border-slate-600 px-3 py-2 text-white placeholder:text-slate-500"
+                          name="fromAddress"
+                          ref={form.register("fromAddress").ref}
+                          value={form.watch("fromAddress") || ""}
+                          onChange={(value) => form.setValue("fromAddress", value, { shouldDirty: true, shouldValidate: true })}
+                          onBlur={form.register("fromAddress").onBlur}
+                          aria-invalid={Boolean(form.formState.errors.fromAddress)}
+                          inputTestId="input-from-address"
                         />
                         {form.formState.errors.fromAddress && (
                           <p className="text-destructive text-sm mt-1" data-testid="error-from-address">{form.formState.errors.fromAddress.message}</p>
@@ -788,12 +794,16 @@ export default function LeadsPage() {
                       </div>
                       <div>
                         <Label htmlFor="toAddress" className="text-slate-300">To Address</Label>
-                        <Input
+                        <PlacesAutocomplete
                           id="toAddress"
                           placeholder="Destination address"
-                          className="bg-slate-700/50 border-slate-600 text-white placeholder:text-slate-500"
-                          {...form.register("toAddress")}
-                          data-testid="input-to-address"
+                          inputClassName="min-h-11 w-full rounded-md border bg-slate-700/50 border-slate-600 px-3 py-2 text-white placeholder:text-slate-500"
+                          name="toAddress"
+                          ref={form.register("toAddress").ref}
+                          value={form.watch("toAddress") || ""}
+                          onChange={(value) => form.setValue("toAddress", value, { shouldDirty: true, shouldValidate: true })}
+                          onBlur={form.register("toAddress").onBlur}
+                          inputTestId="input-to-address"
                         />
                       </div>
                     </div>

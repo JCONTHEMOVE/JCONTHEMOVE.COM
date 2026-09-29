@@ -4040,6 +4040,7 @@ export function BookingChatbot({ onClose, onSuccess, embedded = false, showClose
             <div className="flex gap-2 items-start">
               <div className="flex-1">
                 <PlacesAutocomplete
+                  suggestionPlacement="above"
                   value={addressInput}
                   onChange={setAddressInput}
                   onPlaceSelect={(place) => {

@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar as CalendarIcon, BookOpen, Store, Star, Camera, MapPin, Phone, Mail, Plus, Settings, Award, User, Snowflake, Coins, Loader2, Trash2, CheckCircle2, XCircle, Bell, Clock } from "lucide-react";
@@ -1248,20 +1249,20 @@ export default function EmployeeHomePage() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <Label htmlFor="convert-from-address">Pickup Address</Label>
-                          <Input
+                          <PlacesAutocomplete
                             id="convert-from-address"
                             value={convertFromAddress}
-                            onChange={(e) => setConvertFromAddress(e.target.value)}
-                            data-testid="input-convert-from-address"
+                            onChange={setConvertFromAddress}
+                            inputTestId="input-convert-from-address"
                           />
                         </div>
                         <div>
                           <Label htmlFor="convert-to-address">Drop-off Address</Label>
-                          <Input
+                          <PlacesAutocomplete
                             id="convert-to-address"
                             value={convertToAddress}
-                            onChange={(e) => setConvertToAddress(e.target.value)}
-                            data-testid="input-convert-to-address"
+                            onChange={setConvertToAddress}
+                            inputTestId="input-convert-to-address"
                           />
                         </div>
                       </div>
