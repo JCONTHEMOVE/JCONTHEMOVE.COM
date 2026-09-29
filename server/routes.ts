@@ -69,7 +69,7 @@ import { EncryptionService } from "./services/encryption";
 import { decryptJobAccessDetails, encryptJobAccessDetails } from "./services/job-access";
 import type { JobQuotePreview } from "./services/jobRateCard";
 import { eq, desc, sql, and, gte, lte, or, ilike, inArray, isNull } from 'drizzle-orm';
-import { db, pool } from './db';
+import { db, pool, type DbTransaction } from './db';
 import { rewards, walletAccounts, walletPayouts, cashoutRequests, fundingDeposits, reserveTransactions, treasuryAccounts, users, leads, swapRequests, treasurySwapRules, bitcoinPayments, stakes, stakingTiers, contacts, notifications, walletTransactions, jewelryItems, shopItems, giftCards, miningSessions, miningClaims, treasuryWithdrawals, tokenConversions, rewardSettings, promoCodes, reviews, reviewTipAllocations, rewardCategories, rewardItems, rewardRedemptions, buybackFund, laborQuotes, jobTradeRequests, workerProfiles, quoteApprovals, quoteConsensusVotes, quoteAttributions, marketingReps, marketingCallEvents, insertMarketingRepSchema, jobPayoutSettings, referralPartners, jobAssignments, jobPayoutCalculations, jobWorkerPayouts, payrollPeriods, payrollEntries, jobCashPayoutAdjustments } from '@shared/schema';
 import { DEFAULT_MARKETING_REPS } from '@shared/marketingNetwork';
 import {
@@ -116,6 +116,7 @@ import { emitJobEvent, eventTypeForStatus, deliverCrewAnnouncementToWebhooks, ge
 import { notificationService } from "./services/notification";
 import { buildJobFlowRecords, jobBelongsToCrew, toCrewBoardFlow } from "./services/jobFlow";
 import { projectWorkerOrder, type WorkerOrderContext } from "./services/workerOrderVisibility";
+import { acceptAssignedJob, AssignedJobRequestError, declineAssignedJob, listPendingJobRequests } from "./services/assignedJobRequests";
 import { calculateLaborBooking, normalizeLaborWorkScope } from "@shared/laborBooking";
 import { isHourlyJobArrivalWindow, JOB_SCHEDULE_OPTIONS } from "@shared/jcOperations";
 import {
@@ -4967,6 +4968,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     needsDriver: boolean,
     existingCrew: string[] = [],
     excludeIds: string[] = [],
+    database: typeof db | DbTransaction = db,
   ): Promise<string[]> {
     const skipIds = [...new Set([...existingCrew, ...excludeIds])];
 
@@ -4988,7 +4990,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     // When a driver is required, pull slightly more candidates so we can sort
     // drivers to the front and still fill the job if mixed results come back.
     const fetchLimit = Math.max(slotsNeeded * 3, slotsNeeded + 5);
-    const candidates = await db
+    const candidates = await database
       .select({ id: users.id, firstName: users.firstName, isDriver: users.isDriver })
       .from(users)
       .where(whereClause)
@@ -5011,7 +5013,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
 
     // Only mark the job "assigned" when the full required crew size is met
     const fullyStaffed = mergedCrew.length >= crewSize;
-    await db.update(leads)
+    await database.update(leads)
       .set({
         crewMembers: mergedCrew,
         status: fullyStaffed ? "assigned" : "open",
@@ -5020,7 +5022,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
 
     // Notify only the newly assigned workers
     for (const worker of picked) {
-      await db.insert(notifications).values({
+      await database.insert(notifications).values({
         userId: worker.id,
         type: "job_assigned",
         title: "New Job Assignment",
@@ -8597,38 +8599,19 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     try {
       const leadId = req.params.id;
       const userId = req.currentUser.id;
-      const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
-      if (!lead) return res.status(404).json({ error: "Job not found" });
-      const crew: string[] = Array.isArray(lead.crewMembers) ? lead.crewMembers : [];
-      if (!crew.includes(userId)) return res.status(403).json({ error: "Not assigned to this job" });
-
-      // Persist acceptance: add to acceptedByEmployees array (idempotent)
-      const alreadyAccepted: string[] = Array.isArray(lead.acceptedByEmployees) ? lead.acceptedByEmployees : [];
-      if (!alreadyAccepted.includes(userId)) {
-        const [updatedLead] = await db.update(leads)
-          .set({ acceptedByEmployees: [...alreadyAccepted, userId] })
-          .where(eq(leads.id, leadId))
-          .returning();
-        if (updatedLead) {
-          await emitJobEvent("job_updated", updatedLead, {
-            actorId: userId,
-            source: "assigned_job_accept",
-            note: "Assigned crew member accepted the job.",
-            extra: { acceptedByUserId: userId },
-          });
-        }
+      const changed = await acceptAssignedJob(db, leadId, userId);
+      if (changed) {
+        await emitJobEvent("job_updated", leadId, {
+          actorId: userId,
+          source: "assigned_job_accept",
+          note: "Assigned crew member accepted the job.",
+          extra: { acceptedByUserId: userId },
+        });
       }
-
-      // Lock worker — mark unavailable so they won't be dispatched to new jobs
-      await db.update(users).set({ isAvailable: false }).where(eq(users.id, userId));
-
-      // Mark notification read
-      await db.update(notifications)
-        .set({ read: true })
-        .where(and(eq(notifications.userId, userId), sql`data->>'leadId' = ${leadId}`));
 
       res.json({ success: true, message: "Job accepted" });
     } catch (err) {
+      if (err instanceof AssignedJobRequestError) return res.status(err.status).json({ error: err.message });
       console.error("Error accepting job:", err);
       res.status(500).json({ error: "Failed to accept job" });
     }
@@ -8639,49 +8622,21 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     try {
       const leadId = req.params.id;
       const userId = req.currentUser.id;
-      const [lead] = await db.select().from(leads).where(eq(leads.id, leadId));
-      if (!lead) return res.status(404).json({ error: "Job not found" });
-      const crew: string[] = Array.isArray(lead.crewMembers) ? lead.crewMembers : [];
-      if (!crew.includes(userId)) return res.status(403).json({ error: "Not assigned to this job" });
-
-      // Confirmed slots stay; decliner is removed from crewMembers
-      const confirmedCrew: string[] = (Array.isArray(lead.acceptedByEmployees) ? lead.acceptedByEmployees : [])
-        .filter(id => id !== userId);
-      const remainingCrew = crew.filter(id => id !== userId);
-
-      await db.update(leads)
-        .set({
-          crewMembers: remainingCrew,
-          acceptedByEmployees: confirmedCrew,
-          status: "open",
-        })
-        .where(eq(leads.id, leadId));
-
-      // Restore availability — worker declined so they're free for other jobs again
-      await db.update(users).set({ isAvailable: true }).where(eq(users.id, userId));
-
-      // Mark notification read
-      await db.update(notifications)
-        .set({ read: true })
-        .where(and(eq(notifications.userId, userId), sql`data->>'leadId' = ${leadId}`));
-
-      // Re-dispatch: preserve ALL remaining workers (confirmed + pending), find a replacement
-      // Use crewSize >= 2 as a proxy for needsDriver (all multi-person tiers require a driver)
-      const crewSize = lead.crewSize || 1;
-      const slotsNeeded = crewSize - remainingCrew.length;
-      if (slotsNeeded > 0) {
+      await declineAssignedJob(db, leadId, userId, async (tx, crewSize, remainingCrew) => {
         await runDispatch(
           leadId,
           crewSize,
-          slotsNeeded,
+          crewSize - remainingCrew.length,
           crewSize >= 2, // needsDriver heuristic
-          remainingCrew, // existingCrew — keep ALL currently assigned workers, not just confirmed
-          [userId],      // excludeIds — skip the decliner
+          remainingCrew,
+          [userId],
+          tx,
         );
-      }
+      });
 
       res.json({ success: true, message: "Job declined" });
     } catch (err) {
+      if (err instanceof AssignedJobRequestError) return res.status(err.status).json({ error: err.message });
       console.error("Error declining job:", err);
       res.status(500).json({ error: "Failed to decline job" });
     }
@@ -8691,25 +8646,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
   app.get("/api/jobs/my-pending", isAuthenticated, requireEmployee, async (req: any, res) => {
     try {
       const userId = req.currentUser.id;
-      // Jobs where user is in crewMembers but NOT yet in acceptedByEmployees
-      const assignedJobs = await db.select({
-        id: leads.id,
-        serviceType: leads.serviceType,
-        status: leads.status,
-        fromAddress: leads.fromAddress,
-        details: leads.details,
-        basePrice: leads.basePrice,
-        crewSize: leads.crewSize,
-        crewMembers: leads.crewMembers,
-        acceptedByEmployees: leads.acceptedByEmployees,
-        createdAt: leads.createdAt,
-      }).from(leads)
-        .where(and(
-          sql`${userId} = ANY(${leads.crewMembers})`,
-          sql`NOT (${userId} = ANY(COALESCE(${leads.acceptedByEmployees}, ARRAY[]::text[])))`,
-          inArray(leads.status, ["assigned", "open"]),
-        ))
-        .orderBy(desc(leads.createdAt));
+      const assignedJobs = await listPendingJobRequests(db, userId);
       const authority = await getWorkerAuthority(req.currentUser);
       res.json(assignedJobs.map((job) => projectWorkerOrder(job, authority.authorityTier, "assigned")));
     } catch (err) {
