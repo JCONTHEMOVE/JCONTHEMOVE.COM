@@ -87,9 +87,11 @@ async function svgTextLine(text: string, x: number, y: number, size: number, max
   const measured = await sharp({
     text: { text: escapedText, font: `${fontFamily} Bold ${size}`, dpi: 72, rgba: true },
   }).metadata();
-  // Measure with the same font renderer; leave room for rasterization rounding.
-  const fittedSize = Math.min(size, Math.floor(size * (maxWidth - 4) / (measured.width || maxWidth)));
-  return `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${fittedSize}" font-weight="700" fill="${options.fill || "#ffffff"}" text-anchor="${options.anchor || "start"}">${escapedText}</text>`;
+  // Reserve space for glyph bearings (e.g. DejaVu's J overhangs its origin)
+  // as well as rasterization rounding on both sides of the layout slot.
+  const fittedSize = Math.min(size, Math.floor(size * (maxWidth - 16) / (measured.width || maxWidth)));
+  const textX = options.anchor === "middle" ? x : x + 6;
+  return `<text x="${textX}" y="${y}" font-family="${fontFamily}" font-size="${fittedSize}" font-weight="700" fill="${options.fill || "#ffffff"}" text-anchor="${options.anchor || "start"}">${escapedText}</text>`;
 }
 
 export async function buildMarketingOverlaySvg(

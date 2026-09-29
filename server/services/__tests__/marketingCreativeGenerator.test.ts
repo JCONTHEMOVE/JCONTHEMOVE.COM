@@ -84,9 +84,11 @@ for (const variant of ["feed", "og"] as const) {
         const y = Number(text.getAttribute("y"));
         const centered = text.getAttribute("text-anchor") === "middle";
         const maxWidth = variant === "feed"
-          ? centered ? 512 : x === 91 ? 898 : 956
-          : centered ? 422 : x === 82 ? 527 : x === 58 ? 1084 : 1080;
-        const left = centered ? x - maxWidth / 2 : x;
+          ? centered ? 512 : y === 922 || y === 1043 ? 898 : 956
+          : centered ? 422 : y === 379 ? 527 : y === 448 || y === 545 ? 1080 : 1084;
+        const left = centered ? x - maxWidth / 2 : variant === "feed"
+          ? y === 922 || y === 1043 ? 91 : 62
+          : y === 379 ? 82 : y === 448 || y === 545 ? 60 : 58;
         const right = left + maxWidth;
         const { data, info } = await sharp(Buffer.from(
           `<svg xmlns="http://www.w3.org/2000/svg" width="${root.getAttribute("width")}" height="${root.getAttribute("height")}">${text.outerHTML}</svg>`,
