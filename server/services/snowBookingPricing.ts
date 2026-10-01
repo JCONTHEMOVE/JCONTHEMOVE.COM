@@ -7,8 +7,9 @@ import type { BookingPricingItemInput, BookingPricingResult } from "./bookingPri
 type IntakeItem = { serviceCode: string; quantity: number; details?: Record<string, unknown> | null };
 
 /** Presence, not validity, selects the new intake. Malformed markers fail closed. */
-export function isSnowCalculatorItem(item: Pick<IntakeItem, "serviceCode" | "details">): boolean {
+export function isSnowCalculatorItem(item: { serviceCode: string; details?: unknown }): boolean {
   return item.serviceCode === "snow_removal" && !!item.details
+    && typeof item.details === "object" && !Array.isArray(item.details)
     && Object.prototype.hasOwnProperty.call(item.details, "snowQuote");
 }
 

@@ -78,10 +78,30 @@ for (const item of [
 }
 const inheritedMarker = { serviceCode: "snow_removal", quantity: 1, details: Object.create({ snowQuote: seasonal }) };
 assert.equal(isSnowCalculatorItem(inheritedMarker), false, "the structured marker must be an own property");
-for (const invalid of [null, undefined, [], {}, { ...seasonal, version: 2 }]) {
+const invalidDetails: unknown[] = [
+  null, undefined, false, true, 0, 42, "", "snowQuote", JSON.stringify({ snowQuote: seasonal }),
+  [], [{ snowQuote: seasonal }], Object.assign([], { snowQuote: seasonal }),
+];
+for (const details of invalidDetails) {
+  assert.equal(isSnowCalculatorItem({ serviceCode: "snow_removal", details }), false,
+    "only non-array object details can carry a snow calculator marker");
+}
+// Persisted Drizzle rows deliberately expose JSON details as unknown. Keep
+// the detector usable as their Array.some callback without a cast.
+const storedServiceItems: Array<{ serviceCode: string; details: unknown }> = [
+  ...invalidDetails.map(details => ({ serviceCode: "snow_removal", details })),
+  { serviceCode: "snow_removal", details: {} },
+  { serviceCode: "moving", details: { snowQuote: seasonal } },
+];
+assert.equal(storedServiceItems.some(isSnowCalculatorItem), false);
+storedServiceItems.push({ serviceCode: "snow_removal", details: { snowQuote: seasonal } });
+assert.equal(storedServiceItems.some(isSnowCalculatorItem), true, "valid stored snow quotes are detected");
+for (const invalid of [null, undefined, false, 0, "invalid", [], {}, { ...seasonal, version: 2 }]) {
   const item = { serviceCode: "snow_removal", quantity: 1, details: { snowQuote: invalid } };
   assert.equal(isSnowCalculatorItem(item), true, "an invalid explicit marker must not fall back to legacy pricing");
   assert.throws(() => resolveSnowBookingItem(item), { name: "SnowPricingValidationError" });
+  assert.throws(() => assertSnowDraftPaymentAllowed([item], { payFromWallet: true }), /staff approval before payment/);
+  assert.throws(() => assertSnowDraftPaymentAllowed([item], { applyTokens: 1 }), /staff approval before payment/);
 }
 for (const quantity of [0, 2, -1, 0.5, NaN]) {
   assert.throws(() => resolveSnowBookingItem({ ...untrusted, quantity }), /one snow plan/);
