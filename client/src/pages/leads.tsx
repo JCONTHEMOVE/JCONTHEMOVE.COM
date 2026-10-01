@@ -63,15 +63,15 @@ export default function LeadsPage() {
   const isAdmin = ["admin", "business_owner"].includes(currentUser?.role || "");
   const requestedTab = new URLSearchParams(location.split("?")[1] || "").get("tab");
   const requestedDate = new URLSearchParams(location.split("?")[1] || "").get("date") || undefined;
-  const [activeTab, setActiveTab] = useState(requestedTab === "add" ? "add" : "view");
+  const [activeTab, setActiveTab] = useState(requestedTab === "add" || (requestedTab === "cleanup" && isAdmin) ? requestedTab : "view");
   const [orderSearch, setOrderSearch] = useState("");
   const [orderSearchQuery, setOrderSearchQuery] = useState("");
   const [lookupResult, setLookupResult] = useState<Lead | null>(null);
   const [lookupError, setLookupError] = useState("");
 
   useEffect(() => {
-    if (requestedTab === "add") setActiveTab("add");
-  }, [requestedTab]);
+    if (requestedTab === "add" || (requestedTab === "cleanup" && isAdmin)) setActiveTab(requestedTab);
+  }, [requestedTab, isAdmin]);
 
   const serviceOptions = [
     { value: "residential", label: "Residential Moving", icon: Home },

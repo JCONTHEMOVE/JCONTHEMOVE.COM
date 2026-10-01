@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'wouter';
 import { ArrowUpRight, BriefcaseBusiness, CalendarDays, ChevronRight, Database, Gift, Megaphone, Plus, RefreshCw, Wallet, type LucideIcon } from 'lucide-react';
 import { currentWork, serviceDay, type WorkerHomeJob } from '@shared/workerHome';
-import { insightStage } from '@shared/workInsights';
+import { insightStage, type InsightStage } from '@shared/workInsights';
 import { WorkerMonthlyProgress } from '@/components/worker-monthly-progress';
 import { apiRequest } from '@/lib/queryClient';
 
@@ -12,10 +12,24 @@ type Planner = { items: HomeJob[]; viewer: { canAddJob: boolean } };
 const action = 'inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400';
 
 type RequestResponse = { job: HomeJob; decision: 'accept' | 'decline' };
+const statusFilters: { key: InsightStage; label: string }[] = [
+  { key: 'quote', label: 'Quote needed' },
+  { key: 'schedule', label: 'Schedule needed' },
+  { key: 'crew', label: 'Crew setup' },
+  { key: 'working', label: 'In progress' },
+  { key: 'other', label: 'Other active' },
+];
+const activeStatuses = statusFilters.map(({ key }) => key);
+function chicagoToday() {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const part = (type: string) => parts.find(item => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
 
-function WorkRow({ job, request = false, onRespond, busy = false, decision }: {
+function WorkRow({ job, request = false, pastDue = false, onRespond, busy = false, decision }: {
   job: HomeJob;
   request?: boolean;
+  pastDue?: boolean;
   onRespond?: (response: RequestResponse) => void;
   busy?: boolean;
   decision?: RequestResponse['decision'];
@@ -24,7 +38,7 @@ function WorkRow({ job, request = false, onRespond, busy = false, decision }: {
   const date = day ? new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(`${day}T12:00:00`)) : 'Date to confirm';
   return <li><Link href={`/lead/${encodeURIComponent(job.id)}?returnTo=%2Fcrew`} className="flex min-h-20 items-center gap-3 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400">
     <BriefcaseBusiness aria-hidden="true" className={`h-5 w-5 shrink-0 ${request ? 'text-amber-300' : 'text-emerald-300'}`} />
-    <span className="min-w-0 flex-1"><span className="block break-words text-sm font-semibold capitalize">{(job.serviceType || 'Service').replace(/[_-]/g, ' ')} <span className="font-normal text-zinc-400">#{job.orderNumber ?? job.id.slice(0, 8)}</span></span><span className="mt-1 block text-xs text-zinc-400">{date}{job.arrivalWindow ? `, ${job.arrivalWindow}` : ''}</span><span className="mt-1 block text-xs text-zinc-300">{request ? 'Your response needed' : job.flow?.label || (job.status || 'Open').replace(/[_-]/g, ' ')}</span></span>
+    <span className="min-w-0 flex-1"><span className="block break-words text-sm font-semibold capitalize">{(job.serviceType || 'Service').replace(/[_-]/g, ' ')} <span className="font-normal text-zinc-400">#{job.orderNumber ?? job.id.slice(0, 8)}</span></span><span className="mt-1 block text-xs text-zinc-400">{date}{job.arrivalWindow ? `, ${job.arrivalWindow}` : ''}</span><span className="mt-1 block text-xs text-zinc-300">{request ? 'Your response needed' : job.flow?.label || (job.status || 'Open').replace(/[_-]/g, ' ')}</span>{pastDue && <span className="mt-1 block text-xs font-medium text-amber-300">Past service date · Review status and closeout</span>}</span>
     <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-zinc-400" />
   </Link>{request && onRespond && <div className="flex flex-wrap gap-2 pb-3 pl-8">
     <button type="button" className={`${action} bg-emerald-400 text-zinc-950 disabled:opacity-50`} disabled={busy} aria-label={`Accept job #${job.orderNumber ?? job.id.slice(0, 8)}`} onClick={() => onRespond({ job, decision: 'accept' })}>{decision === 'accept' ? 'Accepting...' : 'Accept job'}</button>
@@ -61,11 +75,26 @@ export default function CrewHomePage() {
     },
   });
   const [filter, setFilter] = useState<'all' | 'leads' | 'jobs'>('all');
+  const [selectedStatuses, setSelectedStatuses] = useState<InsightStage[]>(activeStatuses);
+  const [pastDueOnly, setPastDueOnly] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const pending = currentWork(requests.data || []);
   const pendingIds = new Set(pending.map(job => job.id));
   const work = currentWork(planner.data?.items || []).filter(job => !pendingIds.has(job.id));
-  const filtered = work.filter(job => filter === 'all' || (filter === 'leads' ? insightStage(job) === 'quote' : insightStage(job) !== 'quote'));
+  const today = chicagoToday();
+  const isPastDue = (job: HomeJob) => {
+    const day = serviceDay(job);
+    return day !== null && day < today;
+  };
+  const pastDueCount = work.filter(isPastDue).length;
+  const filtered = work.filter(job =>
+    (filter === 'all' || (filter === 'leads' ? insightStage(job) === 'quote' : insightStage(job) !== 'quote'))
+    && selectedStatuses.includes(insightStage(job))
+    && (!pastDueOnly || isPastDue(job)));
+  function toggleStatus(status: InsightStage) {
+    setSelectedStatuses(current => current.includes(status) ? current.filter(item => item !== status) : [...current, status]);
+    setShowAll(false);
+  }
   const refreshing = planner.isFetching || requests.isFetching;
   function refresh() { void planner.refetch(); void requests.refetch(); }
 
@@ -80,9 +109,14 @@ export default function CrewHomePage() {
       {requests.isLoading && <p role="status" className="py-3 text-sm text-zinc-400">Loading requests...</p>}
       {requests.data && (pending.length ? <ul className="max-h-80 overflow-y-auto divide-y divide-zinc-800">{pending.map(job => <WorkRow key={job.id} job={job} request onRespond={response => respond.mutate(response)} busy={respond.isPending} decision={respond.isPending && respond.variables.job.id === job.id ? respond.variables.decision : undefined} />)}</ul> : <p className="py-3 text-sm text-zinc-400">No job requests awaiting your response.</p>)}
       <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-zinc-800 pt-4"><h3 className="text-sm font-semibold">Current leads & jobs{planner.data ? ` (${work.length})` : ''}</h3><div className="flex rounded-md bg-zinc-900 p-1" role="group" aria-label="Work filter">{(['all', 'leads', 'jobs'] as const).map(value => <button type="button" key={value} aria-pressed={filter === value} onClick={() => { setFilter(value); setShowAll(false); }} className={`min-h-10 rounded px-3 text-xs capitalize ${filter === value ? 'bg-zinc-700 text-white' : 'text-zinc-400'}`}>{value}</button>)}</div></div>
+      <fieldset className="mt-4 rounded-lg border border-zinc-800 p-3"><legend className="px-1 text-xs font-semibold text-zinc-300">Filter by status</legend><div className="flex flex-wrap gap-x-4 gap-y-2">{statusFilters.map(({ key, label }) => <label key={key} className="flex min-h-10 cursor-pointer items-center gap-2 text-xs text-zinc-200"><input type="checkbox" checked={selectedStatuses.includes(key)} onChange={() => toggleStatus(key)} className="h-4 w-4 accent-emerald-400" />{label} <span className="text-zinc-500">({work.filter(job => insightStage(job) === key).length})</span></label>)}</div><button type="button" className="mt-1 min-h-10 text-xs text-emerald-300 underline" onClick={() => { setSelectedStatuses(activeStatuses); setPastDueOnly(false); setShowAll(false); }}>Show all statuses</button></fieldset>
+      <label className="mt-2 flex min-h-11 cursor-pointer items-center gap-2 text-sm text-amber-200"><input type="checkbox" checked={pastDueOnly} onChange={event => { setPastDueOnly(event.target.checked); setShowAll(false); }} className="h-4 w-4 accent-amber-300" />Past service date ({pastDueCount})</label>
+      {pastDueOnly && <p className="pb-2 text-xs text-zinc-400">Open each job to confirm whether it was completed, rescheduled, or should be archived.</p>}
+      {pastDueOnly && planner.data?.viewer.canAddJob && <Link href="/leads?tab=cleanup" className="inline-flex min-h-10 items-center text-xs text-emerald-300 underline">Review archive candidates</Link>}
+      {planner.data && <p className="py-2 text-xs text-zinc-400" role="status">Showing {filtered.length} of {work.length} current leads and jobs.</p>}
       {planner.isError && <p role="alert" className="py-3 text-sm text-amber-300">{planner.data ? 'Work could not refresh. Showing the last loaded records.' : 'Current work could not load.'} <button type="button" className="min-h-11 underline" onClick={() => void planner.refetch()}>Retry work</button></p>}
       {planner.isLoading && <p role="status" className="py-3 text-sm text-zinc-400">Loading current work...</p>}
-      {planner.data && (filtered.length ? <ul className="divide-y divide-zinc-800">{(showAll ? filtered : filtered.slice(0, 5)).map(job => <WorkRow key={job.id} job={job} />)}</ul> : <p className="py-5 text-sm text-zinc-400">{filter === 'leads' ? 'No current leads.' : filter === 'jobs' ? 'No current jobs.' : 'No current work available to your account.'}</p>)}
+      {planner.data && (filtered.length ? <ul className="divide-y divide-zinc-800">{(showAll ? filtered : filtered.slice(0, 5)).map(job => <WorkRow key={job.id} job={job} pastDue={isPastDue(job)} />)}</ul> : <p className="py-5 text-sm text-zinc-400">{work.length ? 'No work matches these filters.' : 'No current work available to your account.'}</p>)}
       {filtered.length > 5 && <button type="button" className={`${action} mt-2 text-emerald-300`} onClick={() => setShowAll(!showAll)}>{showAll ? 'Show fewer' : `View all ${filtered.length}`}</button>}
     </section>
 
