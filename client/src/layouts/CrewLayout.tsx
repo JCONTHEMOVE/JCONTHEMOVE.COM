@@ -20,7 +20,7 @@ const optionLinks = [
   { label: "Get work", description: "Marketing materials and referral links", icon: Megaphone, path: "/crew/marketing" },
   { label: "Pricing datasets", description: "Job scenarios and pricing contributions", icon: Users, path: "/crew/pricing-training" },
   { label: "Monthly progress", description: "Job stages and tracking", icon: BarChart3, path: "/crew/progress" },
-  { label: "Rewards & redemptions", description: "Reward shop and redemption history", icon: Gift, path: "/marketplace?view=crew" },
+  { label: "Rewards & redemptions", description: "Reward shop and redemption history", icon: Gift, path: "/crew/rewards" },
   { label: "Schedule", description: "Availability and blocked days", icon: Calendar, path: "/crew/schedule" },
   { label: "Reviews", description: "Customer feedback and rating", icon: Star, path: "/crew/reviews" },
   { label: "Earnings", description: "Payouts, JCMOVES, history", icon: Coins, path: "/crew/earnings" },
@@ -48,7 +48,7 @@ export default function CrewLayout({ children }: { children: ReactNode }) {
     { label: "Work", path: "/crew", icon: Briefcase, active: ["/crew", "/crew/", "/crew/calendar", "/crew/jobs", "/crew/add-job", "/crew/schedule"].includes(location) },
     { label: "Get work", path: "/crew/marketing", icon: Megaphone, active: ["/crew/marketing", "/crew/pricing-training"].includes(location) },
     { label: "Progress", path: "/crew/progress", icon: BarChart3, active: location === "/crew/progress" },
-    { label: "Rewards", path: "/marketplace?view=crew", icon: Gift, active: location === "/crew/earnings" },
+    { label: "Rewards", path: "/crew/rewards", icon: Gift, active: location === "/crew/rewards" || location.startsWith("/crew/rewards?") },
   ];
 
   function go(path: string) {
