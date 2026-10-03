@@ -115,7 +115,10 @@ async function mount(t, role = "customer", width = 1200, initialPath = "/handmad
 // Both responsive grids exist in the DOM; CSS shows one at a time in the app.
 const productButton = () => screen.getAllByRole("button", { name: "View Fixture Copper Bracelet" })[0];
 const productDialog = () => screen.getByRole("dialog", { name: "Fixture Copper Bracelet" });
-async function closed() { await waitFor(() => assert.equal(screen.queryByRole("dialog"), null)); }
+// Compare booleans while polling: Node 24's assertion formatter can exhaust memory
+// inspecting React's circular DOM objects before an expected focus/close retry.
+async function closed() { await waitFor(() => assert.equal(screen.queryByRole("dialog") === null, true, "Dialogs should close")); }
+async function focused(element) { await waitFor(() => assert.equal(document.activeElement === element, true, "Focus should return to the opener")); }
 
 for (const key of ["{Enter}", " "]) {
   test(`product cards open with ${key}, contain Tab focus, and return focus after Escape`, async (t) => {
@@ -132,7 +135,7 @@ for (const key of ["{Enter}", " "]) {
     assert.equal(document.activeElement, last);
     await interact(() => user.keyboard("{Escape}"));
     await closed();
-    await waitFor(() => assert.equal(document.activeElement, opener));
+    await focused(opener);
   });
 }
 
@@ -149,7 +152,7 @@ test("named photo controls change the selected photo; close restores the card", 
   assert.equal(dialog.getByRole("img", { name: pieces[0].title }).getAttribute("src"), "/fixture-front.jpg");
   await interact(() => user.click(dialog.getByRole("button", { name: "Close product details" })));
   await closed();
-  await waitFor(() => assert.equal(document.activeElement, opener));
+  await focused(opener);
 });
 
 test("wishlist and nested product dialogs trap and restore focus without opening a product from its heart", async (t) => {
@@ -170,10 +173,10 @@ test("wishlist and nested product dialogs trap and restore focus without opening
   await interact(() => user.click(view));
   assert.ok(productDialog());
   await interact(() => user.keyboard("{Escape}"));
-  await waitFor(() => assert.equal(document.activeElement, view));
+  await focused(view);
   await interact(() => user.keyboard("{Escape}"));
   await closed();
-  await waitFor(() => assert.equal(document.activeElement, opener));
+  await focused(opener);
 });
 
 test("mobile keyboard selection preserves the dedicated product route", async (t) => {
@@ -203,7 +206,7 @@ test("header, search, filters, and custom-order form have accessible names and f
     assert.ok(dialog.getByRole("textbox", { name }));
   await interact(() => user.keyboard("{Escape}"));
   await closed();
-  await waitFor(() => assert.equal(document.activeElement, opener));
+  await focused(opener);
 });
 
 test("product-to-custom-order transition keeps focus in the form and returns to the product card", async (t) => {
@@ -215,7 +218,7 @@ test("product-to-custom-order transition keeps focus in the form and returns to 
   await waitFor(() => assert.ok(form.contains(document.activeElement)));
   await interact(() => user.keyboard("{Escape}"));
   await closed();
-  await waitFor(() => assert.equal(document.activeElement, opener));
+  await focused(opener);
 });
 
 test("admin listing and edit controls are named and dismiss without modifying inventory", async (t) => {
@@ -237,14 +240,14 @@ test("admin listing and edit controls are named and dismiss without modifying in
   assert.ok(chat.getByRole("button", { name: "Send reply" }));
   await interact(() => user.keyboard("{Escape}"));
   await closed();
-  await waitFor(() => assert.equal(document.activeElement, ai));
+  await focused(ai);
   const opener = productButton();
   await interact(() => user.click(opener));
   await interact(() => user.click(within(productDialog()).getByRole("button", { name: "Edit", exact: true })));
   assert.ok(within(screen.getByRole("dialog", { name: "Edit Piece" })).getByRole("textbox", { name: "Title", exact: true }));
   await interact(() => user.keyboard("{Escape}"));
   await closed();
-  await waitFor(() => assert.equal(document.activeElement, opener));
+  await focused(opener);
 });
 
 test("signup opens the existing registration form with a return path to Ashley’s store", async (t) => {

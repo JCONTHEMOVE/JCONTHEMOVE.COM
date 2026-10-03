@@ -43,6 +43,7 @@ import {
   type CanonicalPricingSnapshot,
 } from "@shared/canonicalPricing";
 import { calculateLaborBooking } from "@shared/laborBooking";
+import { parseSnowQuoteInput } from "@shared/snowPricing";
 import {
   getMarketplaceRequestShape,
   getMarketplaceShapeForServiceCode,
@@ -67,6 +68,7 @@ import {
   emojiFor, schedulingModeFor,
   formatMovingFlowSummary, formatQuoteLinePrice, quoteLineForItem, quoteCrewSize,
   formatRequestedSchedule, PICKER_SPECIAL_ITEMS,
+  hasStructuredSnowQuote, SnowQuoteSummary,
 } from "@/components/MultiBookingFlow";
 
 interface BundleSlots {
@@ -360,6 +362,7 @@ function makeItem(svc: CatalogService): SelectedItem {
 
 interface CreateBookingResponse {
   success: true;
+  workflowStatus?: "ready_for_review" | "needs_staff_recovery";
   confirmationEmailSent: boolean;
   booking: {
     id: string;
@@ -801,6 +804,11 @@ function safetyNeedsAttention(item: SelectedItem): string | null {
 }
 
 function itemNeedsAttention(item: SelectedItem): string | null {
+  if (hasStructuredSnowQuote(item)) {
+    try { parseSnowQuoteInput(item.details.snowQuote); }
+    catch { return "Reselect snow options in the snow calculator"; }
+    return item.details.requestedDate ? null : "Preferred start date required";
+  }
   // Task #141: Moving / Junk Removal must pass through the package picker so
   // we capture crew, hours and tier (and any JC222 flat-rate eligibility)
   // before the booking submits.
@@ -1362,12 +1370,13 @@ function DetailedBookPage() {
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   const [confirmation, setConfirmation] = useState<
-    CreateBookingResponse["booking"] & { items: SelectedItem[]; quote: QuoteResult; confirmationEmailSent: boolean } | null
+    CreateBookingResponse["booking"] & { items: SelectedItem[]; quote: QuoteResult; confirmationEmailSent: boolean; workflowStatus?: CreateBookingResponse["workflowStatus"] } | null
   >(null);
   const stepIndex = (s: Step) => STEPS.indexOf(s);
   const hasMovingService = useMemo(() => items.some((item) => item.serviceCode === "moving"), [items]);
+  const hasDraftSnowQuote = items.some(hasStructuredSnowQuote);
   const hasApprovalOnlyQuoteItems = useMemo(
-    () => items.some((item) => item.serviceCode === "moving" || item.serviceCode === "junk_removal"),
+    () => items.some((item) => item.serviceCode === "moving" || item.serviceCode === "junk_removal" || hasStructuredSnowQuote(item)),
     [items],
   );
   const primaryMarketplaceItem = useMemo(() => {
@@ -1652,11 +1661,12 @@ function DetailedBookPage() {
   ]);
 
   const tokenSliderMax = useMemo(() => {
+    if (hasDraftSnowQuote) return 0;
     const subtotal = quote?.subtotal ?? 0;
     if (subtotal <= 0) return 0;
     const tierCap = maxTokensForSubtotal(subtotal, customerTier);
     return Math.min(walletTokens, tierCap);
-  }, [quote?.subtotal, customerTier, walletTokens]);
+  }, [quote?.subtotal, customerTier, walletTokens, hasDraftSnowQuote]);
 
   useEffect(() => {
     if (applyTokens === 0) return;
@@ -1676,8 +1686,8 @@ function DetailedBookPage() {
   useEffect(() => {
     if (!payFromWallet) return;
     const total = quote?.finalTotal ?? 0;
-    if (walletCash < total) setPayFromWallet(false);
-  }, [walletCash, quote?.finalTotal, payFromWallet]);
+    if (hasDraftSnowQuote || walletCash < total) setPayFromWallet(false);
+  }, [walletCash, quote?.finalTotal, payFromWallet, hasDraftSnowQuote]);
 
   // ── Live quote (debounced + latest-wins to prevent stale-response races)
   // `quoteCartSig` records the cart signature the current `quote` represents.
@@ -1706,7 +1716,7 @@ function DetailedBookPage() {
         })),
         source: "web_multi_book",
       };
-      if (payload.applyTokens >= MIN_REDEMPTION_TOKENS) {
+      if (!payload.payloadItems.some(hasStructuredSnowQuote) && payload.applyTokens >= MIN_REDEMPTION_TOKENS) {
         body.applyTokens = payload.applyTokens;
         body.customerTier = customerTier;
       }
@@ -2342,10 +2352,13 @@ function DetailedBookPage() {
     if (firstCode) {
       next = next.map((item) => {
         if (item.serviceCode !== firstCode) return item;
+        const structuredSnow = item.serviceCode === "snow_removal" && Object.prototype.hasOwnProperty.call(urlPrefill.lineDetails, "snowQuote");
         return {
           ...item,
           label: urlPrefill.lineLabel || item.label,
-          unitPrice: urlPrefill.linePrice ?? item.unitPrice,
+          unitPrice: structuredSnow ? 0 : urlPrefill.linePrice ?? item.unitPrice,
+          quantity: structuredSnow ? 1 : item.quantity,
+          priceMode: structuredSnow ? "quote" as const : item.priceMode,
           details: detailsWithMarketplaceShape({
             ...item.details,
             ...(urlPrefill.requestedDate ? { requestedDate: urlPrefill.requestedDate } : {}),
@@ -2495,13 +2508,13 @@ function DetailedBookPage() {
           // Re-clamp at submit so a stale state value can never bypass
           // the slider's tier/wallet cap (defense in depth — the effect
           // above already normalises on cap changes).
-          const capped = Math.min(applyTokens, tokenSliderMax);
+          const capped = hasDraftSnowQuote ? 0 : Math.min(applyTokens, tokenSliderMax);
           const snapped = Math.floor(capped / REDEMPTION_INCREMENT) * REDEMPTION_INCREMENT;
           return snapped >= MIN_REDEMPTION_TOKENS
             ? { applyTokens: snapped, customerTier }
             : {};
         })()),
-        ...(payFromWallet ? { payFromWallet: true } : {}),
+        ...(payFromWallet && !hasDraftSnowQuote ? { payFromWallet: true } : {}),
       });
       return res.json() as Promise<CreateBookingResponse>;
     },
@@ -2512,6 +2525,7 @@ function DetailedBookPage() {
           items: [...items],
           quote: data.quote,
           confirmationEmailSent: data.confirmationEmailSent,
+          workflowStatus: data.workflowStatus,
         });
         trackBookingFunnel("submit_success", {
           bookingId: data.booking.id,
@@ -2552,6 +2566,10 @@ function DetailedBookPage() {
     // case a user removes their last service after step 1 and tries to
     // proceed/submit (server requires items.length > 0 — would 400).
     if (items.length === 0) return "Add at least one service to continue";
+    if (hasDraftSnowQuote && step === "review") {
+      if (quoteMutation.isPending || !quote) return "Wait for the snow estimate to update";
+      if (tokenError) return "Resolve the estimate error before submitting";
+    }
     if (stepIndex(step) >= stepIndex("address")) {
       if (!serviceAddress.trim()) return "Enter the service address";
     }
@@ -2597,9 +2615,10 @@ function DetailedBookPage() {
     const discount = Number(c.quote?.discountTotal ?? c.discountTotal ?? 0);
     const serviceAddressDiscountAmount = c.quote?.serviceAddressDiscount?.amount ?? 0;
     const bundleDiscountAmount = Math.max(0, discount - serviceAddressDiscountAmount);
-    const crew = quoteCrewSize(c.quote, c.items);
+    const crew = c.items.some(hasStructuredSnowQuote) ? 0 : quoteCrewSize(c.quote, c.items);
     const confirmationPrimaryItem = c.items[0];
-    const approvalOnlyConfirmation = c.items.some((item) => item.serviceCode === "moving" || item.serviceCode === "junk_removal");
+    const snowConfirmation = c.items.some(hasStructuredSnowQuote);
+    const approvalOnlyConfirmation = c.items.some((item) => item.serviceCode === "moving" || item.serviceCode === "junk_removal" || hasStructuredSnowQuote(item));
     const trackUrl = c.customerEmail
       ? `/customer-login?intent=track&email=${encodeURIComponent(c.customerEmail)}`
       : "/customer-login?intent=track";
@@ -2624,7 +2643,7 @@ function DetailedBookPage() {
                 Your crew coordinator will contact you shortly at {c.customerPhone} to confirm price and scheduling.
               </p>
               <p className="text-xs text-muted-foreground mt-2">
-                Fast scheduling • Local crew • Rewards earned automatically
+                {snowConfirmation ? "Rewards remain pending until eligible work is completed and fully paid." : "Fast scheduling • Local crew • Rewards earned automatically"}
               </p>
             </div>
             <div className="rounded-xl border border-border bg-card p-4 text-left">
@@ -2634,13 +2653,18 @@ function DetailedBookPage() {
                 Mention this reference if you call or text before your coordinator reaches out.
               </p>
             </div>
+            {c.workflowStatus === "needs_staff_recovery" && (
+              <p role="status" className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-left text-sm">
+                Your request is saved, but staff still need to finish setting up its quote workflow. No payment has been taken. Keep reference {bookingReference}; call or text JC with this reference instead of submitting the request again.
+              </p>
+            )}
             <div className="grid grid-cols-3 gap-2 text-[10px] font-bold uppercase tracking-tight text-muted-foreground">
               <span className="flex items-center justify-center gap-1"><Shield className="h-3.5 w-3.5 text-emerald-500" /> Licensed</span>
               <span className="flex items-center justify-center gap-1"><Star className="h-3.5 w-3.5 text-yellow-500" /> 5-Star</span>
               <span className="flex items-center justify-center gap-1"><MapPin className="h-3.5 w-3.5 text-sky-500" /> Local Crew</span>
             </div>
             <div className="rounded-xl bg-card border border-border p-4 text-left space-y-3">
-              <p className="text-xs uppercase tracking-widest text-muted-foreground">Service secured</p>
+              <p className="text-xs uppercase tracking-widest text-muted-foreground">{approvalOnlyConfirmation ? "Service requested" : "Service secured"}</p>
               {c.items.map((i, idx) => {
                 const fallbackLinePrice = formatQuoteLinePrice(c.quote, i, idx, { fractionDigits: 2 });
                 // Use index alignment so duplicate lines of the same service
@@ -2661,7 +2685,7 @@ function DetailedBookPage() {
                       )}
                     </span>
                     <span className="font-semibold text-right whitespace-nowrap">
-                      {resolvedLineSubtotal !== null
+                      {hasStructuredSnowQuote(i) && i.details.snowQuote?.serviceType === "end_only" ? "Manual quote" : resolvedLineSubtotal !== null
                         ? `$${resolvedLineSubtotal.toFixed(2)}`
                         : fallbackLinePrice.text}
                       {(approvalOnlyConfirmation || fallbackLinePrice.isEstimate) && (
@@ -2671,6 +2695,7 @@ function DetailedBookPage() {
                   </div>
                 );
               })}
+              {c.items.filter(hasStructuredSnowQuote).map((item) => <SnowQuoteSummary key={item.serviceCode} item={item} />)}
               {!approvalOnlyConfirmation && <div className="flex justify-between text-base font-bold pt-2 border-t border-border">
                 <span>Subtotal</span>
                 <span>${subtotal.toFixed(2)}</span>
@@ -2701,10 +2726,10 @@ function DetailedBookPage() {
                 <div className="rounded-lg border border-blue-500/25 bg-blue-500/10 p-3 text-sm">
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-black text-blue-300">Saved estimate</p>
-                    <p className="text-lg font-black text-white">${finalTotal.toFixed(2)}</p>
+                    <p className="text-lg font-black text-white">{snowConfirmation && finalTotal === 0 ? "Manual quote" : `$${finalTotal.toFixed(2)}`}</p>
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    This saved estimate uses the same canonical pricing calculation shown on review. A specialist confirms scope before scheduling.
+                    {snowConfirmation ? "Your snow options are saved for staff review. The full plan budget is an estimate, not an invoice. A coordinator confirms the visit allowance and payment schedule before sending a Square payment request." : "This saved estimate uses the same canonical pricing calculation shown on review. A specialist confirms scope before scheduling."}
                   </p>
                 </div>
               )}
@@ -3324,7 +3349,7 @@ function DetailedBookPage() {
                   <div className="space-y-1.5">
                     {items.map((i, idx) => {
                       const linePrice = formatQuoteLinePrice(quote, i, idx, { fractionDigits: 2 });
-                      const approvalOnlyLine = i.serviceCode === "moving" || i.serviceCode === "junk_removal";
+                      const approvalOnlyLine = i.serviceCode === "moving" || i.serviceCode === "junk_removal" || hasStructuredSnowQuote(i);
                       // Use index alignment so duplicate lines of the same
                       // service get their own quote subtotal and crew details.
                       const quoteLine = quoteLineForItem(quote, i, idx);
@@ -3342,7 +3367,7 @@ function DetailedBookPage() {
                             )}
                           </span>
                           <span className="font-semibold whitespace-nowrap text-right">
-                            {approvalOnlyLine && !quoteLine ? "Quote review" : linePrice.text}
+                            {hasStructuredSnowQuote(i) && i.details.snowQuote?.serviceType === "end_only" ? "Manual quote" : approvalOnlyLine && !quoteLine ? "Quote review" : linePrice.text}
                             {(approvalOnlyLine || linePrice.isEstimate) && (
                               <span className="block text-[10px] font-normal text-muted-foreground">estimate · crew confirms</span>
                             )}
@@ -3352,6 +3377,14 @@ function DetailedBookPage() {
                     })}
                   </div>
                 </div>
+                {hasDraftSnowQuote && (
+                  <div className="border-t border-border pt-3 space-y-3">
+                    {items.filter(hasStructuredSnowQuote).map((item) => <SnowQuoteSummary key={item.serviceCode} item={item} address={serviceAddress} editable />)}
+                    <p className="text-sm font-semibold">{quoteMutation.isPending ? "Updating estimate…" : quote && quote.finalTotal > 0 ? `Full request estimate: $${quote.finalTotal.toFixed(2)}` : "Manual quote required"}</p>
+                    <p className="text-xs text-muted-foreground">Nothing is charged when you submit. Eligible rewards follow completed, fully paid work.</p>
+                    {tokenError && <p role="alert" className="text-sm text-red-600 dark:text-red-300">{tokenError}</p>}
+                  </div>
+                )}
                 {hasMovingService && (
                   <div className="border-t border-border pt-3">
                     <div className="rounded-xl border border-cyan-500/25 bg-cyan-500/10 p-3">
@@ -3444,9 +3477,9 @@ function DetailedBookPage() {
                 {hasApprovalOnlyQuoteItems && (
                   <div className="border-t border-border pt-3">
                     <div className="rounded-xl border border-blue-500/25 bg-blue-500/10 p-3">
-                      <p className="text-sm font-black text-blue-300">Quote being reviewed</p>
+                      <p className="text-sm font-black text-blue-300">{hasDraftSnowQuote ? "Ready to request a quote" : "Quote being reviewed"}</p>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        We saved the inventory and scheduling details. A specialist confirms the final price before scheduling.
+                        {hasDraftSnowQuote ? "Submit these snow options for review. A coordinator confirms price, scope, schedule and Square payment terms." : "We saved the inventory and scheduling details. A specialist confirms the final price before scheduling."}
                       </p>
                     </div>
                   </div>
@@ -3544,7 +3577,7 @@ function DetailedBookPage() {
                 );
               })()}
 
-              {!user && (
+              {!user && !hasDraftSnowQuote && (
                 <div className="mt-4 rounded-xl border border-border bg-muted/20 p-3 text-xs text-muted-foreground" data-testid="wallet-signin-hint">
                   <Coins className="inline h-3 w-3 mr-1 text-orange-500" />
                   Sign in to pay from your JCMOVES wallet or apply your tokens.
