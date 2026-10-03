@@ -41,10 +41,10 @@ jobs:
       - name: Checkout readiness verifier
         uses: actions/checkout@v4
 
-      - name: Use Node 20
+      - name: Use repository Node version
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: package.json
 
       - name: Verify public readiness
         run: node scripts/check-production-deploy.mjs "$PUBLIC_HEALTH_URL"
