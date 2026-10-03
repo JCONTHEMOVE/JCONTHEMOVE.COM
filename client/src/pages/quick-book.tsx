@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -44,7 +45,10 @@ import { SpeechInput } from "@/components/ai-elements/speech-input";
 import { JOB_SCHEDULE_OPTIONS } from "@shared/jcOperations";
 import { EMPTY_QUICK_BOOK_DRAFT, type QuickBookDraft, type QuickBookSessionResponse } from "@shared/quickBook";
 
+const QUICK_BOOK_SCHEDULE_OPTIONS = JOB_SCHEDULE_OPTIONS.filter(option => option.start);
+
 type Session = QuickBookSessionResponse & { canComplete: boolean };
+type AddressPatch = Partial<Pick<QuickBookDraft, "pickupAddress" | "destinationAddress">>;
 type ChatEntry = { id: string; role: "user" | "assistant"; text: string };
 type Delivery = {
   recipientUserId: string;
@@ -64,8 +68,6 @@ type BookedResult = {
   customerMessageSent: false;
   squareInvoiceCreated: false;
 };
-
-const SESSION_KEY = "jc.quickBookSessionId.v1";
 
 function buildVisualFixtureSession(): Session {
   const now = new Date().toISOString();
@@ -182,8 +184,11 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [startupError, setStartupError] = useState<string | null>(null);
   const [booked, setBooked] = useState<BookedResult | null>(null);
   const [newStop, setNewStop] = useState("");
+  const [addressPatch, setAddressPatch] = useState<AddressPatch | null>(null);
+  const queuedAddressPatch = useRef<AddressPatch | null>(null);
   const startedRef = useRef(false);
   const sessionRef = useRef<Session | null>(null);
   const idempotencyRef = useRef(crypto.randomUUID());
@@ -191,8 +196,7 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
   const applySession = useCallback((next: Session) => {
     sessionRef.current = next;
     setSession(next);
-    setDraft(next.draft);
-    if (!visualFixture) localStorage.setItem(SESSION_KEY, next.id);
+    setDraft({ ...next.draft, ...queuedAddressPatch.current });
   }, [visualFixture]);
 
   const createSession = useCallback(async () => {
@@ -221,23 +225,16 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
           await createSession();
           return;
         }
-        const savedId = localStorage.getItem(SESSION_KEY);
-        if (savedId) {
-          const existing = await requestJson<Session>(`/api/quick-book/sessions/${encodeURIComponent(savedId)}`);
-          if (existing.status === "draft" || existing.status === "ready") {
-            applySession(existing);
-            setMessages([{ id: crypto.randomUUID(), role: "assistant", text: `Draft resumed.\n\n${existing.nextQuestion}` }]);
-            return;
-          }
+        const existing = await requestJson<Session | null>("/api/quick-book/sessions/current");
+        if (existing) {
+          applySession(existing);
+          setMessages([{ id: crypto.randomUUID(), role: "assistant", text: `Draft resumed.\n\n${existing.nextQuestion}` }]);
+          return;
         }
         await createSession();
       } catch (error) {
-        try {
-          localStorage.removeItem(SESSION_KEY);
-          await createSession();
-        } catch (retryError) {
-          toast({ title: "Quick Book could not start", description: retryError instanceof Error ? retryError.message : "Try again.", variant: "destructive" });
-        }
+        setStartupError(error instanceof Error ? error.message : "Could not load your draft. Please retry.");
+        toast({ title: "Quick Book could not start", description: error instanceof Error ? error.message : "Try again.", variant: "destructive" });
       } finally {
         setLoading(false);
       }
@@ -292,8 +289,22 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
     const optimistic = { ...draft, ...patch } as QuickBookDraft;
     setDraft(optimistic);
     const saved = await postUpdate({ patch, source: "tap" });
-    if (!saved) setDraft(sessionRef.current?.draft || draft);
+    if (!saved) setDraft({ ...(sessionRef.current?.draft || draft), ...queuedAddressPatch.current });
   }, [busy, draft, postUpdate]);
+
+  // A selected address can arrive after blur has already started saving the
+  // typed text. Keep that final value queued until the current save completes.
+  const queueAddressPatch = useCallback((field: "pickupAddress" | "destinationAddress", value: string) => {
+    setDraft(current => current ? { ...current, [field]: value } : current);
+    queuedAddressPatch.current = { ...queuedAddressPatch.current, [field]: value };
+    setAddressPatch(queuedAddressPatch.current);
+  }, []);
+  useEffect(() => {
+    if (busy || !draft || !addressPatch) return;
+    queuedAddressPatch.current = null;
+    setAddressPatch(null);
+    void applyPatch(addressPatch);
+  }, [addressPatch, applyPatch, busy, draft]);
 
   const handleSuggestion = useCallback((suggestion: string) => {
     const missing = sessionRef.current?.missingFields[0];
@@ -359,7 +370,6 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
         body: JSON.stringify({ expectedRevision: current.revision, idempotencyKey: idempotencyRef.current }),
       });
       setBooked(result);
-      localStorage.removeItem(SESSION_KEY);
       toast({ title: "Job booked", description: "The tentative crew plan was saved and delivery results are ready." });
     } catch (error) {
       toast({ title: "Job was not booked", description: error instanceof Error ? error.message : "The draft is still safe.", variant: "destructive" });
@@ -368,8 +378,25 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
     }
   }, [busy, toast]);
 
-  if (loading || !session || !draft) {
+  if (loading) {
     return <div className="flex min-h-[70vh] items-center justify-center bg-slate-950 text-white"><Loader2 className="h-8 w-8 animate-spin text-cyan-300" /></div>;
+  }
+
+  if (!session || !draft) {
+    return (
+      <main className="flex min-h-[70vh] items-center justify-center bg-slate-950 px-4 text-white">
+        <Card className="w-full max-w-md border-slate-700 bg-slate-900 text-white">
+          <CardContent className="space-y-4 p-6">
+            <h1 className="text-xl font-bold">Quick Book could not start</h1>
+            <p role="alert" className="text-sm text-slate-300">{startupError || "Your draft could not be loaded. Please retry."}</p>
+            <div className="flex flex-wrap gap-3">
+              <Button onClick={() => window.location.reload()}>Retry</Button>
+              <Button variant="outline" onClick={() => navigate("/")}>Back to home</Button>
+            </div>
+          </CardContent>
+        </Card>
+      </main>
+    );
   }
 
   if (booked) {
@@ -503,11 +530,11 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
           <Card className="border-slate-700 bg-slate-900/85 text-white">
             <CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-base"><MapPin className="h-5 w-5 text-cyan-300" />Locations & schedule</CardTitle></CardHeader>
             <CardContent className="grid gap-3 sm:grid-cols-2">
-              <FieldShell label="Pickup / service address" missing={missing("complete pickup address")}><Input value={draft.pickupAddress} onChange={(event) => setDraft({ ...draft, pickupAddress: event.target.value })} onBlur={() => void applyPatch({ pickupAddress: draft.pickupAddress })} className="h-11 border-slate-700 bg-black" placeholder="Street, city, state or ZIP" /></FieldShell>
-              <FieldShell label="Destination" missing={missing("complete destination address")}><Input value={draft.destinationAddress} onChange={(event) => setDraft({ ...draft, destinationAddress: event.target.value })} onBlur={() => void applyPatch({ destinationAddress: draft.destinationAddress })} className="h-11 border-slate-700 bg-black" placeholder="Required for load + unload" /></FieldShell>
+              <FieldShell label="Pickup / service address" missing={missing("complete pickup address")}><PlacesAutocomplete value={draft.pickupAddress} onChange={(value) => setDraft(current => current ? { ...current, pickupAddress: value } : current)} onPlaceSelect={(place) => queueAddressPatch("pickupAddress", place.fullAddress)} onBlur={(event) => queueAddressPatch("pickupAddress", event.currentTarget.value)} aria-label="Pickup or service address" inputClassName="min-h-11 w-full rounded-md border border-slate-700 bg-black px-3 py-2 text-white" placeholder="Street, city, state or ZIP" /></FieldShell>
+              <FieldShell label="Destination" missing={missing("complete destination address")}><PlacesAutocomplete value={draft.destinationAddress} onChange={(value) => setDraft(current => current ? { ...current, destinationAddress: value } : current)} onPlaceSelect={(place) => queueAddressPatch("destinationAddress", place.fullAddress)} onBlur={(event) => queueAddressPatch("destinationAddress", event.currentTarget.value)} aria-label="Destination address" inputClassName="min-h-11 w-full rounded-md border border-slate-700 bg-black px-3 py-2 text-white" placeholder="Required for load + unload" /></FieldShell>
               <FieldShell label="Confirmed job date" missing={missing("confirmed date")}><Input type="date" value={draft.confirmedDate} onChange={(event) => void applyPatch({ confirmedDate: event.target.value })} className="h-11 border-slate-700 bg-black" /></FieldShell>
               <FieldShell label="One-hour arrival window" missing={missing("one-hour arrival window")}>
-                <Select value={draft.arrivalWindow || undefined} onValueChange={(value) => void applyPatch({ arrivalWindow: value })}><SelectTrigger className="h-11 border-slate-700 bg-black"><SelectValue placeholder="Choose a window" /></SelectTrigger><SelectContent>{JOB_SCHEDULE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
+                <Select value={draft.arrivalWindow || undefined} onValueChange={(value) => void applyPatch({ arrivalWindow: value })}><SelectTrigger className="h-11 border-slate-700 bg-black"><SelectValue placeholder="Choose a window" /></SelectTrigger><SelectContent>{QUICK_BOOK_SCHEDULE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
               </FieldShell>
               <FieldShell label="Pickup access code"><Input value={draft.pickupAccessCode} onChange={(event) => setDraft({ ...draft, pickupAccessCode: event.target.value })} onBlur={() => void applyPatch({ pickupAccessCode: draft.pickupAccessCode })} className="h-11 border-slate-700 bg-black" placeholder="Encrypted when saved" /></FieldShell>
               <FieldShell label="Entry instructions"><Input value={draft.pickupInstructions} onChange={(event) => setDraft({ ...draft, pickupInstructions: event.target.value })} onBlur={() => void applyPatch({ pickupInstructions: draft.pickupInstructions })} className="h-11 border-slate-700 bg-black" placeholder="Gate, parking, contact" /></FieldShell>
@@ -522,7 +549,7 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
                   </div>
                 ))}
                 <div className="flex gap-2">
-                  <Input value={newStop} onChange={(event) => setNewStop(event.target.value)} className="h-11 border-slate-700 bg-black" placeholder="Stop address" />
+                  <PlacesAutocomplete value={newStop} onChange={setNewStop} disabled={busy} aria-label="Additional stop address" className="min-w-0 flex-1" inputClassName="min-h-11 w-full rounded-md border border-slate-700 bg-black px-3 py-2 text-white" placeholder="Stop address" />
                   <Button type="button" variant="outline" className="h-11" disabled={busy || !newStop.trim()} onClick={() => { void applyPatch({ additionalStops: [...draft.additionalStops, { address: newStop.trim(), note: "" }] }); setNewStop(""); }}><Plus className="h-4 w-4" /><span className="sr-only">Add stop</span></Button>
                 </div>
               </div>

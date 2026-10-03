@@ -1,6 +1,6 @@
 import { normalizeCustomerPhone } from "./phone";
 import { z } from "zod";
-import { isHourlyJobArrivalWindow } from "./jcOperations";
+import { JOB_SCHEDULE_OPTIONS, JC_OPERATIONS_TIME_ZONE } from "./jcOperations";
 
 export const quickBookWorkScopeSchema = z.enum(["load_only", "unload_only", "load_unload"]);
 export const quickBookTruckConfigSchema = z.enum(["customer_truck", "company_truck", "rental_truck", "no_truck"]);
@@ -210,7 +210,7 @@ export function quickBookHasSpecialtyReview(draft: QuickBookDraft) {
 
 export function evaluateQuickBookReadiness(
   draft: QuickBookDraft,
-  options: { quoteReady?: boolean; quoteReviewReasons?: string[] } = {},
+  options: { quoteReady?: boolean; quoteReviewReasons?: string[]; now?: Date } = {},
 ): QuickBookReadiness {
   const missingFields: string[] = [];
   const reviewReasons = [...(options.quoteReviewReasons || [])];
@@ -222,8 +222,17 @@ export function evaluateQuickBookReadiness(
   if (draft.workScope === "load_unload" && !quickBookAddressLooksComplete(draft.destinationAddress)) {
     missingFields.push("complete destination address");
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.confirmedDate)) missingFields.push("confirmed date");
-  if (!isHourlyJobArrivalWindow(draft.arrivalWindow)) missingFields.push("one-hour arrival window");
+  const calendarDate = new Date(`${draft.confirmedDate}T12:00:00Z`);
+  const validDate = /^\d{4}-\d{2}-\d{2}$/.test(draft.confirmedDate)
+    && Number.isFinite(calendarDate.getTime()) && calendarDate.toISOString().slice(0, 10) === draft.confirmedDate;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: JC_OPERATIONS_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(options.now || new Date()).map(part => [part.type, part.value]));
+  const today = `${parts.year}-${parts.month}-${parts.day}`;
+  const slot = JOB_SCHEDULE_OPTIONS.find(option => option.start && option.value === draft.arrivalWindow);
+  if (!validDate || draft.confirmedDate < today) missingFields.push("confirmed date");
+  if (!slot || (draft.confirmedDate === today && slot.start! <= `${parts.hour}:${parts.minute}`)) missingFields.push("one-hour arrival window");
   if (!draft.workScope) missingFields.push("work scope");
   if (!draft.truckConfig) missingFields.push("truck or equipment choice");
   if (draft.stairsFlights === null) missingFields.push("stairs");

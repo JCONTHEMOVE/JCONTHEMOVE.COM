@@ -8,6 +8,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -478,11 +479,16 @@ export function LeadQuoteDialog({ open, onOpenChange, lead, employees, onSave }:
 
                 <div>
                   <Label htmlFor="confirmedFromAddress" className="text-sm text-muted-foreground">Confirmed Pickup Address</Label>
-                  <Input
+                  <PlacesAutocomplete
                     id="confirmedFromAddress"
                     placeholder="Pickup address"
-                    {...quoteForm.register("confirmedFromAddress")}
-                    data-testid="input-confirmed-from-address"
+                    name="confirmedFromAddress"
+                    ref={quoteForm.register("confirmedFromAddress").ref}
+                    value={quoteForm.watch("confirmedFromAddress") || ""}
+                    onChange={(value) => quoteForm.setValue("confirmedFromAddress", value, { shouldDirty: true, shouldValidate: true })}
+                    onBlur={quoteForm.register("confirmedFromAddress").onBlur}
+                    aria-invalid={Boolean(quoteForm.formState.errors.confirmedFromAddress)}
+                    inputTestId="input-confirmed-from-address"
                     className="mt-1"
                   />
                   {quoteForm.formState.errors.confirmedFromAddress && (
@@ -494,11 +500,16 @@ export function LeadQuoteDialog({ open, onOpenChange, lead, employees, onSave }:
 
                 <div>
                   <Label htmlFor="confirmedToAddress" className="text-sm text-muted-foreground">Confirmed Delivery Address</Label>
-                  <Input
+                  <PlacesAutocomplete
                     id="confirmedToAddress"
                     placeholder="Delivery address"
-                    {...quoteForm.register("confirmedToAddress")}
-                    data-testid="input-confirmed-to-address"
+                    name="confirmedToAddress"
+                    ref={quoteForm.register("confirmedToAddress").ref}
+                    value={quoteForm.watch("confirmedToAddress") || ""}
+                    onChange={(value) => quoteForm.setValue("confirmedToAddress", value, { shouldDirty: true, shouldValidate: true })}
+                    onBlur={quoteForm.register("confirmedToAddress").onBlur}
+                    aria-invalid={Boolean(quoteForm.formState.errors.confirmedToAddress)}
+                    inputTestId="input-confirmed-to-address"
                     className="mt-1"
                   />
                   {quoteForm.formState.errors.confirmedToAddress && (

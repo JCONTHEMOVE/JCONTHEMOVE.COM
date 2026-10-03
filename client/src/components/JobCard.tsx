@@ -1,3 +1,5 @@
+import { ProjectIntakeSummary } from "./project-intake-summary";
+import { customerNotesFromDetails } from "@shared/leadDetails";
 import { useLocation } from "wouter";
 import { Phone, Mail, MapPin, Calendar, ChevronRight, Trash2, Users, DollarSign, Zap, Copy, Hash, ExternalLink, Clock, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -225,6 +227,7 @@ export function JobCard({ lead, onDelete, showContact = true, showTokens = true,
           )}
         </div>
 
+        <ProjectIntakeSummary details={lead.details} status={lead.status} confirmedDate={lead.confirmedDate} />
         {/* Details snippet */}
         {!compact && lead.details && (
           <div className="mt-3 bg-slate-700/40 px-3 py-2 rounded-lg">
@@ -240,7 +243,7 @@ export function JobCard({ lead, onDelete, showContact = true, showTokens = true,
                 Open customer media
               </a>
             )}
-            <p className="text-xs text-slate-300 line-clamp-2">{lead.details}</p>
+            <p className="text-xs text-slate-300 line-clamp-2">{customerNotesFromDetails(lead.details)}</p>
           </div>
         )}
 

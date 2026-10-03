@@ -71,7 +71,7 @@ function CompactProcessStep({ step }: { step: ProcessFlowStep }) {
   const state = step.state || "waiting";
   const isActive = state === "active";
   const action = (
-    <div className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2">
+    <div className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-3">
       <StateIcon state={state} />
       <span className="shrink-0 text-[10px] font-black uppercase tracking-widest text-slate-500">
         {PHASE_LABELS[step.phase]}
@@ -135,7 +135,7 @@ export default function ProcessFlowCard({
   description,
   steps,
   className = "",
-  compact = false,
+  compact = true,
 }: {
   title: string;
   description?: string;
@@ -150,7 +150,7 @@ export default function ProcessFlowCard({
       <section className={`rounded-xl border border-slate-700/50 bg-slate-900/60 p-3 ${className}`}>
         <div className="mb-2 flex items-center justify-between gap-3">
           <h2 className="truncate text-sm font-black text-white">{title}</h2>
-          <span className="shrink-0 text-[10px] font-bold text-slate-500">Tap ⓘ for details</span>
+
         </div>
         <div className="space-y-1.5">
           {ordered.map((step) => (

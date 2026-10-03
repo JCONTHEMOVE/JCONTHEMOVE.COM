@@ -83,6 +83,7 @@ export interface CommercePriceSnapshot {
   baseRewardMoves: number;
   regularPaymentBonusMoves: number;
   featuredBonusMoves: number;
+  itemBonusMoves?: number;
   totalRewardMoves: number;
   promoCode?: string;
   notices: string[];

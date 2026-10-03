@@ -1,7 +1,9 @@
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { customerNotesFromDetails } from "@shared/leadDetails";
+import { JobWorkflowReport } from "@/components/job-workflow-report";
+import { ProjectIntakeSummary } from "@/components/project-intake-summary";
 import { manualDispatchMissingSetup } from "@shared/manualDispatchReadiness";
-import { useRoute, Link, useLocation } from "wouter";
+import { customerNotesFromDetails } from "@shared/leadDetails";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useRoute, Link, useLocation, useSearch } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,9 +21,11 @@ import { extractCustomerMediaLink } from "@/lib/lead-details";
 import { useAuth } from "@/hooks/useAuth";
 import { CrewSuggestionsDialog } from "@/components/crew-suggestions-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AdminJobPaymentShortcut } from "@/components/AdminJobPaymentShortcut";
+import { closeoutRepairs, type JobCloseoutRepair } from "@/lib/job-closeout-repair";
 import { JobOrderTicket } from "@/components/job-order-ticket";
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { PaymentReconciliationPanel } from "@/components/PaymentReconciliationPanel";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { JobSetupWorkspace, type JobSetupSection } from "@/components/job-setup-workspace";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -149,11 +153,6 @@ interface Lead {
     hasElevator?: boolean;
     specialItemsNotes?: string;
     additionalStops?: Array<{ address?: string; note?: string }>;
-    propertySize?: string;
-    bedrooms?: number | null;
-    truckSize?: string;
-    inventory?: Record<string, unknown>;
-    specialItems?: Record<string, unknown>;
   } | null;
   jobAccess?: {
     accessCode?: string;
@@ -504,7 +503,8 @@ function DisbursementSummaryCard({ lead }: { lead: Lead }) {
 
 export default function LeadDetailPage() {
   const [, params] = useRoute("/lead/:id");
-  const [location, setLocation] = useLocation();
+  const [, setLocation] = useLocation();
+  const queryString = useSearch();
   const { toast } = useToast();
   const [tokenAllocation, setTokenAllocation] = useState("");
   const [isCheckingIn, setIsCheckingIn] = useState(false);
@@ -530,7 +530,7 @@ export default function LeadDetailPage() {
   const [photoUploading, setPhotoUploading] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const { hasAdminAccess, isEmployee } = useAuth();
-  const requestedReturnTo = new URLSearchParams(location.includes("?") ? location.slice(location.indexOf("?") + 1) : "").get("returnTo");
+  const requestedReturnTo = new URLSearchParams(queryString).get("returnTo");
   const returnTarget = requestedReturnTo && (requestedReturnTo.startsWith("/crew") || requestedReturnTo.startsWith("/admin"))
     ? requestedReturnTo
     : hasAdminAccess ? "/admin/schedule" : "/crew";
@@ -550,20 +550,32 @@ export default function LeadDetailPage() {
   const [quoteSentAt, setQuoteSentAt] = useState<string | null>(null);
   const [squarePaymentUrl, setSquarePaymentUrl] = useState<string | null>(null);
   const [copiedPaymentLink, setCopiedPaymentLink] = useState(false);
-  const [showJobSetup, setShowJobSetup] = useState(true);
+  const [showJobSetup, setShowJobSetup] = useState(false);
+  const [setupDirty, setSetupDirty] = useState(false);
+  const [workflowVersion, setWorkflowVersion] = useState("");
   const [setupSection, setSetupSection] = useState<JobSetupSection>("");
+  const [closeoutRepair, setCloseoutRepair] = useState<{ leadId: string; target: JobCloseoutRepair } | null>(null);
+  const [closeoutResume, setCloseoutResume] = useState({ leadId: "", key: 0 });
+  const repairTarget = closeoutRepair && closeoutRepair.leadId === params?.id ? closeoutRepair.target : null;
   const jobSetupRef = useRef<HTMLDivElement>(null);
 
-  const openJobSetup = (targetId = "job-setup") => {
+  const openJobSetup = (section: JobSetupSection = "customer", fieldId?: string) => {
+    const targetId = section === "schedule" ? "job-setup-schedule" : "job-setup";
     setShowJobSetup(true);
-    setSetupSection(targetId === "job-setup-schedule" ? "schedule" : "customer");
+    setSetupSection(section);
     window.setTimeout(() => {
-      const target = document.getElementById(targetId) || jobSetupRef.current;
+      const target = (fieldId ? document.getElementById(fieldId) : null) || document.getElementById(targetId) || jobSetupRef.current;
       target?.scrollIntoView({ behavior: "smooth", block: "start" });
-      target?.querySelector<HTMLElement>("button, input, [tabindex='0']")?.focus({ preventScroll: true });
+      const focusTarget = target?.matches("input, button, [tabindex]") ? target : target?.querySelector<HTMLElement>("button, input, [tabindex='0']");
+      focusTarget?.focus({ preventScroll: true });
     }, 0);
   };
-  const openJobSetupSchedule = () => openJobSetup("job-setup-schedule");
+  const openJobSetupSchedule = () => openJobSetup("schedule");
+  const returnToCloseout = () => {
+    if (!params?.id) return;
+    setCloseoutRepair(null);
+    setCloseoutResume(previous => ({ leadId: params.id, key: previous.key + 1 }));
+  };
 
   const { data: lead, isLoading, isError, error } = useQuery<Lead>({
     queryKey: ["/api/leads", params?.id],
@@ -946,7 +958,7 @@ export default function LeadDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id, "history"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id, "jcmoves-status"] });
       queryClient.invalidateQueries({ queryKey: ["/api/jobs/planner"] });
-      toast({ title: "Dispatched!", description: "Job marked as paid and crew SMS sent." });
+      toast({ title: "Dispatched!", description: "Job marked as paid and dispatched. Notification delivery is tracked separately." });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message || "Failed to dispatch", variant: "destructive" });
@@ -1022,10 +1034,14 @@ export default function LeadDetailPage() {
   const computeEffectiveCrewSize = () => Math.max(1, selectedCrewMembers.length);
 
   const handleJobSetupSaved = () => {
+    setSetupDirty(false);
+    setShowJobSetup(false);
+    window.dispatchEvent(new Event("jc:job-setup-saved"));
     queryClient.invalidateQueries({ queryKey: ["/api/leads"] });
     queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id] });
     queryClient.invalidateQueries({ queryKey: ["/api/jobs/planner"] });
     queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id, "alert-deliveries"] });
+    if (repairTarget) returnToCloseout();
   };
 
   const handleOrderApply = (orderData: {
@@ -1360,7 +1376,7 @@ export default function LeadDetailPage() {
         title: dispatchMissingSetup.length ? "Finish dispatch setup" : "Confirm payment & dispatch",
         detail: dispatchMissingSetup.length
           ? `Save ${dispatchMissingSetup.join(", ")} in Job Setup before dispatching.`
-          : "Only continue after confirming full payment was received. This records payment and sends dispatch notifications.",
+          : "Only continue after confirming full payment was received. This records payment and requests dispatch notifications.",
         button: "Mark Paid & Dispatch",
         icon: Zap,
       };
@@ -1398,10 +1414,10 @@ export default function LeadDetailPage() {
         applyPackageDraftMutation.mutate();
         break;
       case "build_quote":
-        openJobSetup();
+        openJobSetup("quote");
         break;
       case "send_quote":
-        setShowQuoteDeliveryDialog(true);
+        window.dispatchEvent(new Event("jc:review-quote"));
         break;
       case "offline_closeout":
         openOfflineCloseout();
@@ -1489,7 +1505,7 @@ export default function LeadDetailPage() {
       <div className="max-w-4xl mx-auto min-w-0 px-3 py-3 sm:px-6 sm:py-6">
         {/* Header */}
         <div className="mb-5">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div className="flex items-center justify-between mb-3">
             <Button
               variant="ghost"
               size="sm"
@@ -1500,6 +1516,13 @@ export default function LeadDetailPage() {
               <ArrowLeft className="h-4 w-4" />
               Back
             </Button>
+            <div className="flex flex-wrap items-center gap-2">
+            {hasAdminAccess && <span className="hidden"><AdminJobPaymentShortcut key={lead.id} leadId={lead.id}
+              resumeKey={closeoutResume.leadId === lead.id ? closeoutResume.key : 0}
+              onFixJob={target => {
+                setCloseoutRepair({ leadId: lead.id, target });
+                openJobSetup(closeoutRepairs[target].section, closeoutRepairs[target].fieldId);
+              }} /></span>}
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="outline" className="min-h-11">Actions <ChevronDown className="ml-2 h-4 w-4" /></Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -1507,6 +1530,7 @@ export default function LeadDetailPage() {
                 {hasAdminAccess && <DropdownMenuItem className="min-h-11 text-red-400" onSelect={() => { setRemoveIntent("archive"); setShowArchiveDialog(true); }}>Archive job request</DropdownMenuItem>}
               </DropdownMenuContent>
             </DropdownMenu>
+            </div>
           </div>
 
           {lead.workerVisibility && lead.workerVisibility.locked.length > 0 && (
@@ -1533,56 +1557,12 @@ export default function LeadDetailPage() {
           )}
         </div>
 
-        <JobOrderTicket
-          order={{ ...lead, customerName: lead.workerVisibility?.customerIdentity === false ? "Customer details protected" : `${lead.firstName || ""} ${lead.lastName || ""}`.trim() }}
-          detailPage
-          viewer={hasAdminAccess ? "admin" : "crew"}
-          action={canClaimJob ? ticketAction : undefined}
-          onScheduleEdit={hasAdminAccess ? openJobSetupSchedule : undefined}
-          className="mb-4"
-        />
-
-        <Card className="mb-4 border-blue-500/30 bg-blue-950/10">
-          <CardContent className="pt-4">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-3 min-w-0">
-                <div className="h-10 w-10 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center shrink-0">
-                  <NextIcon className="h-5 w-5 text-blue-300" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-blue-300">Next Step</p>
-                  <h2 className="text-lg font-bold text-foreground">{nextStep.title}</h2>
-                  <p className="text-sm text-muted-foreground mt-0.5">{nextStep.detail}</p>
-                  {packageDraftReady && (
-                    <p className="text-xs text-emerald-300 mt-2">
-                      Package: {packageDraft?.label} {packagePrice ? `- ${formatMoney(packagePrice)}` : ""}
-                    </p>
-                  )}
-                </div>
-              </div>
-              <Button
-                onClick={handleNextStep}
-                disabled={actionPending || nextStep.key === "done" || (nextStep.key === "send_quote" && !leadHasQuote) || (nextStep.key === "dispatch" && dispatchMissingSetup.length > 0)}
-                className="min-h-11 w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white"
-                data-testid="button-primary-next-step"
-              >
-                {actionPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <NextIcon className="h-4 w-4 mr-2" />}
-                {nextStep.button}
-              </Button>
-            </div>
-            {nextStep.key === "apply_package" && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-3 w-full sm:w-auto"
-                onClick={() => openJobSetup()}
-              >
-                <DollarSign className="h-4 w-4 mr-2" />
-                Adjust Manually Instead
-              </Button>
-            )}
-          </CardContent>
-        </Card>
+        {(hasAdminAccess || isEmployee && lead.workerVisibility?.pricing && ["new", "contacted", "quote_requested", "chatbot_pending", "pending_quote_approval", "quoted"].includes(statusKey)) ? <JobWorkflowReport key={lead.id} lead={lead} employees={employees} dirty={setupDirty}
+          onEdit={openJobSetup} onVersion={setWorkflowVersion}
+          onPayment={() => window.dispatchEvent(new Event("jc:record-job-payment"))}
+          onCloseout={returnToCloseout}
+          onStart={() => updateStatus.mutate("in_progress")} onComplete={() => updateStatus.mutate("completed")} />
+          : <JobOrderTicket order={{ ...lead, customerName: lead.workerVisibility?.customerIdentity === false ? "Customer details protected" : [lead.firstName, lead.lastName].filter(Boolean).join(" ") }} detailPage viewer="crew" action={canClaimJob ? ticketAction : isEmployee && ["start", "complete"].includes(nextStep.key) ? <Button disabled={actionPending} onClick={handleNextStep}>{nextStep.button}</Button> : undefined} className="mb-4" />}
 
         {packageDraft && (
           <details className="mb-4 rounded-xl border" data-testid="selected-package-summary"><summary className="min-h-12 cursor-pointer px-4 py-3 text-sm font-medium">Customer-selected package</summary><Card className="border-0 shadow-none">
@@ -1621,6 +1601,10 @@ export default function LeadDetailPage() {
               onSaved={handleJobSetupSaved}
               activeSection={setupSection}
               onSectionChange={setSetupSection}
+              expectedVersion={workflowVersion || undefined}
+              onDirtyChange={setSetupDirty}
+              closeoutRepair={repairTarget}
+              onReturnToCloseout={returnToCloseout}
             />
           </div>
         )}
@@ -1781,8 +1765,6 @@ export default function LeadDetailPage() {
               </Card>
             )}
 
-        {hasAdminAccess ? <PaymentReconciliationPanel leadId={lead.id} /> : null}
-
         {/* === Sticky Customer Summary Bar === */}
         {hasAdminAccess && (
           <div className="hidden sticky top-0 z-20 mb-4 p-3 rounded-xl border border-slate-700/50 bg-slate-900/95 backdrop-blur-sm flex flex-wrap items-center gap-3 text-sm shadow-md">
@@ -1838,7 +1820,7 @@ export default function LeadDetailPage() {
               <Button
                 size="sm"
                 className="bg-orange-600 hover:bg-orange-700 text-white"
-                onClick={() => setShowQuoteDeliveryDialog(true)}
+                onClick={() => window.dispatchEvent(new Event("jc:review-quote"))}
               >
                 <Send className="h-3.5 w-3.5 mr-1.5" /> Send Quote
               </Button>
@@ -1847,10 +1829,13 @@ export default function LeadDetailPage() {
         )}
 
         {/* === 4-Tab Interface === */}
+        {hasAdminAccess ? <PaymentReconciliationPanel leadId={lead.id} /> : null}
+
+        <ProjectIntakeSummary details={lead.details} status={lead.status} confirmedDate={lead.confirmedDate} />
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid h-auto w-full grid-cols-2 mb-6">
-            <TabsTrigger className="min-h-11 whitespace-normal text-sm" value="notes">Notes & Media</TabsTrigger>
-            <TabsTrigger className="min-h-11 whitespace-normal text-sm" value="history">Timeline & Rewards</TabsTrigger>
+          <TabsList className="mb-6 grid h-auto w-full grid-cols-2">
+            <TabsTrigger className="min-h-11 text-sm" value="notes">Notes & Media</TabsTrigger>
+            <TabsTrigger className="min-h-11 text-sm" value="history">Timeline & Rewards</TabsTrigger>
           </TabsList>
 
           {/* ─────────── TAB: QUOTE & SEND ─────────── */}
@@ -1927,7 +1912,7 @@ export default function LeadDetailPage() {
                 {/* Quote changes use the unified inline Job Setup workspace. */}
                 {hasAdminAccess && (
                   <div className="pt-1">
-                    <Button variant="outline" className="w-full" onClick={() => openJobSetup()}>
+                    <Button variant="outline" className="w-full" onClick={() => openJobSetup("quote")}>
                       <DollarSign className="h-4 w-4 mr-2" /> Open Job Setup
                     </Button>
                   </div>
@@ -2165,11 +2150,11 @@ export default function LeadDetailPage() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Notes</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent>
                 {customerNotesFromDetails(lead.details) && (
-                  <div className="p-3 bg-muted rounded-lg">
-                    <p className="text-xs text-muted-foreground mb-1">Customer Notes</p>
-                    <p className="text-sm whitespace-pre-wrap break-words">{customerNotesFromDetails(lead.details)}</p>
+                  <div className="mb-3 rounded-lg bg-muted p-3">
+                    <p className="mb-1 text-xs text-muted-foreground">Customer notes</p>
+                    <p className="whitespace-pre-wrap break-words text-sm">{customerNotesFromDetails(lead.details)}</p>
                   </div>
                 )}
                 {lead.quoteNotes ? (
@@ -2573,7 +2558,7 @@ export default function LeadDetailPage() {
                     className="mt-3"
                     onClick={() => {
                       setShowOfflineCloseoutDialog(false);
-                      openJobSetup();
+                      openJobSetup("schedule");
                     }}
                   >
                     <Users className="mr-2 h-4 w-4" />Assign Crew in Job Setup

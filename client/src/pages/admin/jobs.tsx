@@ -294,7 +294,7 @@ function AdminJobCard({ lead, onClick, employees }: {
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="font-bold text-white text-sm truncate">{lead.firstName} {lead.lastName}</p>
                   <StatusBadge status={lead.status} />
-                  {lead.flow && <span className="rounded-full border border-blue-400/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold text-blue-200">{lead.flow.label}</span>}
+                  {lead.flow && <span className="rounded-full border border-blue-400/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold text-blue-200">{lead.flow.operations?.label || lead.flow.label}</span>}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap mt-0.5">
                   <p className="text-xs text-slate-400">{SERVICE_LABELS[lead.serviceType] || lead.serviceType}</p>

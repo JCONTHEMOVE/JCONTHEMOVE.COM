@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import { workerAvatarSchema, workerGrowthGoalsSchema, DEFAULT_GROWTH_GOALS, growthWeek, chicagoDate } from '../../../shared/crewGrowth';
+import { scoreMarketingCandidates, type MarketingSignals } from '../marketingBotPolicy';
+import { reviewCelebrationBody, reviewTipLine } from '../reviewCelebrationPolicy';
+
+assert.equal(workerAvatarSchema.safeParse({character:'mover',color:'cyan',accessory:'cap',imageUrl:'https://example.com'}).success,false);
+assert.equal(workerGrowthGoalsSchema.safeParse({...DEFAULT_GROWTH_GOALS,bookings:-1}).success,false);
+assert.equal(workerGrowthGoalsSchema.safeParse({...DEFAULT_GROWTH_GOALS,activeDays:8}).success,false);
+assert.equal(workerGrowthGoalsSchema.safeParse({...DEFAULT_GROWTH_GOALS,scenarios:0}).success,true);
+assert.equal(chicagoDate(new Date('2026-11-01T05:30:00Z')),'2026-11-01');
+assert.equal(growthWeek('2026-11-01'),'2026-10-26');
+assert.equal(growthWeek('2026-11-02'),'2026-11-02');
+const base:MarketingSignals={localDate:'2026-09-14',weekday:1,month:9,availableCrew:4,upcomingJobs:2,openCapacity:3,weatherSummary:'',prior14DayKeys:new Set(),performance:{}};
+const original=scoreMarketingCandidates(base).find(item=>item.id==='packing:houghton')!;
+const chosen=scoreMarketingCandidates({...base,workerPlans:[{service:'packing',territories:['houghton'],ideas:'Family transitions',message:'',goals:{bookings:1,qualifiedInquiries:2}}]}).find(item=>item.id===original.id)!;
+assert.equal(chosen.score,original.score+24);
+assert.equal(scoreMarketingCandidates({...base,prior14DayKeys:new Set([original.id]),workerPlans:[{service:'packing',territories:['houghton'],ideas:'',message:'',goals:{bookings:1,qualifiedInquiries:2}}]}).some(item=>item.id===original.id),false,'worker goals cannot bypass duplicate campaign policy');
+const tip={worker_id:'one',amount_usd:'12.50',token_amount:'0',tip_method:'cash',status:'pending_payment',payroll_paid_at:null};
+assert.equal(reviewTipLine(tip),'$12.50 — Awaiting payment');
+assert.equal(reviewTipLine({...tip,status:'confirmed'}),'$12.50 — Received · awaiting payroll');
+assert.equal(reviewTipLine({...tip,status:'confirmed',payroll_paid_at:new Date()}),'$12.50 — Paid out');
+assert.equal(reviewTipLine({...tip,status:'confirmed',tip_method:'jcmoves',token_amount:'100'}),'100 JCMOVES — Wallet credited');
+const body=reviewCelebrationBody({reviewId:'review-1',rating:5,origin:'https://www.jconthemove.com',crew:[{id:'one',name:'Matt',avatarUrl:'https://www.jconthemove.com/avatar.png'},{id:'two',name:'Evan',avatarUrl:'https://www.jconthemove.com/avatar2.png'}],tips:[tip]});
+assert.deepEqual(body.allowed_mentions,{parse:[]});
+assert.equal(body.embeds[1].description,'$12.50 — Awaiting payment');
+assert.match(body.embeds[2].description!,/No tip allocated/);
+assert.ok(!JSON.stringify(body).includes('customer_email'));
+console.log('Crew arcade policy, avatar validation, bot ranking, Chicago dates and tip reporting passed');

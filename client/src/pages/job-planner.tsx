@@ -5,9 +5,11 @@ import { useLocation } from "wouter";
 import { JobOrderTicket, type JobOrderTicketData } from "@/components/job-order-ticket";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { WorkInsights } from '@/components/WorkInsights';
+import type { InsightJob } from '@shared/workInsights';
 
 type PlannerView = "month" | "week" | "day";
-type PlannerJob = JobOrderTicketData & {
+type PlannerJob = JobOrderTicketData & InsightJob & {
   id: string;
   archivedAt?: string | null;
   flow?: JobOrderTicketData["flow"] & {
@@ -74,7 +76,7 @@ export default function JobPlannerPage({ audience }: { audience: "admin" | "crew
   const [, navigate] = useLocation();
   const [view, setView] = useState<PlannerView>("month");
   const [anchor, setAnchor] = useState(() => new Date());
-  const { data, isLoading, isError, refetch, isFetching } = useQuery<PlannerResponse>({
+  const { data, isLoading, isError, refetch, isFetching, dataUpdatedAt } = useQuery<PlannerResponse>({
     queryKey: ["/api/jobs/planner"],
   });
   const { data: safetyData } = useQuery<SafetyResponse>({
@@ -107,7 +109,7 @@ export default function JobPlannerPage({ audience }: { audience: "admin" | "crew
     }
     return result;
   }, [scheduled]);
-  const plannerPath = audience === "admin" ? "/admin/schedule" : "/crew";
+  const plannerPath = audience === "admin" ? "/admin/schedule" : "/crew/calendar";
 
   const openJob = (job: PlannerJob) => {
     navigate(`/lead/${encodeURIComponent(job.id)}?returnTo=${encodeURIComponent(plannerPath)}`);
@@ -123,9 +125,7 @@ export default function JobPlannerPage({ audience }: { audience: "admin" | "crew
     <main className="mx-auto w-full max-w-7xl px-3 py-5 pb-24 sm:px-5 md:py-7">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-cyan-300">JC ON THE MOVE</p>
           <h1 className="mt-1 text-2xl font-black tracking-tight text-white sm:text-3xl">Job Planner</h1>
-          <p className="mt-1 text-sm text-slate-400">One calendar for what needs attention, what is upcoming, and what is confirmed.</p>
         </div>
         <div className="flex items-center gap-2">
           {data?.viewer.canAddJob && quickBookHealth?.enabled ? (
@@ -143,6 +143,12 @@ export default function JobPlannerPage({ audience }: { audience: "admin" | "crew
           </Button>
         </div>
       </div>
+
+      <details className="mb-4 rounded-xl border border-slate-700 bg-slate-900/70 p-3">
+        <summary className="min-h-11 cursor-pointer py-2 text-base font-semibold text-cyan-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300">Job insights · progress and missing details</summary>
+        <WorkInsights jobs={data?.items} audience={audience === 'admin' ? 'owner' : 'crew'} isLoading={isLoading}
+          isError={isError} isFetching={isFetching} updatedAt={dataUpdatedAt} onRefresh={() => { void refetch(); }} />
+      </details>
 
       <section className="mb-4 rounded-xl border border-slate-700/80 bg-slate-900/70 p-2 shadow-sm" aria-label="Calendar view controls">
         <div className="flex flex-wrap items-center justify-between gap-3">

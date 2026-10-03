@@ -1,5 +1,15 @@
 # Quick Book owner release checks
 
+## Current release preparation — September 14
+
+Review corrections now enforce full work-period coverage by weekly/date-specific crew hours, preserve committed booking success when notification reporting fails, require a future fixed Central-time arrival slot, and discover the authenticated user's latest draft from the server. Focused scheduling, authorization and injected post-commit failure tests passed locally. The isolated September 14 branch verified latest-draft retrieval, actor isolation and execution of the actual locking availability query. Fresh clean CI and production acceptance are still required for these corrections. Railway's four explicit disabled-first-release flags were deployed successfully before this feature release.
+
+Commit `efcdbc025afcdafeb591fccb8b199ae3997a5848` passed clean Quick Book CI run `34895459951` and training CI run `34895459842`. The migration check used isolated branch `br-billowing-art-arpx6qhc`, copied from current production on September 14. Actual quote, regional and Quick Book migrations passed three executions; rollback preserved all 216 table fingerprints and 63 sequence states. A subsequent application-service check committed the schema on that isolated branch, then saved and reloaded a labeled synthetic draft, confirmed its revision and rejected a stale update. All four table privileges passed separately; no booking or lead was created. Private evidence is retained outside Git. Production was not changed. Authenticated owner UI acceptance, current pricing comparison and deployment still remain required.
+
+Quick Book is being integrated on `release/quick-book-20260914` from production main `66072226`. The mobile job page (PR #14) and training (PR #13) are already included in that deployed commit. Live owner-browser checks verified 500 training requests and the mobile job page at 390px, with a working schedule shortcut and no horizontal overflow. No job fields or training answers were submitted.
+
+The isolated Quick Book actual-handler authorization matrix passes: disabled booking and unauthorized roles perform zero database calls. Integration, clean dependency/type/build checks, current-schema verification and the owner draft workflow below remain required. The September 10 database migration target is now production and must not be reused as a disposable restore/test target. Older production-commit statements below are historical.
+
 ## Restored production-schema check — September 10
 
 At 14:20 UTC, the checked-in quote infrastructure, regional automation and Quick Book SQL ran three times inside one transaction on the owner's isolated Neon migration copy (`fragrant-art-08929708`, PostgreSQL 16). The intended role had SELECT/INSERT/UPDATE/DELETE privileges on the session table; both session indexes and agreement acceptance columns were present. Rolling back restored the original state: all 202 table-content digests, public constraints/indexes and all 63 sequence states matched their pre-test values. Private evidence is retained outside Git. No application worker or production migration ran.

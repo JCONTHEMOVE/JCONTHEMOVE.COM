@@ -87,7 +87,7 @@ function money(value: unknown): number {
   return Number.isFinite(number) ? Math.round((number + Number.EPSILON) * 100) / 100 : 0;
 }
 
-function rowToQuote(row: any): QuoteRevisionRecord {
+export function rowToQuote(row: any): QuoteRevisionRecord {
   return {
     id: String(row.id),
     leadId: String(row.lead_id),
@@ -493,6 +493,8 @@ export async function approveQuoteRevision(input: {
   overrideReason?: string | null;
 }): Promise<QuoteRevisionRecord> {
   await ensureQuoteRevisionInfrastructure();
+  const candidate = await getQuoteRevision(input.quoteId);
+  if (!candidate) throw new Error("Quote revision not found");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -505,12 +507,13 @@ export async function approveQuoteRevision(input: {
     if (!row) throw new Error("Quote revision not found");
     if (row.lead_id !== lockedLead.rows[0].id) throw new Error("Quote revision changed jobs; retry approval");
     if (row.status !== "draft") throw new Error("Only a draft quote can be approved");
-    const newer = await client.query(
-      "SELECT id FROM quote_revisions WHERE lead_id=$1 AND revision>$2 AND status IN ('draft','approved','sent') LIMIT 1",
-      [row.lead_id, row.revision],
-    );
-    if (newer.rows.length) throw new Error("A newer quote revision must be reviewed instead");
-    const eligibility = plainRecord(row.travel_eligibility);
+    const latest = await client.query("SELECT id FROM quote_revisions WHERE lead_id=$1 ORDER BY revision DESC LIMIT 1", [row.lead_id]);
+    if (latest.rows[0]?.id !== row.id) throw new Error("Only the latest quote revision can be approved");
+    const lead = await getLead(row.lead_id);
+    if (!lead) throw new Error("Lead not found");
+    const calculated = await calculateDraft({ lead, lineItems: row.line_items, discountTotal: row.discount_total });
+    if (money(calculated.finalPreTaxTotal) !== money(row.final_pre_tax_total)) throw new Error("The price changed. Review and save the quote before approval.");
+    const eligibility = calculated.travelEligibility;
     const { requiresOwner, overrideReason } = assertQuoteApprovalAllowed({
       travelEligibility: eligibility,
       actor: input.actor,
@@ -555,10 +558,18 @@ export async function getLatestApprovedQuote(leadId: string): Promise<QuoteRevis
   await ensureQuoteRevisionInfrastructure();
   const result = await pool.query(`
     SELECT * FROM quote_revisions
-    WHERE lead_id=$1 AND status IN ('approved', 'sent')
+    WHERE lead_id=$1
     ORDER BY revision DESC LIMIT 1
   `, [leadId]);
-  return result.rows[0] ? rowToQuote(result.rows[0]) : null;
+  return result.rows[0] && ['approved', 'sent'].includes(result.rows[0].status) ? rowToQuote(result.rows[0]) : null;
+}
+
+/** Validate saved amounts against the same approval policy without persisting
+ * or silently replacing the amount the operator is reviewing. */
+export async function reviewSavedQuotePolicy(leadId: string, lineItems: unknown, discountTotal: number) {
+  const lead = await getLead(leadId);
+  if (!lead) throw new Error("Lead not found");
+  return calculateDraft({ lead, lineItems, discountTotal });
 }
 
 export async function getLatestSentQuote(leadId: string): Promise<QuoteRevisionRecord | null> {

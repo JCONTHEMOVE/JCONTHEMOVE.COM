@@ -3,6 +3,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
+import { WorkInsights } from '@/components/WorkInsights';
+import type { InsightJob } from '@shared/workInsights';
 import {
   Users, Activity, Coins, TrendingUp, Wallet, Bitcoin, ChevronRight, Handshake, BarChart2, CalendarDays
 } from "lucide-react";
@@ -36,6 +38,11 @@ interface BtcPayment {
 
 export default function AdminOverviewPage() {
   const { user } = useAuth();
+  const jobs = useQuery<InsightJob[]>({
+    queryKey: ['/api/jobs/flow?scope=admin'],
+    refetchInterval: 30000,
+    enabled: ['admin', 'business_owner'].includes(user?.role || ''),
+  });
 
   const { data: adminStats } = useQuery<AdminStats>({ queryKey: ["/api/admin/stats"] });
   const { data: trafficData } = useQuery<{ totals: TrafficTotals }>({ queryKey: ["/api/admin/analytics/traffic"], refetchInterval: 60000 });
@@ -61,6 +68,9 @@ export default function AdminOverviewPage() {
         </h1>
         <p className="text-slate-400">Command Center — {user?.firstName}</p>
       </div>
+
+      <WorkInsights jobs={jobs.data} audience="owner" isLoading={jobs.isLoading} isError={jobs.isError}
+        isFetching={jobs.isFetching} updatedAt={jobs.dataUpdatedAt} onRefresh={() => { void jobs.refetch(); }} />
 
       {/* Live Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">

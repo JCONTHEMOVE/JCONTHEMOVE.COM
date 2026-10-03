@@ -1,3 +1,4 @@
+import { findPhoneRewardsCustomer } from "./phoneRewards";
 // disburseBookingTokens — Customer JCMOVES reward issuer for the
 // multi-service `bookings` flow (Task #131).
 //
@@ -88,21 +89,11 @@ export async function disburseBookingTokens(bookingId: string): Promise<BookingD
     // estimate the customer saw on the quote screen matches what actually
     // gets credited.
 
-    const email = (booking.customerEmail || "").trim();
-    if (!email) {
-      console.log(`[disburseBookingTokens] booking ${bookingId} has no email — customer reward skipped`);
-      return null;
-    }
-
-    const { rows: userRows } = await pool.query(
-      `SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
-      [email],
-    );
+    const phoneCustomer = await findPhoneRewardsCustomer(booking.customerPhone);
+    const { rows: userRows } = phoneCustomer ? { rows: [phoneCustomer] } : await pool.query(
+      'SELECT id, email FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1', [booking.customerEmail || '']);
     const customer = userRows[0];
-    if (!customer) {
-      console.log(`[disburseBookingTokens] no account for ${email} — customer reward skipped`);
-      return null;
-    }
+    if (!customer) return null;
 
     // Detect admin discount overrides on this booking. The presence of any
     // audit-log row tells the calculator to suppress the bundle bonus

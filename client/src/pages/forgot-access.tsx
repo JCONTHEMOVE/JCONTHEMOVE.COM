@@ -16,7 +16,6 @@ export default function ForgotAccessPage() {
 
   const [step, setStep] = useState<Step>("contact");
   const [contact, setContact] = useState("");
-  const [method, setMethod] = useState<"email" | "sms">("email");
   const [masked, setMasked] = useState("");
   const [otp, setOtp] = useState("");
   const [resetToken, setResetToken] = useState("");
@@ -33,10 +32,9 @@ export default function ForgotAccessPage() {
       const res = await apiRequest("POST", "/api/auth/recover/request", { contact: contact.trim() });
       const data = await res.json();
       if (data.success) {
-        setMethod(data.method);
         setMasked(data.masked);
         setStep("verify");
-        toast({ title: "Code sent!", description: `A 6-digit code was sent to ${data.masked}` });
+        toast({ title: "Check your email", description: data.message || "If an account matches, a recovery code will arrive by email." });
       } else {
         toast({ title: "Error", description: data.error || "Failed to send code", variant: "destructive" });
       }
@@ -53,7 +51,7 @@ export default function ForgotAccessPage() {
 
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!otp.trim() || otp.trim().length < 4) return;
+    if (!otp.trim() || otp.trim().length !== 6) return;
     setLoading(true);
     try {
       const res = await apiRequest("POST", "/api/auth/recover/verify", { contact: contact.trim(), token: otp.trim() });
@@ -129,8 +127,8 @@ export default function ForgotAccessPage() {
               {step === "done" && "All Done!"}
             </CardTitle>
             <CardDescription>
-              {step === "contact" && "Enter the email address or phone number on your account and we'll send you a recovery code."}
-              {step === "verify" && `We sent a 6-digit code to ${masked}. Enter it below — it expires in 15 minutes.`}
+              {step === "contact" && "Enter your account email, or the phone number linked to it. Recovery codes are delivered by email."}
+              {step === "verify" && `If an account matches, check ${masked} for a 6-digit code. It expires in 15 minutes.`}
               {step === "reset" && "Choose a new password to secure your account."}
               {step === "done" && "Your password has been reset. Your JCMOVES balance, job history, and profile are all safe."}
             </CardDescription>
@@ -160,7 +158,7 @@ export default function ForgotAccessPage() {
                     />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    We'll send a code by email or text — whichever matches your account.
+                    Codes arrive by email, not text. Check spam too. If you cannot access your account email, call (906) 285-9312.
                   </p>
                 </div>
                 <Button type="submit" className="w-full" disabled={loading || !contact.trim()}>
@@ -181,6 +179,7 @@ export default function ForgotAccessPage() {
                   <Label htmlFor="otp">6-digit verification code</Label>
                   <Input
                     id="otp"
+                    autoComplete="one-time-code"
                     type="text"
                     inputMode="numeric"
                     placeholder="123456"
@@ -192,7 +191,7 @@ export default function ForgotAccessPage() {
                     required
                   />
                   <p className="text-xs text-muted-foreground text-center">
-                    Sent to {masked} via {method === 'email' ? 'email' : 'text message'}
+                    Check your inbox and spam folder. Use the newest code.
                   </p>
                 </div>
                 <Button type="submit" className="w-full" disabled={loading || otp.length < 6}>
@@ -204,7 +203,7 @@ export default function ForgotAccessPage() {
                     onClick={() => { setStep("contact"); setOtp(""); }}
                     className="text-sm text-muted-foreground hover:text-primary transition-colors"
                   >
-                    <ArrowLeft className="inline h-3 w-3 mr-1" />Try a different contact
+                    <ArrowLeft className="inline h-3 w-3 mr-1" />Request a new code or change contact
                   </button>
                 </div>
               </form>
@@ -219,6 +218,7 @@ export default function ForgotAccessPage() {
                     <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="newPass"
+                      autoComplete="new-password"
                       type={showPassword ? "text" : "password"}
                       placeholder="At least 6 characters"
                       value={newPassword}
@@ -241,6 +241,7 @@ export default function ForgotAccessPage() {
                   <Label htmlFor="confirmPass">Confirm new password</Label>
                   <Input
                     id="confirmPass"
+                    autoComplete="new-password"
                     type={showPassword ? "text" : "password"}
                     placeholder="Same password again"
                     value={confirmPassword}

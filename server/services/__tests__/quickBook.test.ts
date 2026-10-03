@@ -118,7 +118,7 @@ const readyDraft = quickBookDraftSchema.parse({
   crewLeadUserId: "worker-1",
   crewConfirmed: true,
 });
-assert.deepEqual(evaluateQuickBookReadiness(readyDraft, { quoteReady: true }), {
+assert.deepEqual(evaluateQuickBookReadiness(readyDraft, { quoteReady: true, now: new Date('2026-09-03T17:00:00Z') }), {
   ready: true,
   missingFields: [],
   reviewReasons: [],
@@ -164,10 +164,10 @@ assert.match(sessionSource, /SET transcript_text = NULL/);
 const pageSource = readFileSync(resolve(process.cwd(), "client/src/pages/quick-book.tsx"), "utf8");
 assert.match(pageSource, /Book & Alert Crew/);
 assert.match(pageSource, /SpeechInput/);
-assert.match(pageSource, /JOB_SCHEDULE_OPTIONS\.map/);
+assert.match(pageSource, /QUICK_BOOK_SCHEDULE_OPTIONS\.map/);
 assert.match(pageSource, /smsConsent: true/);
 assert.match(pageSource, /smsConsent: false/);
-assert.match(pageSource, /localStorage\.getItem\(SESSION_KEY\)/);
+assert.match(pageSource, /\/api\/quick-book\/sessions\/current/);
 assert.match(pageSource, /Draft resumed/);
 assert.match(pageSource, /Microphone permission was denied|Voice unavailable/);
 assert.match(pageSource, /recording could not be transcribed|Could not transcribe|Voice transcription is disabled/i);

@@ -1,5 +1,4 @@
 import crypto from "crypto";
-import { getPushReadiness } from './pushConfig';
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import { notificationService } from "./notification";
@@ -28,6 +27,8 @@ export type JobEventType =
 type RecipientScope = "owners" | "all_crew" | "eligible_crew" | "assigned_crew" | "owners_and_assigned_crew" | "owners_and_all_crew" | "owners_and_eligible_crew";
 
 interface EmitJobEventOptions {
+  /** Keep unreviewed campaign intake with owners and off shared crew channels. */
+  ownerReviewOnly?: boolean;
   /** Stable caller-provided key makes a retried mutation idempotent. */
   eventId?: string;
   actorId?: string | null;
@@ -106,8 +107,7 @@ export function getJobEventWebhookReadiness() {
     configuredCount: urls.length,
     providers: Array.from(new Set(urls.map(webhookProvider))),
     signingSecretConfigured: Boolean(currentWebhookSecret()),
-    pushConfigured: getPushReadiness().ready,
-    push: getPushReadiness(),
+    pushConfigured: Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY),
   };
 }
 
@@ -153,6 +153,14 @@ function messageFor(type: JobEventType, lead: Lead, options: EmitJobEventOptions
 
   switch (type) {
     case "quote_requested":
+      if (options.ownerReviewOnly) {
+        return {
+          scope: "owners",
+          notificationType: "quote_request",
+          title: "Home Project Quote Request",
+          message: `${name}'s ${service} project is ready for owner review. Review the scope and requested deadline before quoting or arranging crew.`,
+        };
+      }
       return {
         scope: "owners_and_all_crew",
         notificationType: "crew_opportunity",
@@ -599,7 +607,7 @@ export async function emitStandaloneQuoteOpportunity(input: {
     }
 
     await Promise.allSettled(personalRecipients.map(async (recipient) => {
-      if (await hasJobAlertDelivery(input.eventId,recipient.id)) return;
+      if (await hasJobAlertDelivery(input.eventId, recipient.id)) return;
       const isOwnerRecipient = ["admin", "business_owner"].includes(String(recipient.role || ""));
       const result = await notificationService.sendNotification({
         userId: recipient.id,
@@ -695,6 +703,7 @@ export async function emitJobEvent(
       }
     }
     const message = messageFor(effectiveType, lead, effectiveOptions);
+    const ownerReviewOnly = effectiveType === "quote_requested" && effectiveOptions.ownerReviewOnly === true;
     let recipients: UserRecipient[] = [];
     try {
       recipients = uniqueRecipients(await recipientsFor(message.scope, lead));
@@ -719,12 +728,12 @@ export async function emitJobEvent(
       ...(effectiveOptions.extra || {}),
     };
 
-    const personalRecipients = recipients.filter((recipient) => recipient.jobAlertChannelPreference !== "discord");
+    // Shared Discord is deliberately excluded from this intake, so owners
+    // still receive an in-app record when it is their usual job-alert channel.
+    const personalRecipients = recipients.filter((recipient) => ownerReviewOnly || recipient.jobAlertChannelPreference !== "discord");
     await Promise.allSettled(personalRecipients.map(async (recipient) => {
-      // One recipient's audit must not suppress another recipient. Retain the
-      // existing no-repeat rule within each recipient until channel recovery
-      // can distinguish confirmed delivery from uncertain provider outcomes.
-      if (options.eventId && await hasJobAlertDelivery(eventId,recipient.id)) return;
+      // One recipient's audit must not suppress another recipient.
+      if (options.eventId && await hasJobAlertDelivery(eventId, recipient.id)) return;
       const isOwnerRecipient = ["admin", "business_owner"].includes(String(recipient.role || ""));
       const personalUrl = effectiveType === "jcmoves_disbursed"
         ? (isOwnerRecipient ? "/admin/finance" : "/crew/earnings")
@@ -766,7 +775,7 @@ export async function emitJobEvent(
       ]);
     }));
 
-    await deliverWebhooks({
+    if (!ownerReviewOnly) await deliverWebhooks({
       id: eventId,
       type: effectiveType,
       scope: message.scope,

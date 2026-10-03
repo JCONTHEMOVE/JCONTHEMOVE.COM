@@ -115,13 +115,13 @@
       "name": "Available Jobs",
       "short_name": "Jobs",
       "description": "View available jobs to accept",
-      "url": "/?shortcut=available-jobs"
+      "url": "/crew-jobs"
     },
     {
       "name": "My Jobs",
       "short_name": "My Jobs",
       "description": "View your accepted jobs",
-      "url": "/?shortcut=my-jobs"
+      "url": "/my-jobs"
     }
   ]
 }

@@ -1,8 +1,10 @@
+import { PhoneRewardsEnrollment } from "@/components/phone-rewards-enrollment";
 import { type FormEvent, type ReactNode, useMemo, useState } from "react";
 import { CalendarClock, CheckCircle2, Clock3, PhoneCall, ShieldCheck, Truck, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { Textarea } from "@/components/ui/textarea";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -225,6 +227,7 @@ export default function InstantBookingPage() {
             <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-400" />
             <h1 className="mt-4 text-2xl font-black">You’re all set</h1>
             <p className="mt-3 text-muted-foreground">{complete.message}</p>
+            <div className="mt-4 text-left"><PhoneRewardsEnrollment phone={form.customerPhone} /></div>
             {complete.kind === "hold" && (
               <p className="mt-3 rounded-lg bg-background/70 p-3 text-sm">
                 {complete.status === "awaiting_deposit"
@@ -262,8 +265,8 @@ export default function InstantBookingPage() {
       <div className="mx-auto max-w-3xl">
         <div className="mb-6 text-center">
           <p className="text-xs font-bold uppercase tracking-[0.22em] text-blue-300">JC ON THE MOVE LLC</p>
-          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Choose the date. We’ll confirm the move.</h1>
-          <p className="mx-auto mt-3 max-w-2xl text-slate-300">Start with a preferred date and exact time so your request lands on the calendar instead of sitting as a date-less callback.</p>
+          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">Request service</h1>
+
         </div>
 
         {mode === "schedule" && <DateFirstBooking onChooseCallback={() => setMode("callback")} onDetailedBooking={() => setMode("reserve")} />}
@@ -333,11 +336,11 @@ export default function InstantBookingPage() {
                   <Field label={form.service === "junk" ? "Expected job time" : "Requested hours"}><Input type="number" min="1" max="12" step="0.5" value={form.requestedHours} onChange={(e) => update("requestedHours", e.target.value)} disabled={form.service === "junk"} required /></Field>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label={form.service === "moving" ? "Pickup address" : "Service address"}><Input autoComplete="street-address" value={form.serviceAddress} onChange={(e) => update("serviceAddress", e.target.value)} required /></Field>
+                  <Field label={form.service === "moving" ? "Pickup address" : "Service address"}><PlacesAutocomplete value={form.serviceAddress} onChange={(value) => update("serviceAddress", value)} onPlaceSelect={(place) => update("zip", place.zip)} required /></Field>
                   <Field label="ZIP code"><Input inputMode="numeric" maxLength={10} value={form.zip} onChange={(e) => update("zip", e.target.value)} required /></Field>
                 </div>
                 {form.service === "moving" && (
-                  <Field label="Destination address"><Input autoComplete="street-address" value={form.destinationAddress} onChange={(e) => update("destinationAddress", e.target.value)} required /></Field>
+                  <Field label="Destination address"><PlacesAutocomplete value={form.destinationAddress} onChange={(value) => update("destinationAddress", value)} required /></Field>
                 )}
                 {form.service === "junk" ? (
                   <Field label="How much truck space?"><select className="field-select" value={form.junkVolume} onChange={(e) => update("junkVolume", e.target.value as BookingForm["junkVolume"])}><option value="quarter">¼ truckload</option><option value="half">½ truckload</option><option value="three_quarter">¾ truckload</option><option value="full">Full truckload</option></select></Field>
@@ -379,7 +382,7 @@ export default function InstantBookingPage() {
           </form>
         )}
       </div>
-      <style>{".field-select{display:flex;height:2.5rem;width:100%;border-radius:.375rem;border:1px solid hsl(var(--input));background:hsl(var(--background));padding:.5rem .75rem;font-size:.875rem;color:hsl(var(--foreground))}.field-select:focus{outline:2px solid hsl(var(--ring));outline-offset:2px}"}</style>
+      <style>{".field-select{display:flex;min-height:2.75rem;width:100%;border-radius:.375rem;border:1px solid hsl(var(--input));background:hsl(var(--background));padding:.5rem .75rem;font-size:1rem;color:hsl(var(--foreground))}.field-select:focus{outline:2px solid hsl(var(--ring));outline-offset:2px}"}</style>
     </div>
   );
 }

@@ -1,0 +1,120 @@
+import assert from 'node:assert/strict';
+import express from 'express';
+import { PGlite } from '@electric-sql/pglite';
+import { createCrewDailyHomeRouter, chicagoDay } from '../crewDailyHome';
+import { pricingTrainingScenarios } from '../../../shared/pricingTrainingScenarios';
+
+const pg = new PGlite();
+await pg.exec(`CREATE TABLE marketing_reps(id text PRIMARY KEY,user_id text,slug text,display_name text,promo_code text,territory text,is_active boolean);
+INSERT INTO marketing_reps VALUES('m','matt','matt','Matt','MATT10','Northwoods',true),('t','troy','troy','Troy','TROY10','Northwoods',true);
+CREATE TABLE promo_codes(code text,referral_user_id text,is_active boolean,expires_at timestamptz,max_uses int,uses_count int DEFAULT 0);
+INSERT INTO promo_codes(code,referral_user_id,is_active) VALUES('MATT10','matt',true),('TROY10','troy',true);
+CREATE TABLE marketing_action_assignments(id text PRIMARY KEY DEFAULT gen_random_uuid()::text,rep_id text,action_key text,title text,description text,status text DEFAULT 'assigned',proof_url text,proof_notes text,created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now(),UNIQUE(rep_id,action_key));
+CREATE TABLE marketing_bot_campaigns(id uuid PRIMARY KEY,revision int,headline text,service text,local_date date,approved_at timestamptz,approved_by_user_id text,status text,safety jsonb);
+CREATE TABLE marketing_bot_variants(id uuid PRIMARY KEY,campaign_id uuid,variant_code text,rep_id text,rep_slug text,is_company boolean,channel text,caption text,destination_url text,promo_code text);
+CREATE TABLE pricing_training_contributions(user_id text,scenario_id text,fingerprint text,status text,answer jsonb);
+INSERT INTO marketing_bot_campaigns VALUES('10000000-0000-4000-8000-000000000001',1,'Loading help','load_only','2026-09-14',now(),'owner','approved','{"passed":true}');
+INSERT INTO marketing_bot_variants VALUES('20000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','matt-day','m','matt',false,'facebook','Loading help https://example.test/api/public/marketing-bot/campaign/matt-day','https://example.test/api/public/marketing-bot/campaign/matt-day','MATT10');`);
+let failFollowup = false, current = new Date('2026-09-14T15:00:00Z');
+let invalidateOnLock: 'expire' | 'exhaust' | null = null;
+const query = async (statement: any, args?: any[]) => {
+  if (String(statement).includes('ALTER TABLE marketing_action_assignments')) { await pg.exec(statement); return { rows: [] }; }
+  if (invalidateOnLock && String(statement).includes('SELECT mr.id FROM marketing_reps')) {
+    await pg.exec(invalidateOnLock === 'expire'
+      ? "UPDATE promo_codes SET expires_at='2026-09-14T15:00:00Z' WHERE code='MATT10'"
+      : "UPDATE promo_codes SET max_uses=1,uses_count=1 WHERE code='MATT10'");
+    invalidateOnLock = null;
+  }
+  if (failFollowup && String(statement).includes("'Follow up only")) throw Error('Injected follow-up insert failure');
+  return pg.query(statement, args);
+};
+let lock = Promise.resolve();
+const db = { query, connect: async () => {
+  const previous = lock; let release!: () => void;
+  lock = new Promise<void>(r => { release = r; }); await previous;
+  return { query, release };
+} };
+const staff = (req: any, res: any, next: any) => {
+  const id = req.headers['x-user']; if (!id) return res.sendStatus(401);
+  if (id === 'customer') return res.sendStatus(403);
+  req.marketingActor = { id }; next();
+};
+const app = express(); app.use(express.json()); app.use('/daily', createCrewDailyHomeRouter(staff, db as any, 'https://example.test', () => current));
+const server = app.listen(0, '127.0.0.1'); await new Promise<void>(r => server.once('listening', r));
+const url = `http://127.0.0.1:${(server.address() as any).port}/daily`;
+const call = (path = '', body?: any, user = 'matt') => fetch(url + path, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json', ...(user ? { 'x-user': user } : {}) }, body: body ? JSON.stringify(body) : undefined });
+const proof = { variantId: '20000000-0000-4000-8000-000000000001', revision: 1, destination: 'Permitted local group', proofNotes: 'Shared the approved loading help post.', nextDate: '2026-09-15' };
+try {
+  assert.equal(chicagoDay(new Date('2026-09-15T04:59:59Z')), '2026-09-14');
+  assert.equal(chicagoDay(new Date('2026-09-15T05:00:00Z')), '2026-09-15');
+  assert.equal((await call('', undefined, '')).status, 401);
+  assert.equal((await call('', undefined, 'customer')).status, 403);
+  let home = await (await call()).json();
+  assert.equal(home.outreach.caption.includes('/campaign/matt-day'), true);
+  assert.equal(home.scenario.submitted, false);
+  assert.equal(home.followup, null);
+  const scenario = pricingTrainingScenarios.find(s => s.id === home.scenario.id)!;
+  assert.equal(scenario.service, 'load_only');
+  await pg.query('INSERT INTO pricing_training_contributions VALUES($1,$2,$3,$4,$5)', ['matt', scenario.id, scenario.fingerprint, 'reviewed', { privateAnswer: 'never return this' }]);
+  const trained = await (await call()).json();
+  assert.equal(trained.scenario.submitted, true);
+  assert.equal(JSON.stringify(trained).includes('privateAnswer'), false);
+  assert.equal((await call('/reach', proof, 'troy')).status, 409);
+  assert.equal((await call('/reach', { ...proof, proofNotes: ' ' })).status, 400);
+  assert.equal((await call('/reach', { ...proof, proofUrl: 'javascript:alert(1)' })).status, 400);
+  assert.equal((await call('/reach', { ...proof, nextDate: '2026-02-30' })).status, 400);
+  assert.equal((await call('/reach', { ...proof, nextDate: '2026-09-14' })).status, 400);
+  assert.equal((await call('/reach', { ...proof, status: 'completed' })).status, 400);
+  assert.equal((await call('/reach', { ...proof, revision: 2 })).status, 409);
+  await pg.exec("UPDATE promo_codes SET expires_at='2026-09-14T15:00:00Z' WHERE code='MATT10'");
+  assert.equal((await (await call()).json()).rep, null, 'Expiry at the current instant is unusable');
+  assert.equal((await call('/reach', proof)).status, 403);
+  await pg.exec("UPDATE promo_codes SET expires_at=NULL,max_uses=1,uses_count=1 WHERE code='MATT10'");
+  assert.equal((await (await call()).json()).rep, null, 'Exhausted promo is not verified');
+  assert.equal((await call('/reach', proof)).status, 403);
+  await pg.exec("UPDATE promo_codes SET max_uses=NULL,uses_count=0 WHERE code='MATT10'");
+  invalidateOnLock = 'expire';
+  assert.equal((await call('/reach', proof)).status, 409, 'Recheck expiry inside the save transaction');
+  invalidateOnLock = 'exhaust';
+  assert.equal((await call('/reach', proof)).status, 409, 'Recheck exhaustion inside the save transaction');
+  await pg.exec("UPDATE marketing_bot_campaigns SET approved_at=NULL");
+  assert.equal((await call('/reach', proof)).status, 409);
+  await pg.exec("UPDATE marketing_bot_campaigns SET approved_at=now()");
+  await pg.exec("UPDATE marketing_bot_campaigns SET status='skipped'");
+  assert.equal((await (await call()).json()).outreach, null);
+  assert.equal((await call('/reach', proof)).status, 409);
+  await pg.exec("UPDATE marketing_bot_campaigns SET status='approved',safety='{\"passed\":false}'");
+  assert.equal((await call('/reach', proof)).status, 409);
+  await pg.exec("UPDATE marketing_bot_campaigns SET safety='{\"passed\":true}'; UPDATE marketing_bot_variants SET promo_code='TROY10'");
+  assert.equal((await call('/reach', proof)).status, 409);
+  await pg.exec("UPDATE marketing_bot_variants SET promo_code='MATT10',destination_url='https://untrusted.test'");
+  assert.equal((await call('/reach', proof)).status, 409);
+  await pg.exec("UPDATE marketing_bot_variants SET destination_url='https://example.test/api/public/marketing-bot/campaign/matt-day'");
+  failFollowup = true;
+  assert.equal((await call('/reach', proof)).status, 503);
+  assert.equal((await pg.query('SELECT * FROM marketing_action_assignments')).rows.length, 0);
+  failFollowup = false;
+  const repeated = await Promise.all([call('/reach', proof), call('/reach', proof)]);
+  assert.deepEqual(repeated.map(r => r.status), [200, 200]);
+  assert.equal((await pg.query('SELECT * FROM marketing_action_assignments')).rows.length, 2);
+  assert.equal((await (await call()).json()).outreach.status, 'submitted');
+  const due: any = (await pg.query("SELECT * FROM marketing_action_assignments WHERE due_on IS NOT NULL")).rows[0];
+  assert.equal((await call(`/followups/${due.id}`, { outcome: 'Customer asked for a quote.' })).status, 404);
+  current = new Date('2026-09-15T15:00:00Z');
+  home = await (await call()).json();
+  assert.equal(home.followup.id, due.id);
+  assert.equal(home.outreach, null, 'Do not reuse yesterday’s dated offer');
+  assert.equal((await call(`/followups/${due.id}`, { outcome: 'Customer asked for a quote.' }, 'troy')).status, 404);
+  assert.equal((await call(`/followups/${due.id}`, { outcome: 'Customer asked for a quote.', nextDate: '2026-09-16' })).status, 200);
+  assert.equal((await call(`/followups/${due.id}`, { outcome: 'Duplicate cannot overwrite.', nextDate: '2026-09-17' })).status, 200);
+  assert.equal((await pg.query('SELECT * FROM marketing_action_assignments')).rows.length, 3);
+  assert.equal((await (await call()).json()).followupSubmitted, true);
+  current = new Date('2026-11-01T16:00:00Z');
+  assert.equal((await call('/reach', { ...proof, nextDate: '2026-11-03' })).status, 409);
+  await pg.exec("UPDATE promo_codes SET referral_user_id='troy' WHERE code='MATT10'");
+  assert.equal((await (await call()).json()).rep, null);
+  await pg.exec("UPDATE promo_codes SET referral_user_id='matt' WHERE code='MATT10'");
+  await pg.exec("UPDATE marketing_reps SET is_active=false WHERE id='m'");
+  assert.equal((await (await call()).json()).rep, null);
+  console.log('Crew daily home: ownership, approval, dates, privacy, retry and rollback checks passed.');
+} finally { server.close(); await pg.close(); }

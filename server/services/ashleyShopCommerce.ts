@@ -7,6 +7,22 @@ import { ensureAshleyShopSchema } from "./ashleyShopSchema";
 import { priceCommerceCart } from "./ashleyShopPricing";
 import { applySitewideCryptoDiscount, SITEWIDE_CRYPTO_DISCOUNT_PERCENT } from "@shared/paymentIncentives";
 import { createBitPayCheckoutIntent } from "./cryptoPayments";
+import { settlePaidShopRewards, type PaidShopRewardOrder } from "./ashleyShopRewards";
+
+async function issuePaidOrderRewards(orderId: string) {
+  const result = await pool.query<PaidShopRewardOrder>("SELECT * FROM commerce_orders WHERE id = $1", [orderId]);
+  const order = result.rows[0];
+  if (!order) return;
+  await settlePaidShopRewards(order, {
+    credit: (userId, amount, referenceId) => storage.creditWalletTokens(userId, amount, {
+      rewardType: "ashley_shop_purchase", referenceId,
+      metadata: { source: "verified_square_commerce_order", orderId: referenceId },
+    }),
+    markIssued: async (id) => {
+      await pool.query("UPDATE commerce_orders SET reward_issued_at = COALESCE(reward_issued_at, now()), updated_at = now() WHERE id = $1", [id]);
+    },
+  });
+}
 
 type CommerceIdentity = { userId?: string | null; email?: string | null; isAdmin?: boolean };
 
@@ -170,6 +186,7 @@ export async function createCommerceCryptoCheckout(
     baseRewardMoves: 0,
     regularPaymentBonusMoves: 0,
     featuredBonusMoves: 0,
+    itemBonusMoves: 0,
     totalRewardMoves: 0,
     paymentIncentive: {
       rail: "crypto",
@@ -293,7 +310,12 @@ export async function finalizeCommerceOrder(orderId: string) {
   }>("SELECT * FROM commerce_orders WHERE id = $1", [orderId]);
   const order = orderResult.rows[0];
   if (!order) throw new Error("Order not found");
-  if (order.status === "paid") return getCommerceOrder(orderId);
+  if (order.status === "paid") {
+    await issuePaidOrderRewards(orderId).catch((error) => {
+      console.error("[Ashley Shop] reward issuance failed; will retry", orderId, error);
+    });
+    return getCommerceOrder(orderId);
+  }
   if (!order.square_order_id) throw new Error("Order is not connected to Square");
 
   const square = await squareClient();
@@ -332,22 +354,9 @@ export async function finalizeCommerceOrder(orderId: string) {
     client.release();
   }
 
-  if (order.user_id && Number(order.reward_moves) > 0) {
-    try {
-      await storage.creditWalletTokens(order.user_id, Number(order.reward_moves), {
-        rewardType: "ashley_shop_purchase",
-        referenceId: orderId,
-        metadata: { source: "verified_square_commerce_order", orderId },
-      });
-      await pool.query("UPDATE commerce_orders SET reward_issued_at = now(), updated_at = now() WHERE id = $1", [orderId]);
-    } catch (error: any) {
-      if (error?.code === "23505") {
-        await pool.query("UPDATE commerce_orders SET reward_issued_at = COALESCE(reward_issued_at, now()), updated_at = now() WHERE id = $1", [orderId]);
-      } else {
-        console.error("[Ashley Shop] reward issuance failed", orderId, error);
-      }
-    }
-  }
+  await issuePaidOrderRewards(orderId).catch((error) => {
+    console.error("[Ashley Shop] reward issuance failed; will retry", orderId, error);
+  });
 
   sendEmail({
     to: order.customer_email,
@@ -416,6 +425,16 @@ export async function getCommerceOrder(orderId: string) {
 
 export async function sweepExpiredCommerceReservations() {
   await ensureAshleyShopSchema();
+  const unpaidRewards = await pool.query<{ id: string }>(`
+    SELECT id FROM commerce_orders WHERE status = 'paid' AND payment_rail <> 'crypto'
+      AND user_id IS NOT NULL AND reward_moves > 0 AND reward_issued_at IS NULL
+      AND pricing_snapshot->>'itemBonusMoves' = '555'
+    ORDER BY paid_at ASC LIMIT 100`);
+  for (const order of unpaidRewards.rows) {
+    await issuePaidOrderRewards(order.id).catch((error) => {
+      console.error("[Ashley Shop] scheduled reward retry failed", order.id, error);
+    });
+  }
   const candidates = await pool.query<{ id: string; payment_rail: string; square_order_id: string | null }>(
     `SELECT id, payment_rail, square_order_id
        FROM commerce_orders

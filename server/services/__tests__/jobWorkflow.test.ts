@@ -1,0 +1,33 @@
+import assert from "node:assert/strict";
+import { businessDateString, customerAgreementSnapshot, dispatchBlockers, projectJobWorkflow, type WorkflowQuote } from "../../../shared/job-workflow";
+
+const lead = { id: "job", firstName: "Test", lastName: "Customer", phone: "2025550123", serviceType: "labor", fromAddress: "213 S Marquette St", confirmedDate: "2099-10-02", arrivalWindow: "9:00 AM – 10:00 AM", totalPrice: "472.50", confirmedHours: 2, crewSize: 3, crewMembers: ["a", "b", "c"], depositRequired: false, paymentPaidAt: null, status: "quote_requested", jobPlanDetails: { workScope: "load_only" } };
+const quote: WorkflowQuote = { id: "q1", revision: 1, status: "draft", total: 472.5, subtotal: 525, discount: 52.5, lines: [{ name: "Labor", quantity: 1, unitPrice: 525, total: 525 }], matches: true, requiresOwner: false, reasons: [] };
+const project = (job = lead, q = quote) => projectJobWorkflow({ lead: job, quote: q, version: "v", confirmationHash: "terms", capabilities: { approve: true, manage: true, sms: false } });
+
+assert.equal(project().nextAction.key, "review", "A saved price is not approval");
+assert.equal(project().label, "Quote review needed");
+const approved = { ...quote, status: "approved" };
+assert.equal(project(lead, approved).nextAction.key, "confirm");
+const confirmed = { ...lead, jobPlanDetails: { ...lead.jobPlanDetails, customerConfirmation: { snapshotHash: "terms", method: "phone" } } };
+assert.equal(project(confirmed, approved).nextAction.target, "payment");
+assert.equal(project({ ...confirmed, paymentPaidAt: "2099-01-01" } as any, approved).nextAction.key, "dispatch");
+assert.equal(projectJobWorkflow({ lead, quote, version: "v", confirmationHash: "", capabilities: { approve: false, manage: false, sms: false } }).label, "Awaiting approval");
+assert.ok(dispatchBlockers({ ...confirmed, crewMembers: ["a", "a"] }, approved, true).some(b => b.code === "crew_roster"));
+assert.ok(!dispatchBlockers({ ...lead, confirmedDate: null, moveDate: "2099-10-02" }, approved, true).some(b => b.code === "service_date"), "Legacy saved dates remain reviewable for agreement and dispatch");
+assert.equal(customerAgreementSnapshot({ ...lead, confirmedDate: null, moveDate: "2099-10-02" }, "q1").date, "2099-10-02");
+assert.ok(!dispatchBlockers({ ...confirmed, crewMembers: [] }, approved, true, false).some(b => b.code === "crew_roster"));
+assert.ok(dispatchBlockers({ ...confirmed, depositRequired: true, depositPaid: false }, approved, true, false).some(b => b.code === "payment_required"));
+assert.ok(dispatchBlockers({ ...confirmed, depositRequired: true, depositPaid: false, dispatchOverrideReason: "Owner exception" }, quote, false).some(b => b.code === "quote_approval"), "Payment overrides do not bypass quote approval");
+assert.ok(dispatchBlockers({ ...lead, confirmedDate: "2026-02-30" }, approved, true).some(b => b.code === "service_date"));
+assert.ok(dispatchBlockers({ ...lead, serviceType: "delivery", toAddress: "" }, approved, true).some(b => b.code === "destination"));
+assert.ok(!dispatchBlockers(lead, approved, true).some(b => b.code === "destination"));
+assert.ok(!dispatchBlockers({ ...lead, serviceType: "moving", jobPlanDetails: { workScope: "load_only" } }, approved, true).some(b => b.code === "destination"), "Load-only work does not invent a destination requirement");
+const snapshot = customerAgreementSnapshot(lead, "q1");
+assert.deepEqual(customerAgreementSnapshot({ ...lead, crewMembers: ["x"], dispatchNotes: "Internal" }, "q1"), snapshot);
+for (const change of [{ totalPrice: "480" }, { confirmedDate: "2099-10-03" }, { fromAddress: "Other street" }, { jobPlanDetails: { workScope: "unload_only" } }]) assert.notDeepEqual(customerAgreementSnapshot({ ...lead, ...change }, "q1"), snapshot);
+assert.notDeepEqual(customerAgreementSnapshot(lead, "q2"), snapshot);
+assert.equal(project({ ...lead, status: "completed" }).nextAction.key, "closeout");
+assert.equal(project({ ...lead, status: "in_progress" }).nextAction.key, "complete");
+assert.match(businessDateString(), /^\d{4}-\d{2}-\d{2}$/);
+console.log("Guided job workflow: approval, agreement, dispatch/payment gates, scope changes and closeout passed.");

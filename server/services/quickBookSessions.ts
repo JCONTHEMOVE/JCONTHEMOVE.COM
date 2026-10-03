@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db, pool } from "../db";
 import { quickBookingSessions } from "@shared/schema";
 import {
@@ -85,6 +85,15 @@ export async function createQuickBookSession(createdByUserId: string) {
 export async function getQuickBookSession(id: string) {
   await ensureQuickBookingSchema();
   const [row] = await db.select().from(quickBookingSessions).where(eq(quickBookingSessions.id, id)).limit(1);
+  return row || null;
+}
+
+export async function getLatestQuickBookDraft(createdByUserId: string) {
+  await ensureQuickBookingSchema();
+  const [row] = await db.select().from(quickBookingSessions).where(and(
+    eq(quickBookingSessions.createdByUserId, createdByUserId),
+    inArray(quickBookingSessions.status, ['draft', 'ready']),
+  )).orderBy(desc(quickBookingSessions.updatedAt), desc(quickBookingSessions.id)).limit(1);
   return row || null;
 }
 

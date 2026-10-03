@@ -1,3 +1,4 @@
+import { homeProjectLink } from "@shared/homeProjectCampaign";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
@@ -327,6 +328,15 @@ export default function MarketingRepPage() {
               </CardContent>
             </Card>
           </div>
+        </div>
+      </section>
+
+      <section className="border-t border-white/10 bg-[#102d25] px-4 py-10">
+        <div className="mx-auto max-w-5xl">
+          <p className="text-sm font-bold uppercase tracking-widest text-[#f0cf83]">Holiday home projects</p>
+          <h2 className="mt-3 text-3xl font-black text-white">Carpet removal &amp; light demolition</h2>
+          <p className="mt-4 text-white/80">Watch our project slideshow, send photos and request a quote through {rep.displayName}.</p>
+          <a href={homeProjectLink(rep.slug, "rep_profile")} className="mt-6 inline-flex min-h-12 items-center rounded-lg bg-[#f0cf83] px-6 py-3 font-bold text-[#102d25]">Get a home project quote</a>
         </div>
       </section>
 

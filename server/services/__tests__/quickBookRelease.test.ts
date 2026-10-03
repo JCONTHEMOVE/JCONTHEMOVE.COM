@@ -12,11 +12,13 @@ const js = ts.transpileModule(source.slice(start, end), { compilerOptions: { tar
 const routes = new Map<string, Function>();
 const app = Object.fromEntries(['get', 'post'].map(method => [method, (path: string, ...handlers: Function[]) => routes.set(`${method} ${path}`, handlers.at(-1)!)]));
 let reads = 0;
+let lookupActor: string | undefined;
 const env: Record<string, string> = {};
-new Function('app', 'isAuthenticated', 'storage', 'process', 'z', 'getQuickBookSession', 'calculateQuickBookState', 'quickBookSessionResponse', 'isQuickBookAiConfigured', 'QUICK_BOOK_DEFAULT_MODEL', 'QUICK_BOOK_DEFAULT_TRANSCRIPTION_MODEL', js)(
+new Function('app', 'isAuthenticated', 'storage', 'process', 'z', 'getQuickBookSession', 'calculateQuickBookState', 'quickBookSessionResponse', 'isQuickBookAiConfigured', 'QUICK_BOOK_DEFAULT_MODEL', 'QUICK_BOOK_DEFAULT_TRANSCRIPTION_MODEL', 'getLatestQuickBookDraft', js)(
   app, () => {}, { getUser: () => { throw Error('unexpected user lookup'); } }, { env }, z,
   async () => { reads++; return { id: 'fixture', createdByUserId: 'owner' }; },
   () => { throw Error('unexpected pricing/database access'); }, () => {}, () => false, 'test', 'test',
+  async (actor: string) => {reads++;lookupActor=actor;return null;},
 );
 async function request(key: string, role: string, userId = 'owner') {
   let status = 200; let body: any;
@@ -25,7 +27,7 @@ async function request(key: string, role: string, userId = 'owner') {
   return { status, body };
 }
 const dataRoutes = [...routes.keys()].filter(key => !key.endsWith('/health'));
-assert.equal(dataRoutes.length, 5);
+assert.equal(dataRoutes.length, 6);
 for (const enabled of [undefined, 'false', 'TRUE', 'true']) {
   if (enabled === undefined) delete env.QUICK_BOOK_ENABLED; else env.QUICK_BOOK_ENABLED = enabled;
   for (const role of ['admin', 'employee', 'customer']) {
@@ -48,4 +50,8 @@ env.QUICK_BOOK_LIVE_BOOKING_ENABLED = 'true';
 assert.equal((await request('get /api/quick-book/health', 'employee')).body.canComplete, false);
 assert.equal((await request('get /api/quick-book/health', 'business_owner')).body.canComplete, true);
 assert.equal((await request('get /api/quick-book/health', 'admin')).body.canComplete, true);
+assert.equal((await request('get /api/quick-book/sessions/current', 'business_owner')).body, null);
+assert.equal(lookupActor,'owner');
+assert.equal((await request('get /api/quick-book/sessions/current', 'employee','employee-a')).body, null);
+assert.equal(lookupActor,'employee-a','resume queries must use the authenticated actor');
 console.log('Quick Book actual-handler role/flag matrix passed; disabled booking made zero database calls.');

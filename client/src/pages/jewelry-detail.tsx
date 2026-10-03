@@ -1,3 +1,5 @@
+import { CatalogImage } from "@/components/catalog-image";
+import { CopperCuffOffer } from "@/components/copper-cuff-offer";
 import { useState } from "react";
 import { useParams, Link, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -26,7 +28,7 @@ function MediaItem({ src, alt, className }: { src: string; alt: string; classNam
   if (isVideoUrl(src)) {
     return <video src={src} className={className} controls playsInline muted loop />;
   }
-  return <img src={src} alt={alt} className={className} />;
+  return <CatalogImage src={src} alt={alt} className={className} />;
 }
 
 const COLLECTIONS = [
@@ -39,6 +41,7 @@ const COLLECTIONS = [
 
 interface JewelryItem {
   id: string;
+  sku?: string;
   postedBy?: string;
   title: string;
   description?: string;
@@ -389,7 +392,7 @@ function JCMOVESPanel({ item, onCheckoutWithDiscount }: { item: JewelryItem; onC
           Sign up free to earn <span className="font-bold">{tokensToEarn.toLocaleString()} JCMOVES</span> on this purchase
           ({EARN_RATE} per $1). Use tokens for discounts across all JC on the Move services.
         </p>
-        <Link href="/register">
+        <Link href={`/login?mode=register&redirect=${encodeURIComponent(`/handmade-jewels-by-ashley/${encodeURIComponent(item.id)}`)}`}>
           <Button size="sm" className="w-full bg-amber-500 hover:bg-amber-400 text-white font-bold text-xs">
             Create Account to Earn Rewards &rarr;
           </Button>
@@ -843,6 +846,7 @@ export default function JewelryDetailPage() {
           </div>
 
           {/* Materials */}
+          <CopperCuffOffer sku={item.sku} available={item.status === "active" && item.inStock !== false} />
           {item.materials && (
             <div className="bg-rose-50 rounded-xl p-3 border border-rose-100">
               <p className="text-xs font-semibold text-rose-400 uppercase tracking-wide mb-1">Made With</p>

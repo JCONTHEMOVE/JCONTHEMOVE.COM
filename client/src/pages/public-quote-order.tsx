@@ -1,3 +1,4 @@
+import { PhoneRewardsEnrollment } from "@/components/phone-rewards-enrollment";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Printer } from "lucide-react";
 import { useRoute } from "wouter";
@@ -32,7 +33,7 @@ export default function PublicQuoteOrderPage() {
         <div className="mb-7 text-center">
           <p className="text-xs font-bold uppercase tracking-[0.22em] text-cyan-300">JC ON THE MOVE</p>
           <h1 className="mt-2 text-3xl font-black tracking-tight text-white">Your Job Order</h1>
-          <p className="mt-2 text-sm text-slate-400">Review the service details, then confirm with secure payment when you are ready.</p>
+          <p className="mt-2 text-sm text-slate-400">Review your quote and contact us to confirm the details.</p>
         </div>
 
         {isLoading ? <div className="rounded-2xl border border-slate-700 bg-slate-900 p-8 text-center text-sm text-slate-400">Loading your job order…</div> : null}
@@ -45,9 +46,10 @@ export default function PublicQuoteOrderPage() {
         {order ? (
           <>
             <JobOrderTicket order={order} viewer="customer" />
+            <div className="quote-order-actions mt-4"><PhoneRewardsEnrollment /></div>
             <div className="quote-order-actions mt-4 grid gap-2 sm:grid-cols-2">
               {order.paymentUrl ? (
-                <Button className="gap-2 bg-cyan-500 font-bold text-slate-950 hover:bg-cyan-400" onClick={() => window.open(order.paymentUrl || "", "_blank", "noopener,noreferrer")} data-testid="button-pay-quote-order">
+                <Button className="min-h-12 gap-2 bg-cyan-500 font-bold text-slate-950 hover:bg-cyan-400" onClick={() => window.open(order.paymentUrl || "", "_blank", "noopener,noreferrer")} data-testid="button-pay-quote-order">
                   Review & Pay <ExternalLink className="h-4 w-4" />
                 </Button>
               ) : null}

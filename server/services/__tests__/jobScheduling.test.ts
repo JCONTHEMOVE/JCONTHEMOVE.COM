@@ -29,13 +29,14 @@ assert.doesNotMatch(setupSource, /driverUserId:/);
 
 const leadDetailSource = readFileSync(resolve(process.cwd(), "client/src/pages/lead-detail.tsx"), "utf8");
 assert.doesNotMatch(leadDetailSource, /showInlineScheduler|Crew & Service Plan/);
-assert.match(leadDetailSource, /openJobSetup\("job-setup-schedule"\)/);
+assert.match(leadDetailSource, /openJobSetup\("schedule"\)/);
 
 const routesSource = readFileSync(resolve(process.cwd(), "server/routes.ts"), "utf8");
 assert.doesNotMatch(routesSource, /app\.patch\("\/api\/leads\/:id\/schedule"/);
 assert.doesNotMatch(routesSource.slice(routesSource.indexOf("const jobSetupSchema"), routesSource.indexOf("app.patch(\"/api/leads/:id/setup\"")), /driverUserId/);
 assert.match(routesSource, /currentLead\.driverUserId && !effectiveDriver\) patch\.driverUserId = null/);
-assert.match(routesSource, /const shouldNotifyCrew = hasCompleteTentativePlan && operationalPlanChanged/);
+const setupRoute = routesSource.slice(routesSource.indexOf('app.patch("/api/leads/:id/setup"'), routesSource.indexOf('app.patch("/api/leads/:id/quote"'));
+assert.doesNotMatch(setupRoute, /emitJobEvent\("crew_plan_saved"/);
 
 const eventBusSource = readFileSync(resolve(process.cwd(), "server/services/jobEventBus.ts"), "utf8");
 assert.match(eventBusSource, /const arrival = lead\.arrivalWindow \? `, \$\{lead\.arrivalWindow\} Central`/);
