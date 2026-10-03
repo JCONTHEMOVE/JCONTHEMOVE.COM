@@ -41,6 +41,9 @@ assert.equal(entry.attribution.promoCode, "HELP");
 assert.equal(entry.attribution.referralSlug, "north");
 assert.equal(entry.attribution.marketingTracking.jcRouteDay, "tuesday");
 assert.equal(entry.attribution.marketingCampaignId, "fall");
+const lightDemo = projectEntry("?mode=quick&service=light_demo");
+assert.equal(lightDemo.serviceCode, "demolition");
+assert.equal(projectServiceLabel(lightDemo.serviceCode), "Light demolition");
 
 // Execute the actual HTTP handler with a transactional in-memory store, never a live database.
 const source = readFileSync("server/routes.ts", "utf8");
