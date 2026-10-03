@@ -6,6 +6,7 @@ import { estimateJobDuration, JOB_SCHEDULE_OPTIONS, type SizingBasis, type Truck
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { Textarea } from "@/components/ui/textarea";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -176,7 +177,7 @@ export function DateFirstBooking({ onChooseCallback, onDetailedBooking }: { onCh
       </section>
       <section hidden={step!=='service'} data-step="service" className="space-y-3" aria-label="Service and location">
         <Field label="Service"><select className="field-select min-h-11" value={service} onChange={e=>setService(e.target.value as Service)}><option value="moving">Moving</option><option value="labor">Loading / unloading</option><option value="junk_removal">Junk removal</option></select></Field>
-        <Field label="Service address"><Input autoComplete="street-address" value={address} onChange={e=>setAddress(e.target.value)} required/></Field>
+        <Field label="Service address"><PlacesAutocomplete value={address} onChange={setAddress} onPlaceSelect={place=>setZip(place.zip)} required/></Field>
         <Field label="ZIP code"><Input inputMode="numeric" maxLength={10} value={zip} onChange={e=>setZip(e.target.value)} required/></Field>
         <Field label="Work needed"><Textarea rows={3} value={workScope} onChange={e=>setWorkScope(e.target.value)} placeholder="Items, pickup/drop-off, stairs, access" required/></Field>
       </section>

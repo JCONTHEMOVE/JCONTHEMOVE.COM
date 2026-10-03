@@ -22,11 +22,14 @@ import MarketplaceActionMatrix from "@/components/MarketplaceActionMatrix";
 import MarketplaceProcessGuide from "@/components/MarketplaceProcessGuide";
 import { WalletChoiceModal } from "@/components/WalletChoiceModal";
 import { MarketingLaunchCard } from "@/components/MarketingLaunchCard";
+import { CrewDailyHome } from '@/components/CrewDailyHome';
 import { MarketingBotRepCard } from "@/components/MarketingBotRepCard";
+import { MARKETING_WEEKLY_NOTE, MARKETING_WEEKLY_THEMES } from "@shared/marketingWeek";
+import { PersonalPromoPanel, PERSONAL_PROMO_QUERY } from "@/components/PersonalPromoPanel";
+import type { PersonalPromoState } from "@shared/personalPromo";
 import {
   ROUTE_DAY_PROMO_PACKAGES,
   ROUTE_DAY_SCHEDULE,
-  routeDayLandingHref,
   routeDayTrackingParams,
 } from "@shared/routeDays";
 
@@ -239,13 +242,13 @@ const ALL_CAPABILITIES: { key: string; label: string; icon: LucideIcon }[] = [
 
 const AD_AREA_OPTIONS = [
   "Ironwood / Hurley",
-  ...ROUTE_DAY_SCHEDULE.map((route) => route.label),
+  ...MARKETING_WEEKLY_THEMES,
   "Wausau",
   "Northwoods",
 ];
-const AD_FOCUS_OPTIONS = ["Moving help", "U-Haul load/unload", "Junk removal", "Delivery help", "PODS / U-Box help", "Last-minute labor"];
+const AD_FOCUS_OPTIONS = ["Moving help", "Crew appreciation", "U-Haul load/unload", "Junk removal", "Delivery help", "PODS / U-Box help", "Last-minute labor"];
 const AD_NOTE_PRESETS = [
-  { label: "Route days", text: "More route days are added as demand grows." },
+  { label: "Weekday focus", text: MARKETING_WEEKLY_NOTE },
   { label: "Openings", text: "A few local openings this week. Send ZIP, date, and photos for a quick quote review." },
   { label: "Last-minute", text: "Last-minute load/unload and delivery help may be available depending on crew timing." },
   { label: "Heavy item", text: "Good fit for couches, appliances, garage items, storage units, and truck unloads." },
@@ -351,16 +354,12 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
   });
 
   const userCapabilities: string[] = user?.capabilities ?? [];
-  const referralCode = (user as any)?.referralCode || "";
-  const workerName = `${(user as any)?.firstName || ""} ${(user as any)?.lastName || ""}`.trim().toLowerCase();
-  const marketingRep = marketingReps.find((rep) => {
-    if (referralCode && rep.promoCode.toUpperCase() === referralCode.toUpperCase()) return true;
-    return workerName.length > 0 && rep.displayName.toLowerCase() === workerName;
-  });
-  const referralLink = marketingRep
-    ? `${window.location.origin}/network/${marketingRep.slug}`
-    : `${window.location.origin}/book${referralCode ? `?promo=${encodeURIComponent(referralCode)}` : "?mode=quick"}`;
-  const referralDestination = marketingRep ? "Verified rep page" : "Booking link";
+  const personalPromo = useQuery<PersonalPromoState>({ queryKey: [PERSONAL_PROMO_QUERY], enabled: marketingMode, retry: 1 });
+  const promoReady = personalPromo.data?.status === "ready" && !personalPromo.isError;
+  const referralCode = promoReady ? personalPromo.data!.promo!.code : "";
+  const marketingRep = marketingReps.find(rep => rep.slug === personalPromo.data?.repSlug);
+  const referralLink = promoReady ? `${window.location.origin}${personalPromo.data!.bookingPath}` : "";
+  const referralDestination = "Personal booking link";
   const referralShareText = [
     "Need moving, junk removal, delivery, cleanup, or labor help?",
     `Book with JC ON THE MOVE here: ${referralLink}`,
@@ -377,10 +376,7 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
   const routeForAdArea = ROUTE_DAY_SCHEDULE.find((route) => route.label === adArea);
   const trackedAdLink = useMemo(() => {
     try {
-      const routeUrl = routeForAdArea
-        ? `${window.location.origin}${routeDayLandingHref(routeForAdArea)}`
-        : referralLink;
-      const url = new URL(routeUrl);
+      const url = new URL(referralLink);
       url.searchParams.set("utm_source", "crew_ad");
       url.searchParams.set("utm_medium", "facebook");
       url.searchParams.set("utm_campaign", `${adArea}-${adFocus}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""));
@@ -395,11 +391,12 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
         url.searchParams.set("jc_focus", adFocus);
         if (marketingRep?.slug) url.searchParams.set("rep", marketingRep.slug);
       }
+      url.searchParams.set("promo", referralCode);
       return url.toString();
     } catch {
       return referralLink;
     }
-  }, [adArea, adFocus, marketingRep?.slug, referralLink, routeForAdArea]);
+  }, [adArea, adFocus, marketingRep?.slug, referralLink, referralCode, routeForAdArea]);
   const adShareLink = adDraft?.shareUrl || adDraft?.trackedLink || trackedAdLink;
   const facebookShareHref = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(adShareLink)}`;
 
@@ -460,8 +457,6 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
           approvedPhotoKey: "crew-ramp",
           photoDataUrl: adCreativeSource === "uploaded_photo" ? adPhotoDataUrl || undefined : undefined,
         },
-        referralLink: trackedAdLink,
-        promoCode: referralCode,
       });
       return response.json();
     },
@@ -477,7 +472,7 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
           ? `+${Number(reward.bonusTokens || 0).toLocaleString()} JCMOVES for creating a tracked campaign.`
           : data.draft?.creative?.fallbackUsed
             ? data.draft.creative.reason || "Approved JC photo used as the creative fallback."
-            : (reward?.reason || "ChatGPT-powered copy created."),
+            : (reward?.reason || "Your approved personal code and offer are included."),
       });
     },
     onError: (e: Error) => toast({ title: "Ad draft failed", description: e.message, variant: "destructive" }),
@@ -638,6 +633,7 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
         </p>
       </div>
 
+      {marketingMode && <CrewDailyHome />}
       {marketingMode && (<TaskDetails title="Help">
         <ProcessFlowCard
           title="Create, post, recover"
@@ -646,13 +642,15 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
         /></TaskDetails>
       )}
 
-      {marketingMode && <TaskDetails title="Bot setup and missions" defaultOpen><MarketingLaunchCard /></TaskDetails>}
+      {marketingMode && <TaskDetails title="Setup and launch checklist"><MarketingLaunchCard approvedCode={referralCode} /></TaskDetails>}
       {!marketingMode&&<a className="inline-flex min-h-11 items-center text-blue-300 underline" href="/crew/marketing">Marketing tools</a>}
       {marketingMode&&<>
 
       {marketingMode && marketingRep?.slug.toLowerCase() === "matt" && <MarketingBotRepCard />}
 
-      <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/10 p-4">
+      <PersonalPromoPanel state={personalPromo.data} loading={personalPromo.isLoading} failed={personalPromo.isError} retry={() => personalPromo.refetch()} />
+
+      {promoReady && <div className="border-b border-emerald-500/25 py-4">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs font-black uppercase tracking-widest text-emerald-300">Worker marketing link</p>
@@ -698,7 +696,7 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
             <Copy className="h-3.5 w-3.5" /> Copy post
           </button>
         </div>
-      </div>
+      </div>}
 
       <TaskDetails title="Create an ad"><div id="ad-builder" className="rounded-2xl border border-blue-500/25 bg-blue-500/10 p-4">
         <div className="flex items-start justify-between gap-3">
@@ -874,7 +872,7 @@ export default function CrewEarningsPage({ marketingOnly = false }: { marketingO
 
           <Button
             type="button"
-            disabled={adDraftMutation.isPending}
+            disabled={adDraftMutation.isPending || !promoReady}
             onClick={() => adDraftMutation.mutate()}
             className="bg-blue-600 text-white hover:bg-blue-500"
           >

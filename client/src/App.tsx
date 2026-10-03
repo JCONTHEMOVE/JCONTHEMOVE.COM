@@ -115,6 +115,8 @@ const StakingPage = lazy(() => import("@/pages/staking"));
 const AdminQuoteReviewPage = lazy(() => import("@/pages/admin-quote-review"));
 const CrewAddJobPage = lazy(() => import("@/pages/crew/add-job"));
 const CrewSchedulePage = lazy(() => import("@/pages/crew/schedule"));
+const CrewHomePage = lazy(() => import("@/pages/crew/home"));
+const CrewProgressPage = lazy(() => import("@/pages/crew/progress"));
 const CrewEarningsPage = lazy(() => import("@/pages/crew/earnings"));
 const CrewReviewsPage = lazy(() => import("@/pages/crew/reviews"));
 const AdminOverviewPage = lazy(() => import("@/pages/admin/overview"));
@@ -537,11 +539,14 @@ function AuthenticatedApp() {
               <Route path="/crew/pricing-training"><PricingTrainingTeamPage /></Route>
               <Route path="/crew/jobs"><PlannerLegacyRedirect plannerPath="/crew" /></Route>
               <Route path="/crew/schedule"><CrewSchedulePage /></Route>
+              <Route path="/crew/calendar"><JobPlannerPage audience="crew" /></Route>
+              <Route path="/crew/progress"><CrewProgressPage /></Route>
               <Route path="/crew/reviews"><CrewReviewsPage /></Route>
               <Route path="/crew/marketing"><CrewEarningsPage marketingOnly /></Route>
               <Route path="/crew/earnings"><CrewEarningsPage /></Route>
+              <Route path="/crew/rewards"><RewardsMarketplacePage /></Route>
               <Route path="/crew/tutorials"><TutorialsPage /></Route>
-              <Route path="/crew"><JobPlannerPage audience="crew" /></Route>
+              <Route path="/crew"><CrewHomePage /></Route>
               <Route><Redirect to="/crew" /></Route>
             </Switch>
           </CrewLayout>
@@ -997,6 +1002,9 @@ function Router() {
       </Route>
       
       {/* Authenticated vs unauthenticated routing */}
+      <Route path="/rewards">
+        {isLoading ? <PageLoader /> : isAuthenticated ? <AuthenticatedApp /> : <Redirect to="/login?redirect=%2Frewards" />}
+      </Route>
       <Route>
         {shouldHoldProtectedRoute ? (
           <div className="min-h-screen bg-background text-foreground font-sans flex items-center justify-center">

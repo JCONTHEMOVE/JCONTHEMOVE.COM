@@ -33,7 +33,7 @@ export default function PublicQuoteOrderPage() {
         <div className="mb-7 text-center">
           <p className="text-xs font-bold uppercase tracking-[0.22em] text-cyan-300">JC ON THE MOVE</p>
           <h1 className="mt-2 text-3xl font-black tracking-tight text-white">Your Job Order</h1>
-          <p className="mt-2 text-sm text-slate-400">Review the service details, then confirm with secure payment when you are ready.</p>
+          <p className="mt-2 text-sm text-slate-400">Review your quote and contact us to confirm the details.</p>
         </div>
 
         {isLoading ? <div className="rounded-2xl border border-slate-700 bg-slate-900 p-8 text-center text-sm text-slate-400">Loading your job order…</div> : null}

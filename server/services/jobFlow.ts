@@ -1,5 +1,8 @@
 import { desc, eq, inArray } from "drizzle-orm";
-import { db } from "../db";
+import { db, pool } from "../db";
+import { savedWorkflowQuote, workflowHash } from "./jobWorkflow";
+import { ensureQuoteRevisionInfrastructure } from "./quoteRevisions";
+import { customerAgreementSnapshot, projectJobWorkflow } from "@shared/job-workflow";
 import { jobPayoutCalculations, jobWorkerPayouts, type Lead } from "@shared/schema";
 import {
   buildJobFlow,
@@ -69,7 +72,8 @@ export async function buildJobFlowRecords(leadRows: Lead[]): Promise<JobFlowReco
   const leadIds = leadRows.map((lead) => lead.id).filter(Boolean);
   if (leadIds.length === 0) return [];
 
-  const [calculationRows, workerRows] = await Promise.all([
+  await ensureQuoteRevisionInfrastructure();
+  const [calculationRows, workerRows, quoteRows] = await Promise.all([
     db.select({
       leadId: jobPayoutCalculations.leadId,
       status: jobPayoutCalculations.status,
@@ -85,7 +89,9 @@ export async function buildJobFlowRecords(leadRows: Lead[]): Promise<JobFlowReco
     })
       .from(jobWorkerPayouts)
       .where(inArray(jobWorkerPayouts.leadId, leadIds)),
+    pool.query("SELECT DISTINCT ON (lead_id) * FROM quote_revisions WHERE lead_id=ANY($1::varchar[]) ORDER BY lead_id,revision DESC", [leadIds]),
   ]);
+  const quotesByLead = new Map(quoteRows.rows.map(row => [row.lead_id, row]));
 
   const latestCalculationByLead = new Map<string, PayoutCalculationRow>();
   for (const row of calculationRows) {
@@ -105,9 +111,11 @@ export async function buildJobFlowRecords(leadRows: Lead[]): Promise<JobFlowReco
       latestCalculationByLead.get(lead.id),
       workerPayoutsByLead.get(lead.id) || [],
     );
+    const quote = savedWorkflowQuote(lead, quotesByLead.get(lead.id));
+    const operations = projectJobWorkflow({ lead, quote, version: "", confirmationHash: workflowHash(customerAgreementSnapshot(lead, quote.id)), capabilities: { approve: true, manage: true, sms: false } });
     return {
       ...lead,
-      flow: buildJobFlow(lead, { payment, payout }),
+      flow: { ...buildJobFlow(lead, { payment, payout }), operations },
     };
   });
 }

@@ -1,7 +1,7 @@
 import { canLeaveTask } from "@/components/task-ui";
 import { useLocation } from "wouter";
 import { useState, type ReactNode } from "react";
-import { CalendarDays, Briefcase, Calendar, Coins, Star, Settings2, PlusCircle, ChevronRight, Megaphone, GraduationCap, ShieldCheck, Users } from "lucide-react";
+import { BarChart3, Briefcase, Calendar, Coins, Gift, Star, Settings2, PlusCircle, ChevronRight, Megaphone, GraduationCap, ShieldCheck, Users } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useCrewGpsBeacon } from "@/hooks/useCrewGpsBeacon";
 import { TutorialInviteDialog } from "@/components/tutorial-invite-dialog";
@@ -15,14 +15,16 @@ import {
 } from "@/components/ui/sheet";
 
 const optionLinks = [
-  { label: "Rewards", description: "Daily spin, training standings, and avatar", icon: Star, path: "/marketplace?view=crew" },
-  { label: "Job Planner", description: "Calendar, open work, and job details", icon: Briefcase, path: "/crew" },
+  { label: "Work", description: "Current leads and job requests", icon: Briefcase, path: "/crew" },
+  { label: "Job Planner", description: "Full job calendar", icon: Calendar, path: "/crew/calendar" },
+  { label: "Get work", description: "Marketing materials and referral links", icon: Megaphone, path: "/crew/marketing" },
+  { label: "Pricing datasets", description: "Job scenarios and pricing contributions", icon: Users, path: "/crew/pricing-training" },
+  { label: "Monthly progress", description: "Job stages and tracking", icon: BarChart3, path: "/crew/progress" },
+  { label: "Rewards & redemptions", description: "Reward shop and redemption history", icon: Gift, path: "/crew/rewards" },
   { label: "Schedule", description: "Availability and blocked days", icon: Calendar, path: "/crew/schedule" },
   { label: "Reviews", description: "Customer feedback and rating", icon: Star, path: "/crew/reviews" },
-  { label: "Marketing", description: "Create tracked local ads", icon: Megaphone, path: "/crew/marketing" },
   { label: "Earnings", description: "Payouts, JCMOVES, history", icon: Coins, path: "/crew/earnings" },
   { label: "Tutorials", description: "Step-by-step app walkthroughs", icon: GraduationCap, path: "/crew/tutorials" },
-  { label: "Pricing Training", description: "Help finish 500 requests and earn JCMOVES", icon: Users, path: "/crew/pricing-training" },
   { label: "Add Job", description: "Create a job on the shared calendar", icon: PlusCircle, path: "/crew/add-job" },
 ];
 
@@ -42,8 +44,12 @@ export default function CrewLayout({ children }: { children: ReactNode }) {
       new Date(user.availableUntil).getTime() > Date.now(),
   );
   useCrewGpsBeacon({ enabled: isOnDuty });
-  const tasksActive = location === "/crew" || location === "/crew/" || location.startsWith("/crew/jobs");
-  const optionsActive = location.startsWith("/crew/schedule") || location.startsWith("/crew/reviews") || location.startsWith("/crew/earnings") || location.startsWith("/crew/marketing") || location.startsWith("/crew/tutorials") || location.startsWith("/crew/add-job") || location.startsWith("/crew/pricing-training");
+  const mainLinks = [
+    { label: "Work", path: "/crew", icon: Briefcase, active: ["/crew", "/crew/", "/crew/calendar", "/crew/jobs", "/crew/add-job", "/crew/schedule"].includes(location) },
+    { label: "Get work", path: "/crew/marketing", icon: Megaphone, active: ["/crew/marketing", "/crew/pricing-training"].includes(location) },
+    { label: "Progress", path: "/crew/progress", icon: BarChart3, active: location === "/crew/progress" },
+    { label: "Rewards", path: "/crew/rewards", icon: Gift, active: location === "/crew/rewards" || location.startsWith("/crew/rewards?") },
+  ];
 
   function go(path: string) {
     if (!canLeaveTask()) return;
@@ -59,7 +65,7 @@ export default function CrewLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white pb-20">
+    <div className="min-h-screen bg-zinc-950 text-white pb-20">
       {isAdminUser && (
         <div className="sticky top-0 z-40 border-b border-cyan-500/20 bg-slate-950/95 px-3 py-2 backdrop-blur">
           <div className="mx-auto flex max-w-2xl items-center gap-3">
@@ -95,35 +101,15 @@ export default function CrewLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
       )}
+      <div className="mx-auto flex max-w-4xl justify-end px-4 pt-2 sm:px-6"><button type="button" onClick={() => setOptionsOpen(true)} title="More crew options" aria-label="More crew options" className="flex h-11 w-11 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-800 hover:text-white"><Settings2 className="h-5 w-5" /></button></div>
       {children}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur-sm border-t border-slate-700/50 safe-area-bottom">
-        <div className="grid h-16 grid-cols-2">
-          <button
-            type="button"
-            onClick={() => go("/crew")}
-            aria-label="Tasks"
-            className={`flex flex-col items-center justify-center gap-0.5 transition-colors ${
-              tasksActive ? "text-blue-400" : "text-slate-500 hover:text-slate-300"
-            }`}
-          >
-            <CalendarDays className={`h-5 w-5 ${tasksActive ? "stroke-[2.5]" : ""}`} />
-            <span className={`text-[10px] ${tasksActive ? "font-bold" : "font-medium"}`}>Tasks</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setOptionsOpen(true)}
-            aria-label="Options"
-            className={`flex flex-col items-center justify-center gap-0.5 transition-colors ${
-              optionsActive || optionsOpen ? "text-blue-400" : "text-slate-500 hover:text-slate-300"
-            }`}
-          >
-            <Settings2 className={`h-5 w-5 ${optionsActive || optionsOpen ? "stroke-[2.5]" : ""}`} />
-            <span className={`text-[10px] ${optionsActive || optionsOpen ? "font-bold" : "font-medium"}`}>Options</span>
-          </button>
+      <nav aria-label="Worker navigation" className="fixed bottom-0 left-0 right-0 z-50 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur-sm safe-area-bottom">
+        <div className="mx-auto grid h-16 max-w-4xl grid-cols-4">
+          {mainLinks.map(({ label, path, icon: Icon, active }) => <button key={path} type="button" onClick={() => go(path)} aria-current={active ? 'page' : undefined} className={`flex min-w-0 flex-col items-center justify-center gap-1 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400 ${active ? 'font-semibold text-emerald-300' : 'text-zinc-400 hover:text-white'}`}><Icon aria-hidden="true" className="h-5 w-5" /><span>{label}</span></button>)}
         </div>
       </nav>
       <Sheet open={optionsOpen} onOpenChange={setOptionsOpen}>
-        <SheetContent side="bottom" className="border-slate-700 bg-slate-950 text-white">
+        <SheetContent side="bottom" className="max-h-[85dvh] overflow-y-auto border-slate-700 bg-slate-950 text-white">
           <SheetHeader className="text-left">
             <SheetTitle className="text-white">Options</SheetTitle>
           </SheetHeader>

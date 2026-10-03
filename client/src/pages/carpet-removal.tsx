@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, CheckCircle2, Loader2, Phone, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { HOME_PROJECT_CAMPAIGN, HOME_PROJECT_SERVICES, captureHomeProjectReferral, homeProjectRequestSchema, type HomeProjectRequest } from "@shared/homeProjectCampaign";
@@ -52,6 +53,8 @@ export default function CarpetRemovalPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState<SavedRequest | null>(null);
+  const [address, setAddress] = useState("");
+  const [zip, setZip] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -129,8 +132,8 @@ export default function CarpetRemovalPage() {
               <div><Label htmlFor="lastName">Last name</Label><Input id="lastName" name="lastName" autoComplete="family-name" required maxLength={80} className="mt-2 bg-white text-slate-950" /></div>
               <div><Label htmlFor="phone">Phone</Label><Input id="phone" name="phone" type="tel" autoComplete="tel" required maxLength={30} className="mt-2 bg-white text-slate-950" /></div>
               <div><Label htmlFor="email">Email (optional)</Label><Input id="email" name="email" type="email" autoComplete="email" maxLength={255} className="mt-2 bg-white text-slate-950" /></div>
-              <div><Label htmlFor="address">Project address or city</Label><Input id="address" name="address" autoComplete="street-address" required maxLength={500} className="mt-2 bg-white text-slate-950" /></div>
-              <div><Label htmlFor="zip">Project ZIP code</Label><Input id="zip" name="zip" autoComplete="postal-code" inputMode="numeric" required pattern="[0-9]{5}(-[0-9]{4})?" className="mt-2 bg-white text-slate-950" /></div>
+              <div><Label htmlFor="address">Project address or city</Label><PlacesAutocomplete id="address" name="address" value={address} onChange={setAddress} onPlaceSelect={place => setZip(place.zip)} allowPlaceResults required maxLength={500} inputClassName="mt-2 bg-white text-slate-950" /></div>
+              <div><Label htmlFor="zip">Project ZIP code</Label><Input id="zip" name="zip" value={zip} onChange={event => setZip(event.target.value)} autoComplete="postal-code" inputMode="numeric" required pattern="[0-9]{5}(-[0-9]{4})?" className="mt-2 bg-white text-slate-950" /></div>
               <div><Label htmlFor="squareFootage">Approximate square footage (optional)</Label><Input id="squareFootage" name="squareFootage" type="number" min="1" max="100000" className="mt-2 bg-white text-slate-950" /></div>
               <div><Label htmlFor="preferredDeadline">Preferred completion date (optional)</Label><Input id="preferredDeadline" name="preferredDeadline" type="date" className="mt-2 bg-white text-slate-950" /></div>
             </div>

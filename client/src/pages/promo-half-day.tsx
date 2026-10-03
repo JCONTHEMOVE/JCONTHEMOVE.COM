@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -383,11 +384,12 @@ export default function PromoHalfDayPage() {
                   <MapPin className="h-4 w-4 text-blue-400" />
                   Pickup Address *
                 </Label>
-                <Input
+                <PlacesAutocomplete
                   value={form.fromAddress}
-                  onChange={(e) => updateField("fromAddress", e.target.value)}
+                  onChange={(value) => updateField("fromAddress", value)}
                   placeholder="123 Main St, Marquette, MI 49855"
-                  className="bg-slate-700 border-slate-600 text-white"
+                  inputClassName="bg-slate-700 border-slate-600 text-white"
+                  aria-label="Pickup address"
                   required
                 />
               </div>
@@ -397,11 +399,12 @@ export default function PromoHalfDayPage() {
                   <MapPin className="h-4 w-4 text-green-400" />
                   Drop-off Address (optional)
                 </Label>
-                <Input
+                <PlacesAutocomplete
                   value={form.toAddress}
-                  onChange={(e) => updateField("toAddress", e.target.value)}
+                  onChange={(value) => updateField("toAddress", value)}
                   placeholder="456 Oak Ave, Ishpeming, MI 49849"
-                  className="bg-slate-700 border-slate-600 text-white"
+                  inputClassName="bg-slate-700 border-slate-600 text-white"
+                  aria-label="Drop-off address"
                 />
               </div>
 

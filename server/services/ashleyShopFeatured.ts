@@ -1,5 +1,18 @@
 import { pool } from "../db";
 import { ensureAshleyShopSchema } from "./ashleyShopSchema";
+import { COPPER_CUFF_SKU } from "@shared/ashleyCopperPromotion";
+
+// Editorial promotion is separate from the rotating daily discount/reward.
+export async function getHighlightedItem() {
+  await ensureAshleyShopSchema();
+  const result = await pool.query(`
+    SELECT * FROM jewelry_items
+    WHERE sku = $1 AND featured = true AND status = 'active' AND in_stock = true
+      AND approval_status = 'approved' AND COALESCE(quantity, 1) > 0 AND price::numeric > 0
+      AND (source_batch_id IS NULL OR (approved_at IS NOT NULL AND published_at IS NOT NULL))
+    LIMIT 1`, [COPPER_CUFF_SKU]);
+  return result.rows[0] || getDailyFeaturedItem();
+}
 
 const FEATURE_LOCK_KEY = 1782202608;
 

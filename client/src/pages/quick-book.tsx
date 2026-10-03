@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +48,7 @@ import { EMPTY_QUICK_BOOK_DRAFT, type QuickBookDraft, type QuickBookSessionRespo
 const QUICK_BOOK_SCHEDULE_OPTIONS = JOB_SCHEDULE_OPTIONS.filter(option => option.start);
 
 type Session = QuickBookSessionResponse & { canComplete: boolean };
+type AddressPatch = Partial<Pick<QuickBookDraft, "pickupAddress" | "destinationAddress">>;
 type ChatEntry = { id: string; role: "user" | "assistant"; text: string };
 type Delivery = {
   recipientUserId: string;
@@ -185,6 +187,8 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
   const [startupError, setStartupError] = useState<string | null>(null);
   const [booked, setBooked] = useState<BookedResult | null>(null);
   const [newStop, setNewStop] = useState("");
+  const [addressPatch, setAddressPatch] = useState<AddressPatch | null>(null);
+  const queuedAddressPatch = useRef<AddressPatch | null>(null);
   const startedRef = useRef(false);
   const sessionRef = useRef<Session | null>(null);
   const idempotencyRef = useRef(crypto.randomUUID());
@@ -192,7 +196,7 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
   const applySession = useCallback((next: Session) => {
     sessionRef.current = next;
     setSession(next);
-    setDraft(next.draft);
+    setDraft({ ...next.draft, ...queuedAddressPatch.current });
   }, [visualFixture]);
 
   const createSession = useCallback(async () => {
@@ -285,8 +289,22 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
     const optimistic = { ...draft, ...patch } as QuickBookDraft;
     setDraft(optimistic);
     const saved = await postUpdate({ patch, source: "tap" });
-    if (!saved) setDraft(sessionRef.current?.draft || draft);
+    if (!saved) setDraft({ ...(sessionRef.current?.draft || draft), ...queuedAddressPatch.current });
   }, [busy, draft, postUpdate]);
+
+  // A selected address can arrive after blur has already started saving the
+  // typed text. Keep that final value queued until the current save completes.
+  const queueAddressPatch = useCallback((field: "pickupAddress" | "destinationAddress", value: string) => {
+    setDraft(current => current ? { ...current, [field]: value } : current);
+    queuedAddressPatch.current = { ...queuedAddressPatch.current, [field]: value };
+    setAddressPatch(queuedAddressPatch.current);
+  }, []);
+  useEffect(() => {
+    if (busy || !draft || !addressPatch) return;
+    queuedAddressPatch.current = null;
+    setAddressPatch(null);
+    void applyPatch(addressPatch);
+  }, [addressPatch, applyPatch, busy, draft]);
 
   const handleSuggestion = useCallback((suggestion: string) => {
     const missing = sessionRef.current?.missingFields[0];
@@ -512,8 +530,8 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
           <Card className="border-slate-700 bg-slate-900/85 text-white">
             <CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-base"><MapPin className="h-5 w-5 text-cyan-300" />Locations & schedule</CardTitle></CardHeader>
             <CardContent className="grid gap-3 sm:grid-cols-2">
-              <FieldShell label="Pickup / service address" missing={missing("complete pickup address")}><Input value={draft.pickupAddress} onChange={(event) => setDraft({ ...draft, pickupAddress: event.target.value })} onBlur={() => void applyPatch({ pickupAddress: draft.pickupAddress })} className="h-11 border-slate-700 bg-black" placeholder="Street, city, state or ZIP" /></FieldShell>
-              <FieldShell label="Destination" missing={missing("complete destination address")}><Input value={draft.destinationAddress} onChange={(event) => setDraft({ ...draft, destinationAddress: event.target.value })} onBlur={() => void applyPatch({ destinationAddress: draft.destinationAddress })} className="h-11 border-slate-700 bg-black" placeholder="Required for load + unload" /></FieldShell>
+              <FieldShell label="Pickup / service address" missing={missing("complete pickup address")}><PlacesAutocomplete value={draft.pickupAddress} onChange={(value) => setDraft(current => current ? { ...current, pickupAddress: value } : current)} onPlaceSelect={(place) => queueAddressPatch("pickupAddress", place.fullAddress)} onBlur={(event) => queueAddressPatch("pickupAddress", event.currentTarget.value)} aria-label="Pickup or service address" inputClassName="min-h-11 w-full rounded-md border border-slate-700 bg-black px-3 py-2 text-white" placeholder="Street, city, state or ZIP" /></FieldShell>
+              <FieldShell label="Destination" missing={missing("complete destination address")}><PlacesAutocomplete value={draft.destinationAddress} onChange={(value) => setDraft(current => current ? { ...current, destinationAddress: value } : current)} onPlaceSelect={(place) => queueAddressPatch("destinationAddress", place.fullAddress)} onBlur={(event) => queueAddressPatch("destinationAddress", event.currentTarget.value)} aria-label="Destination address" inputClassName="min-h-11 w-full rounded-md border border-slate-700 bg-black px-3 py-2 text-white" placeholder="Required for load + unload" /></FieldShell>
               <FieldShell label="Confirmed job date" missing={missing("confirmed date")}><Input type="date" value={draft.confirmedDate} onChange={(event) => void applyPatch({ confirmedDate: event.target.value })} className="h-11 border-slate-700 bg-black" /></FieldShell>
               <FieldShell label="One-hour arrival window" missing={missing("one-hour arrival window")}>
                 <Select value={draft.arrivalWindow || undefined} onValueChange={(value) => void applyPatch({ arrivalWindow: value })}><SelectTrigger className="h-11 border-slate-700 bg-black"><SelectValue placeholder="Choose a window" /></SelectTrigger><SelectContent>{QUICK_BOOK_SCHEDULE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
@@ -531,7 +549,7 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
                   </div>
                 ))}
                 <div className="flex gap-2">
-                  <Input value={newStop} onChange={(event) => setNewStop(event.target.value)} className="h-11 border-slate-700 bg-black" placeholder="Stop address" />
+                  <PlacesAutocomplete value={newStop} onChange={setNewStop} disabled={busy} aria-label="Additional stop address" className="min-w-0 flex-1" inputClassName="min-h-11 w-full rounded-md border border-slate-700 bg-black px-3 py-2 text-white" placeholder="Stop address" />
                   <Button type="button" variant="outline" className="h-11" disabled={busy || !newStop.trim()} onClick={() => { void applyPatch({ additionalStops: [...draft.additionalStops, { address: newStop.trim(), note: "" }] }); setNewStop(""); }}><Plus className="h-4 w-4" /><span className="sr-only">Add stop</span></Button>
                 </div>
               </div>

@@ -1,3 +1,5 @@
+import ProjectRequestPage from "./project-request";
+import { useSearch } from "wouter";
 // /book — chunked multi-service booking wizard (Task #138).
 // One step visible at a time, sticky live summary across all steps, smart
 // bundle popup that fires once per cart shape (auto-applied or one-away).
@@ -1189,6 +1191,12 @@ function QuickRequestForm({
 }
 
 export default function MultiServiceBookPage() {
+  const search = useSearch();
+  const params = new URLSearchParams(search);
+  const detailed = ["builder", "worker"].includes(params.get("mode") || "") || params.get("worker") === "1" || ["price", "details", "bundle", "step"].some(key => params.has(key));
+  return detailed ? <DetailedBookPage key={search} /> : <ProjectRequestPage key={search} />;
+}
+function DetailedBookPage() {
   const [, setLocation] = useLocation();
   const { user } = useAuth() as { user: User | null | undefined };
   const { toast } = useToast();
@@ -1477,7 +1485,7 @@ export default function MultiServiceBookPage() {
     const sp = new URLSearchParams(window.location.search);
     const rawMode = sp.get("mode");
     if (rawMode === "quick") return "quick";
-    if (rawMode === "builder" || rawMode === "worker" || sp.get("worker") === "1") return "builder";
+    if (rawMode === "builder" || rawMode === "worker" || sp.get("worker") === "1" || ["price", "details", "bundle", "step"].some(key => sp.has(key))) return "builder";
     return "choose";
   });
 
@@ -3072,8 +3080,7 @@ export default function MultiServiceBookPage() {
                 onResolved={(p) => setServiceAddress(p.fullAddress)}
                 placeholder="123 Main St, Ironwood, MI"
                 theme="zinc"
-                hint="Pick a suggestion or just keep typing — we'll confirm the city, state, and ZIP automatically."
-                disableGoogle
+                hint="Choose a suggestion to fill city, state, and ZIP, or enter the address manually."
                 data-testid="address-field-multi"
               />
             </section>

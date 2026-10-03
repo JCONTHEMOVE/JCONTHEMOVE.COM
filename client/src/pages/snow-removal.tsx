@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -776,10 +777,13 @@ export default function SnowRemovalPage() {
                 </div>
               </div>
               <div>
-                <Label>Address *</Label>
-                <Input
+                <Label htmlFor="snow-customer-address">Address *</Label>
+                <PlacesAutocomplete
+                  id="snow-customer-address"
                   value={customerForm.address}
-                  onChange={(e) => setCustomerForm({ ...customerForm, address: e.target.value })}
+                  addressValue="street"
+                  onChange={(value) => setCustomerForm(current => ({ ...current, address: value }))}
+                  onPlaceSelect={(place) => setCustomerForm(current => ({ ...current, address: place.streetAddress, city: place.city }))}
                   placeholder="Street address"
                 />
               </div>

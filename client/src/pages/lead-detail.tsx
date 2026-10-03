@@ -1,7 +1,9 @@
+import { JobWorkflowReport } from "@/components/job-workflow-report";
+import { ProjectIntakeSummary } from "@/components/project-intake-summary";
 import { manualDispatchMissingSetup } from "@shared/manualDispatchReadiness";
 import { customerNotesFromDetails } from "@shared/leadDetails";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useRoute, Link, useLocation } from "wouter";
+import { useRoute, Link, useLocation, useSearch } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +22,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { CrewSuggestionsDialog } from "@/components/crew-suggestions-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AdminJobPaymentShortcut } from "@/components/AdminJobPaymentShortcut";
+import { closeoutRepairs, type JobCloseoutRepair } from "@/lib/job-closeout-repair";
 import { JobOrderTicket } from "@/components/job-order-ticket";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { JobSetupWorkspace, type JobSetupSection } from "@/components/job-setup-workspace";
@@ -499,7 +502,8 @@ function DisbursementSummaryCard({ lead }: { lead: Lead }) {
 
 export default function LeadDetailPage() {
   const [, params] = useRoute("/lead/:id");
-  const [location, setLocation] = useLocation();
+  const [, setLocation] = useLocation();
+  const queryString = useSearch();
   const { toast } = useToast();
   const [tokenAllocation, setTokenAllocation] = useState("");
   const [isCheckingIn, setIsCheckingIn] = useState(false);
@@ -525,7 +529,7 @@ export default function LeadDetailPage() {
   const [photoUploading, setPhotoUploading] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const { hasAdminAccess, isEmployee } = useAuth();
-  const requestedReturnTo = new URLSearchParams(location.includes("?") ? location.slice(location.indexOf("?") + 1) : "").get("returnTo");
+  const requestedReturnTo = new URLSearchParams(queryString).get("returnTo");
   const returnTarget = requestedReturnTo && (requestedReturnTo.startsWith("/crew") || requestedReturnTo.startsWith("/admin"))
     ? requestedReturnTo
     : hasAdminAccess ? "/admin/schedule" : "/crew";
@@ -545,21 +549,32 @@ export default function LeadDetailPage() {
   const [quoteSentAt, setQuoteSentAt] = useState<string | null>(null);
   const [squarePaymentUrl, setSquarePaymentUrl] = useState<string | null>(null);
   const [copiedPaymentLink, setCopiedPaymentLink] = useState(false);
-  const [showJobSetup, setShowJobSetup] = useState(true);
+  const [showJobSetup, setShowJobSetup] = useState(false);
+  const [setupDirty, setSetupDirty] = useState(false);
+  const [workflowVersion, setWorkflowVersion] = useState("");
   const [setupSection, setSetupSection] = useState<JobSetupSection>("");
+  const [closeoutRepair, setCloseoutRepair] = useState<{ leadId: string; target: JobCloseoutRepair } | null>(null);
+  const [closeoutResume, setCloseoutResume] = useState({ leadId: "", key: 0 });
+  const repairTarget = closeoutRepair && closeoutRepair.leadId === params?.id ? closeoutRepair.target : null;
   const jobSetupRef = useRef<HTMLDivElement>(null);
 
-  const openJobSetup = (section: JobSetupSection = "customer") => {
+  const openJobSetup = (section: JobSetupSection = "customer", fieldId?: string) => {
     const targetId = section === "schedule" ? "job-setup-schedule" : "job-setup";
     setShowJobSetup(true);
     setSetupSection(section);
     window.setTimeout(() => {
-      const target = document.getElementById(targetId) || jobSetupRef.current;
+      const target = (fieldId ? document.getElementById(fieldId) : null) || document.getElementById(targetId) || jobSetupRef.current;
       target?.scrollIntoView({ behavior: "smooth", block: "start" });
-      target?.querySelector<HTMLElement>("button, input, [tabindex='0']")?.focus({ preventScroll: true });
+      const focusTarget = target?.matches("input, button, [tabindex]") ? target : target?.querySelector<HTMLElement>("button, input, [tabindex='0']");
+      focusTarget?.focus({ preventScroll: true });
     }, 0);
   };
   const openJobSetupSchedule = () => openJobSetup("schedule");
+  const returnToCloseout = () => {
+    if (!params?.id) return;
+    setCloseoutRepair(null);
+    setCloseoutResume(previous => ({ leadId: params.id, key: previous.key + 1 }));
+  };
 
   const { data: lead, isLoading, isError, error } = useQuery<Lead>({
     queryKey: ["/api/leads", params?.id],
@@ -1018,10 +1033,14 @@ export default function LeadDetailPage() {
   const computeEffectiveCrewSize = () => Math.max(1, selectedCrewMembers.length);
 
   const handleJobSetupSaved = () => {
+    setSetupDirty(false);
+    setShowJobSetup(false);
+    window.dispatchEvent(new Event("jc:job-setup-saved"));
     queryClient.invalidateQueries({ queryKey: ["/api/leads"] });
     queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id] });
     queryClient.invalidateQueries({ queryKey: ["/api/jobs/planner"] });
     queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id, "alert-deliveries"] });
+    if (repairTarget) returnToCloseout();
   };
 
   const handleOrderApply = (orderData: {
@@ -1397,7 +1416,7 @@ export default function LeadDetailPage() {
         openJobSetup("quote");
         break;
       case "send_quote":
-        setShowQuoteDeliveryDialog(true);
+        window.dispatchEvent(new Event("jc:review-quote"));
         break;
       case "offline_closeout":
         openOfflineCloseout();
@@ -1497,7 +1516,12 @@ export default function LeadDetailPage() {
               Back
             </Button>
             <div className="flex flex-wrap items-center gap-2">
-            {hasAdminAccess && <AdminJobPaymentShortcut key={lead.id} leadId={lead.id} />}
+            {hasAdminAccess && <span className="hidden"><AdminJobPaymentShortcut key={lead.id} leadId={lead.id}
+              resumeKey={closeoutResume.leadId === lead.id ? closeoutResume.key : 0}
+              onFixJob={target => {
+                setCloseoutRepair({ leadId: lead.id, target });
+                openJobSetup(closeoutRepairs[target].section, closeoutRepairs[target].fieldId);
+              }} /></span>}
             <DropdownMenu>
               <DropdownMenuTrigger asChild><Button variant="outline" className="min-h-11">Actions <ChevronDown className="ml-2 h-4 w-4" /></Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -1532,56 +1556,12 @@ export default function LeadDetailPage() {
           )}
         </div>
 
-        <JobOrderTicket
-          order={{ ...lead, customerName: lead.workerVisibility?.customerIdentity === false ? "Customer details protected" : `${lead.firstName || ""} ${lead.lastName || ""}`.trim() }}
-          detailPage
-          viewer={hasAdminAccess ? "admin" : "crew"}
-          action={canClaimJob ? ticketAction : undefined}
-          onScheduleEdit={hasAdminAccess ? openJobSetupSchedule : undefined}
-          className="mb-4"
-        />
-
-        <Card className="mb-4 border-blue-500/30 bg-blue-950/10">
-          <CardContent className="pt-4">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-3 min-w-0">
-                <div className="h-10 w-10 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center shrink-0">
-                  <NextIcon className="h-5 w-5 text-blue-300" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-blue-300">Next Step</p>
-                  <h2 className="text-lg font-bold text-foreground">{nextStep.title}</h2>
-                  <p className="text-sm text-muted-foreground mt-0.5">{nextStep.detail}</p>
-                  {packageDraftReady && (
-                    <p className="text-xs text-emerald-300 mt-2">
-                      Package: {packageDraft?.label} {packagePrice ? `- ${formatMoney(packagePrice)}` : ""}
-                    </p>
-                  )}
-                </div>
-              </div>
-              <Button
-                onClick={handleNextStep}
-                disabled={actionPending || nextStep.key === "done" || (nextStep.key === "send_quote" && !leadHasQuote) || (nextStep.key === "dispatch" && dispatchMissingSetup.length > 0)}
-                className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white"
-                data-testid="button-primary-next-step"
-              >
-                {actionPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <NextIcon className="h-4 w-4 mr-2" />}
-                {nextStep.button}
-              </Button>
-            </div>
-            {nextStep.key === "apply_package" && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-3 w-full sm:w-auto"
-                onClick={() => openJobSetup("quote")}
-              >
-                <DollarSign className="h-4 w-4 mr-2" />
-                Adjust Manually Instead
-              </Button>
-            )}
-          </CardContent>
-        </Card>
+        {(hasAdminAccess || isEmployee && lead.workerVisibility?.pricing && ["new", "contacted", "quote_requested", "chatbot_pending", "pending_quote_approval", "quoted"].includes(statusKey)) ? <JobWorkflowReport key={lead.id} lead={lead} employees={employees} dirty={setupDirty}
+          onEdit={openJobSetup} onVersion={setWorkflowVersion}
+          onPayment={() => window.dispatchEvent(new Event("jc:record-job-payment"))}
+          onCloseout={returnToCloseout}
+          onStart={() => updateStatus.mutate("in_progress")} onComplete={() => updateStatus.mutate("completed")} />
+          : <JobOrderTicket order={{ ...lead, customerName: lead.workerVisibility?.customerIdentity === false ? "Customer details protected" : [lead.firstName, lead.lastName].filter(Boolean).join(" ") }} detailPage viewer="crew" action={canClaimJob ? ticketAction : isEmployee && ["start", "complete"].includes(nextStep.key) ? <Button disabled={actionPending} onClick={handleNextStep}>{nextStep.button}</Button> : undefined} className="mb-4" />}
 
         {packageDraft && (
           <details className="mb-4 rounded-xl border" data-testid="selected-package-summary"><summary className="min-h-12 cursor-pointer px-4 py-3 text-sm font-medium">Customer-selected package</summary><Card className="border-0 shadow-none">
@@ -1620,6 +1600,10 @@ export default function LeadDetailPage() {
               onSaved={handleJobSetupSaved}
               activeSection={setupSection}
               onSectionChange={setSetupSection}
+              expectedVersion={workflowVersion || undefined}
+              onDirtyChange={setSetupDirty}
+              closeoutRepair={repairTarget}
+              onReturnToCloseout={returnToCloseout}
             />
           </div>
         )}
@@ -1835,7 +1819,7 @@ export default function LeadDetailPage() {
               <Button
                 size="sm"
                 className="bg-orange-600 hover:bg-orange-700 text-white"
-                onClick={() => setShowQuoteDeliveryDialog(true)}
+                onClick={() => window.dispatchEvent(new Event("jc:review-quote"))}
               >
                 <Send className="h-3.5 w-3.5 mr-1.5" /> Send Quote
               </Button>
@@ -1844,6 +1828,7 @@ export default function LeadDetailPage() {
         )}
 
         {/* === 4-Tab Interface === */}
+        <ProjectIntakeSummary details={lead.details} status={lead.status} confirmedDate={lead.confirmedDate} />
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="mb-6 grid h-auto w-full grid-cols-2">
             <TabsTrigger className="min-h-11 text-sm" value="notes">Notes & Media</TabsTrigger>

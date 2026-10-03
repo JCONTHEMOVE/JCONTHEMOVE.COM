@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Link } from "wouter";
+import { PersonalPromoRequests } from "@/components/PersonalPromoRequests";
 import {
   ArrowLeft, Tag, Plus, Edit2, Trash2, Loader2, CheckCircle2, XCircle,
   Coins, Percent, Calendar, Users, BarChart3, Copy, RefreshCw
@@ -232,6 +233,8 @@ export default function AdminPromoCodesPage() {
             </CardContent>
           </Card>
         </div>
+
+        <PersonalPromoRequests enabled={Boolean(hasAdminAccess)} />
 
         {/* Codes List */}
         {isLoading ? (

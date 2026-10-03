@@ -13,10 +13,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: package.json
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Closeout correction and payment confirmation
+        run: node scripts/check-admin-payment-shortcut.mjs
+      - name: Public project request acceptance
+        run: node scripts/project-request.test.mjs
       - name: Quick Book extraction and guards
         run: |
           node --import tsx server/services/__tests__/quickBook.test.ts > quick-book-test.log 2>&1

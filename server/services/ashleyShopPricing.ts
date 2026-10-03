@@ -7,6 +7,7 @@ import type {
 import { pool } from "../db";
 import { ensureAshleyShopSchema } from "./ashleyShopSchema";
 import { regularPaymentRewardBonus } from "@shared/paymentIncentives";
+import { catalogPurchaseBonus } from "@shared/ashleyCopperPromotion";
 
 const SHIPPING_CENTS = 1_000;
 const JEWELRY_MOVES_PER_DOLLAR = 15;
@@ -20,6 +21,7 @@ type PricingIdentity = {
 
 type CatalogItem = {
   id: string;
+  sku?: string | null;
   title: string;
   priceCents: number;
   image: string;
@@ -88,12 +90,13 @@ async function getJewelryCatalog(ids: string[]): Promise<Map<string, CatalogItem
   if (!ids.length) return new Map();
   const result = await pool.query<{
     id: string;
+    sku: string | null;
     title: string;
     price: string;
     image_url: string | null;
     featured_today: boolean;
   }>(
-    `SELECT j.id, j.title, j.price, j.image_url,
+    `SELECT j.id, j.sku, j.title, j.price, j.image_url,
             EXISTS (
               SELECT 1 FROM ashley_shop_feature_schedule f
                WHERE f.item_id = j.id
@@ -112,6 +115,7 @@ async function getJewelryCatalog(ids: string[]): Promise<Map<string, CatalogItem
   );
   return new Map(result.rows.map((row) => [row.id, {
     id: row.id,
+    sku: row.sku,
     title: row.title,
     priceCents: cents(row.price),
     image: row.image_url || "",
@@ -260,6 +264,7 @@ export async function priceCommerceCart(
   const baseRewardMoves = Math.round((jewelryNetCents / 100) * JEWELRY_MOVES_PER_DOLLAR);
   const regularPaymentBonusMoves = regularPaymentRewardBonus(baseRewardMoves);
   const featuredBonusMoves = hasFeaturedPurchase ? 500 : 0;
+  const itemBonusMoves = catalogPurchaseBonus(jewelry.values());
   const notices = [
     "Jewelry discounts are capped at 15% unless a better promo code replaces them.",
     "JC Moves are issued only after verified payment to an enrolled account.",
@@ -279,7 +284,8 @@ export async function priceCommerceCart(
     baseRewardMoves,
     regularPaymentBonusMoves,
     featuredBonusMoves,
-    totalRewardMoves: baseRewardMoves + regularPaymentBonusMoves + featuredBonusMoves,
+    itemBonusMoves,
+    totalRewardMoves: baseRewardMoves + regularPaymentBonusMoves + featuredBonusMoves + itemBonusMoves,
     promoCode: promo.code,
     notices,
   };

@@ -33,10 +33,10 @@ jobs:
       - name: Checkout release candidate
         uses: actions/checkout@v4
 
-      - name: Use Node 20
+      - name: Use repository Node version
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: package.json
           cache: npm
 
       - name: Install dependencies

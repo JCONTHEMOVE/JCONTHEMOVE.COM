@@ -35,6 +35,7 @@ export type JobOrderTicketData = {
   lineItems?: JobOrderLine[] | null;
   orderLineItems?: JobOrderLine[] | null;
   flow?: {
+    operations?: { label: string };
     label?: string | null;
     stage?: string | null;
   } | null;
@@ -72,7 +73,7 @@ type JobOrderTicketProps = {
 
 function money(value: number | string | null | undefined) {
   const amount = Number(value ?? 0);
-  return Number.isFinite(amount) && amount > 0 ? `$${amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}` : "TBD";
+  return Number.isFinite(amount) ? amount.toLocaleString(undefined, { style: "currency", currency: "USD" }) : "TBD";
 }
 
 function exactMoney(value: number | string | null | undefined) {
@@ -95,6 +96,7 @@ function formatDate(value: string | null | undefined) {
 }
 
 function ticketStatus(order: JobOrderTicketData) {
+  if (order.flow?.operations?.label) return order.flow.operations.label;
   if (order.flow?.label) return order.flow.label;
   const status = String(order.status || "").replace(/[_-]+/g, " ").trim();
   return status ? status.replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Order draft";
@@ -169,7 +171,7 @@ export function JobOrderTicket({ order, viewer = "admin", action, compact = fals
           <div className="border-t border-slate-700/80 pt-3">
             <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Order details</p>
             <div className="space-y-1.5">
-              {lines.slice(0, 3).map((line, index) => (
+              {(compact ? lines.slice(0, 3) : lines).map((line, index) => (
                 <div className="flex items-center justify-between gap-3 text-sm" key={`${line.name || line.label || "line"}-${index}`}>
                   <span className="min-w-0 truncate text-slate-300">{line.name || line.label || "Service"}{(line.quantity || line.qty || 1) > 1 ? ` × ${line.quantity || line.qty}` : ""}</span>
                   <span className="shrink-0 font-semibold text-slate-100">{money(line.total ?? line.amount ?? line.unitPrice)}</span>
