@@ -27,6 +27,7 @@ import { eq } from "drizzle-orm";
 import { storage } from "../storage";
 import { EARN_RATE_PER_DOLLAR } from "../../shared/rewards";
 import { computeBookingReward } from "./bookingPricing";
+import { parseSnowQuoteInput, SNOW_PRICING_VERSION } from "../../shared/snowPricing";
 
 const TOKEN_PRICE       = 0.00000508432;
 const FALLBACK_FLAT     = 250;
@@ -80,6 +81,40 @@ export async function disburseBookingTokens(bookingId: string): Promise<BookingD
     const [booking] = await db.select().from(bookings).where(eq(bookings.id, bookingId)).limit(1);
     if (!booking) {
       console.warn(`[disburseBookingTokens] booking ${bookingId} not found — skipped`);
+      return null;
+    }
+
+    // Rubric snow requests have one reward owner: the existing lead ledger in
+    // disburseJobTokens, which requires both completion and payment in full.
+    // This booking issuer has different reference IDs/reward types, so calling
+    // it even after payment would award the customer a second time. A mixed
+    // booking containing rubric snow is settled as a whole by that lead ledger.
+    // Legacy snow requests without the new structured marker keep their policy.
+    const serviceItems = await db.select({
+      serviceCode: bookingServiceItems.serviceCode,
+      details: bookingServiceItems.details,
+    }).from(bookingServiceItems).where(eq(bookingServiceItems.bookingId, bookingId));
+    const rubricSnowItems = serviceItems.filter((item) => {
+      const details = item.details as Record<string, unknown> | null;
+      return item.serviceCode === "snow_removal" && details && (
+        Object.prototype.hasOwnProperty.call(details, "snowQuote") ||
+        details.snowPricingVersion === SNOW_PRICING_VERSION
+      );
+    });
+    if (rubricSnowItems.length > 0) {
+      // Invalid or future-version marked records must not fall back to legacy
+      // awards if an import or older caller bypassed the validated intake.
+      for (const item of rubricSnowItems) {
+        parseSnowQuoteInput((item.details as Record<string, unknown>).snowQuote);
+      }
+      const { rows: linkedLeads } = await pool.query<{ id: string }>(
+        "SELECT id FROM leads WHERE booking_id = $1 LIMIT 1", [bookingId],
+      );
+      if (!linkedLeads[0]) {
+        console.warn(`[disburseBookingTokens] rubric snow booking ${bookingId} has no linked lead — reward issuance deferred`);
+        return null;
+      }
+      console.log(`[disburseBookingTokens] rubric snow booking ${bookingId} settles through paid-completion lead ${linkedLeads[0].id}`);
       return null;
     }
 

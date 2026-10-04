@@ -21,6 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { DatePicker } from "@/components/ui/date-picker";
 import { JOB_SCHEDULE_OPTIONS, jobScheduleLabelForStart } from "@shared/jcOperations";
 import { PlacesAutocomplete } from "@/components/places-autocomplete";
+import { calculateSnowQuote, SNOW_SERVICES, type SnowQuoteInput } from "@shared/snowPricing";
 import {
   BUNDLE_SCHEDULING_MODE,
   BUNDLE_FREQUENCY_OPTIONS,
@@ -75,6 +76,9 @@ export interface SelectedItem {
   unitPrice: number;
   priceMode: "fixed" | "hourly" | "per_unit" | "quote";
   details: {
+    snowQuote?: SnowQuoteInput;
+    snowPricingVersion?: string;
+    estimateOnly?: boolean;
     requestedDate?: string;
     requestedStartTime?: string;
     frequency?: string;
@@ -182,6 +186,41 @@ export interface SelectedItem {
  *  wizard (instead of the generic flat-price card). */
 export function usesPackagePicker(code: string): boolean {
   return code === "moving" || code === "junk_removal";
+}
+
+export function hasStructuredSnowQuote(item: Pick<SelectedItem, "serviceCode" | "details">): boolean {
+  return item.serviceCode === "snow_removal" && Object.prototype.hasOwnProperty.call(item.details, "snowQuote");
+}
+
+/** Preserve the calculator choices through configuration, review and receipt. */
+export function SnowQuoteSummary({ item, address = "", editable = false }: {
+  item: SelectedItem; address?: string; editable?: boolean;
+}) {
+  if (!hasStructuredSnowQuote(item)) return null;
+  let estimate: ReturnType<typeof calculateSnowQuote>;
+  try { estimate = calculateSnowQuote(item.details.snowQuote!); }
+  catch {
+    return <p role="alert" className="text-sm text-amber-600">Snow options need to be selected again. <a className="underline" href={`/snow-removal?${new URLSearchParams({ address }).toString()}`}>Open snow calculator</a></p>;
+  }
+  const { input, selected } = estimate;
+  const plan = input.plan === "single" ? "Single visit" : input.plan === "monthly" ? "Monthly visit budget" : "Seasonal visit budget";
+  const editParams = new URLSearchParams({ snowQuote: JSON.stringify(input) });
+  if (address) editParams.set("address", address);
+  return (
+    <div className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 text-sm space-y-2" data-testid="snow-quote-summary">
+      <p className="font-semibold">{plan} · {input.scenario} scenario</p>
+      <p>{input.widthFeet} × {input.lengthFeet} ft · {estimate.areaSqFt.toLocaleString()} sq ft · {input.depthInches} inches of snow</p>
+      <p>{SNOW_SERVICES.find(service => service.id === input.serviceType)?.label}</p>
+      <p className="text-xs text-muted-foreground">
+        {input.backDrag ? `Back-drag ${input.backDragPercent}%` : "No back-drag"} · {input.streetBank ? `${input.bankWidthFeet} ft street bank` : "No street bank"}
+      </p>
+      {input.plan !== "single" && <p className="text-xs">{input.visitsPerMonth} visits per month{input.plan === "seasonal" ? ` × ${input.seasonMonths} months = ${selected.seasonVisits} visits` : " for one month"}. Each visit assumes the selected depth; excess visits or deeper snow need a new quote.</p>}
+      {!estimate.manualQuoteRequired && input.plan === "seasonal" && input.seasonalPayment === "installment" && <p className="text-xs">Requested payment schedule: {input.installments} installments, estimated at ${selected.installment.toFixed(2)}; final installment ${selected.finalInstallment.toFixed(2)}. The full seasonal budget is ${estimate.total.toFixed(2)}.</p>}
+      <p className="text-xs text-muted-foreground">{estimate.manualQuoteRequired ? "End-of-driveway service requires a manual apron quote. " : "Draft estimate. "}A coordinator confirms property access, scope, visit allowance and the Square invoice before payment. This request does not activate recurring charges.</p>
+      {input.depthInches >= 24 && <p className="text-xs font-semibold text-amber-600 dark:text-amber-300">Equipment and access review required for 24–36 inch snow.</p>}
+      {editable && <a href={`/snow-removal?${editParams.toString()}`} className="inline-block text-sm font-semibold text-sky-700 underline dark:text-sky-300">Adjust snow options</a>}
+    </div>
+  );
 }
 
 /** Resolve the per-service scheduling pattern, mirroring BundleServiceScheduler.
@@ -2396,9 +2435,10 @@ export function InlineItemConfigure({
   onRequestContinue?: () => void;
 }) {
   const usesPicker = usesPackagePicker(item.serviceCode);
+  const structuredSnow = hasStructuredSnowQuote(item);
   const isMoving = item.serviceCode === "moving";
   const mode = schedulingModeFor(item.serviceCode);
-  const showQty = item.priceMode === "hourly" || item.priceMode === "per_unit";
+  const showQty = !structuredSnow && (item.priceMode === "hourly" || item.priceMode === "per_unit");
   const lineSubtotal = item.quantity * item.unitPrice;
   const freqOptions = BUNDLE_FREQUENCY_OPTIONS[item.serviceCode] || [];
 
@@ -2425,6 +2465,8 @@ export function InlineItemConfigure({
           <p className="text-sm font-bold text-muted-foreground">Review</p>
         </div>
       </div>
+
+      {structuredSnow && <SnowQuoteSummary item={item} address={serviceAddress} editable />}
 
       {usesPicker && (
         <MovingJunkPackagePicker
@@ -2516,7 +2558,7 @@ export function InlineItemConfigure({
             dateTestId={`inline-date-${item.serviceCode}`}
             timeTestId={`inline-start-time-${item.serviceCode}`}
           />
-          {mode === "date_freq" && freqOptions.length > 0 && (
+          {!structuredSnow && mode === "date_freq" && freqOptions.length > 0 && (
             <div>
               <Label className="text-xs">Frequency</Label>
               <div className="flex flex-wrap gap-1.5 mt-1" data-testid={`inline-freq-${item.serviceCode}`}>
@@ -2948,7 +2990,7 @@ export function BookingSummarySticky({
   const bundleDiscountAmount = Math.max(0, discount - serviceAddressDiscountAmount);
   const finalTotal = quote?.finalTotal ?? subtotal - discount;
   const tokens = quote?.tokenEstimate ?? 0;
-  const crew = quoteCrewSize(quote, items);
+  const crew = items.some(hasStructuredSnowQuote) ? 0 : quoteCrewSize(quote, items);
   const hasQuoteItems = items.some(i => i.priceMode !== "quote");
 
   // Desktop sticky right panel
