@@ -36,3 +36,6 @@ Thumbs.db
 
 .config/
 .local/
+
+# Retired Replit hosting config (production is Railway)
+.replit
