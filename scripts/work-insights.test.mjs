@@ -177,6 +177,8 @@ test('worker homepage puts requests and current work before materials, monthly p
   const work = screen.getByRole('region', { name: '1 Work' });
   assert.ok(within(work).getByRole('link', { name: /delivery/ }));
   assert.equal(within(work).queryByRole('link', { name: /junk/ }), null);
+  assert.equal(screen.getByRole('link', { name: /Rewards & redemptions/ }).getAttribute('href'), '/crew/rewards');
+  assert.equal([...document.querySelectorAll('a')].some(anchor => anchor.getAttribute('href') === '/marketplace'), false);
   assert.equal(screen.getByRole('link', { name: /Pricing datasets/ }).getAttribute('href'), '/crew/pricing-training');
   assert.equal(screen.getByRole('link', { name: 'Calendar' }).getAttribute('href'), '/crew/calendar');
   assert.equal(screen.getByRole('link', { name: 'Job request' }).getAttribute('href'), '/book?worker=1');

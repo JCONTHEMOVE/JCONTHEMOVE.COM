@@ -90,6 +90,41 @@ test("customer: switcher retains the wallet destination", (t) => {
   assert.doesNotMatch(html, /href="\/crew\/earnings"/);
 });
 
+for (const role of ["employee", "admin", "business_owner"]) {
+  test(role + ": in-page Rewards shop stays on /crew/rewards and is active", (t) => {
+    const html = render(clientFor(t, role), ShopSwitcher, "/crew/rewards");
+    assert.match(html, /<a(?=[^>]*href="\/crew\/rewards")(?=[^>]*aria-current="page")/);
+    assert.match(html, />Rewards shop<\/a>/);
+    assert.doesNotMatch(html, /href="\/marketplace"/);
+  });
+
+  test(role + ": Rewards shop stays active when the crew rewards URL includes a search", (t) => {
+    const html = render(clientFor(t, role), ShopSwitcher, "/crew/rewards?spin=1");
+    assert.match(html, /<a(?=[^>]*href="\/crew\/rewards")(?=[^>]*aria-current="page")/);
+    assert.doesNotMatch(html, /href="\/marketplace"/);
+  });
+
+  test(role + ": Rewards shop from another crew page still targets the crew shell", (t) => {
+    const html = render(clientFor(t, role), ShopSwitcher, "/crew/earnings");
+    assert.match(html, /href="\/crew\/rewards"/);
+    assert.doesNotMatch(html, /<a(?=[^>]*href="\/crew\/rewards")(?=[^>]*aria-current="page")/);
+    assert.doesNotMatch(html, /href="\/marketplace"/);
+  });
+}
+
+test("customer marketplace Rewards shop destination and active state stay unchanged", (t) => {
+  const html = render(clientFor(t, "customer"), ShopSwitcher, "/marketplace");
+  assert.match(html, /<a(?=[^>]*href="\/marketplace")(?=[^>]*aria-current="page")/);
+  assert.match(html, />Rewards shop<\/a>/);
+  assert.doesNotMatch(html, /href="\/crew\/rewards"/);
+});
+
+test("customer marketplace search refresh keeps the customer shop active", (t) => {
+  const html = render(clientFor(t, "customer"), ShopSwitcher, "/marketplace?spin=1");
+  assert.match(html, /<a(?=[^>]*href="\/marketplace")(?=[^>]*aria-current="page")/);
+  assert.doesNotMatch(html, /href="\/crew\/rewards"/);
+});
+
 for (const role of [null, "unknown_role"]) {
   test((role ?? "guest") + ": switcher omits inaccessible wallet links", (t) => {
     const html = render(clientFor(t, role), ShopSwitcher);

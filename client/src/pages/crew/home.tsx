@@ -124,6 +124,6 @@ export default function CrewHomePage() {
 
     <section aria-labelledby="progress-title" className="border-t border-zinc-700 py-7"><h2 id="progress-title" className="mb-4 text-lg font-semibold"><span className="mr-2 text-violet-400">3</span> Monthly progress</h2><WorkerMonthlyProgress /></section>
 
-    <section aria-labelledby="rewards-title" className="border-t border-zinc-700 py-7"><h2 id="rewards-title" className="text-lg font-semibold"><span className="mr-2 text-amber-400">4</span> Rewards & redemptions</h2><div className="grid gap-x-6 sm:grid-cols-2"><ToolLink href="/marketplace?view=crew" label="Rewards & redemptions" detail="Reward shop, claims & redemption history" icon={Gift} color="text-amber-400" /><ToolLink href="/crew/earnings" label="Earnings & balance" detail="Pay, JCMOVES & payout history" icon={Wallet} color="text-amber-400" /></div></section>
+    <section aria-labelledby="rewards-title" className="border-t border-zinc-700 py-7"><h2 id="rewards-title" className="text-lg font-semibold"><span className="mr-2 text-amber-400">4</span> Rewards & redemptions</h2><div className="grid gap-x-6 sm:grid-cols-2"><ToolLink href="/crew/rewards" label="Rewards & redemptions" detail="Reward shop, claims & redemption history" icon={Gift} color="text-amber-400" /><ToolLink href="/crew/earnings" label="Earnings & balance" detail="Pay, JCMOVES & payout history" icon={Wallet} color="text-amber-400" /></div></section>
   </main>;
 }
