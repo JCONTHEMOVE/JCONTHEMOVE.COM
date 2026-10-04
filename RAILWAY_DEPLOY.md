@@ -25,9 +25,11 @@ Set the required database, session, Square, messaging, and wallet environment va
 
 ## 24/7 operations
 
-- `Production Availability` runs every 10 minutes against the public readiness endpoint.
-- Assign a human recipient and escalation path for failed GitHub workflow notifications.
-- Confirm database backup retention and document a restore drill.
+- `Production Availability` requests a 10-minute cadence against the public readiness endpoint. Verify actual run intervals; GitHub can delay or drop scheduled runs.
+- Darrell is both owner and technical responder. His primary email is confirmed and he requested Discord alerts. Resolve the exact Discord channel, then configure email-first delivery and 15/30/60-minute unacknowledged reminders to Darrell, with provider-support checkpoints for unresolved incidents. In-app notices are available on the website without a native download, but outage delivery must be independent of the production app/database.
+- Activate an independent uptime monitor and configure `OPS_HEARTBEAT_URL` plus the distinct `OPS_DRILL_HEARTBEAT_URL` in GitHub Actions secrets. The draft reporter sends automatic verifier outcomes to the external incident service; missing configuration fails visibly. No monitor, recipient route, or secret has been configured by the draft itself.
+- Measure existing database retention and recovery points, then document an isolated restore drill before recommending recovery targets.
+- Keep the evidence and open items in [`docs/operations/production-readiness.md`](./docs/operations/production-readiness.md). `alert_drill=true` with `alert_drill_phase=fail` or `resolve` exercises the isolated alert route without contacting production; a provider-accepted signal alone is not delivery proof.
 - Treat a readiness failure, missing public commit marker, failed payment/payout probe, or unexpected funnel conversion drop as a release/operations incident.
 
 ## Local development note
