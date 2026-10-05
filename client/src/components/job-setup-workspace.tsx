@@ -1,5 +1,5 @@
 import { customerNotesFromDetails, updateCustomerNotes } from "@shared/leadDetails";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CheckCircle2, CircleHelp, ClipboardPenLine, Loader2 } from "lucide-react";
 import type { LaborWorkScope } from "@shared/laborBooking";
@@ -219,6 +219,7 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
   const [quoteDraft, setQuoteDraft] = useState<JobQuoteDraft | null>(() => savedQuote(lead));
   const [quoteDirty, setQuoteDirty] = useState(false);
   const [recalculateQuote, setRecalculateQuote] = useState(false);
+  const [crewSearch, setCrewSearch] = useState("");
   const [editingVersion, setEditingVersion] = useState(expectedVersion);
   const [saveError, setSaveError] = useState("");
   const [quotePricingSource, setQuotePricingSource] = useState<"rate_card_auto" | "manual_override">(
@@ -306,6 +307,14 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
   });
 
   const approvedEmployees = employees.filter((employee) => employee.isApproved || employee.status === "approved" || employee.status === "active");
+  const filteredEmployees = useMemo(() => {
+    const query = crewSearch.trim().toLowerCase();
+    if (!query) return approvedEmployees;
+    return approvedEmployees.filter((employee) => {
+      const name = `${employee.firstName || ""} ${employee.lastName || ""}`.trim().toLowerCase();
+      return name.includes(query);
+    });
+  }, [approvedEmployees, crewSearch]);
   const hasDraftChanges = JSON.stringify(draft) !== JSON.stringify(setupDraftFromLead(lead));
   const savedDraft = setupDraftFromLead(lead);
   // Opening an existing job or correcting its date/crew must preserve its saved price.
@@ -521,7 +530,40 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
               <div><Label htmlFor="setup-hours">Hours Estimate</Label><Select value={String(draft.confirmedHours)} onValueChange={(value) => updateDraft("confirmedHours", Number(value))}><SelectTrigger id="setup-hours"><SelectValue /></SelectTrigger><SelectContent>{Array.from({ length: 24 }, (_, index) => index + 1).map((hour) => <SelectItem key={hour} value={String(hour)}>{hour} {hour === 1 ? "hour" : "hours"}</SelectItem>)}</SelectContent></Select></div>
             </div>
             <div><Label className="mb-2 block">Crew Size</Label><div className="flex flex-wrap gap-2">{[1, 2, 3, 4].map((size) => <Button key={size} type="button" variant={draft.crewSize === size ? "default" : "outline"} className="min-w-12" onClick={() => updateDraft("crewSize", size)}>{size} {size === 1 ? "mover" : "movers"}</Button>)}</div></div>
-            <div id="setup-named-crew" tabIndex={-1}><Label className="mb-2 block">Named Crew</Label><div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2">{approvedEmployees.length ? approvedEmployees.map((employee) => { const checked = draft.crewMembers.includes(employee.id); return <label key={employee.id} className="flex min-h-11 min-w-0 cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted/50"><Checkbox checked={checked} onCheckedChange={(value) => setDraft((current) => { const crewMembers = value ? [...current.crewMembers, employee.id] : current.crewMembers.filter((id) => id !== employee.id); const crewLeadUserId = crewMembers.includes(current.crewLeadUserId) ? current.crewLeadUserId : crewMembers[0] || ""; const crewRoles = { ...current.crewRoles }; if (value) crewRoles[employee.id] = employee.payoutProfile?.payoutClassification || "mover"; else delete crewRoles[employee.id]; return { ...current, crewMembers, crewLeadUserId, crewRoles }; })} /><span className="min-w-0 [overflow-wrap:anywhere]">{employee.firstName} {employee.lastName}</span></label>; }) : <p className="text-sm text-muted-foreground">No approved crew members found.</p>}</div></div>
+            <div id="setup-named-crew" tabIndex={-1} className="space-y-2">
+              <Label className="mb-1 block" htmlFor="setup-crew-search">Named Crew</Label>
+              <Input
+                id="setup-crew-search"
+                type="search"
+                value={crewSearch}
+                onChange={(event) => setCrewSearch(event.target.value)}
+                placeholder="Search crew by name"
+                className="min-h-12"
+                data-testid="input-setup-crew-search"
+              />
+              <div className="grid max-h-72 gap-2 overflow-y-auto rounded-lg border p-3 sm:grid-cols-2">
+                {approvedEmployees.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No approved crew members found.</p>
+                ) : filteredEmployees.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No crew matched “{crewSearch.trim()}”.</p>
+                ) : filteredEmployees.map((employee) => {
+                  const checked = draft.crewMembers.includes(employee.id);
+                  return (
+                    <label key={employee.id} className="flex min-h-12 min-w-0 cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted/50">
+                      <Checkbox checked={checked} onCheckedChange={(value) => setDraft((current) => {
+                        const crewMembers = value ? [...current.crewMembers, employee.id] : current.crewMembers.filter((id) => id !== employee.id);
+                        const crewLeadUserId = crewMembers.includes(current.crewLeadUserId) ? current.crewLeadUserId : crewMembers[0] || "";
+                        const crewRoles = { ...current.crewRoles };
+                        if (value) crewRoles[employee.id] = employee.payoutProfile?.payoutClassification || "mover";
+                        else delete crewRoles[employee.id];
+                        return { ...current, crewMembers, crewLeadUserId, crewRoles };
+                      })} />
+                      <span className="min-w-0 [overflow-wrap:anywhere]">{employee.firstName} {employee.lastName}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
             <div><Label>Crew lead</Label><Select value={draft.crewLeadUserId || undefined} onValueChange={(value) => updateDraft("crewLeadUserId", value)}><SelectTrigger><SelectValue placeholder="Select the crew lead" /></SelectTrigger><SelectContent>{draft.crewMembers.length ? draft.crewMembers.map((id) => { const employee = approvedEmployees.find((entry) => entry.id === id); return <SelectItem key={id} value={id}>{employee ? `${employee.firstName} ${employee.lastName}` : "Selected crew member"}</SelectItem>; }) : <SelectItem value="__none" disabled>Select a crew member first</SelectItem>}</SelectContent></Select></div>
             {draft.crewMembers.filter(id => !approvedEmployees.some(employee => employee.id === id)).map(id => <div key={id} className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 p-3 text-sm">
               <span>Unavailable crew account</span><Button type="button" variant="outline" onClick={() => setDraft(current => {
