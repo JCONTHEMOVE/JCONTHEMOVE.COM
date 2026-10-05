@@ -135,6 +135,22 @@ body {
   padding-bottom: var(--jc-bottom-overlays);
 }
 
+/*
+ * /snow-removal scroll viewport: ends exactly above the mobile quote bar,
+ * install prompt and cookie notice (all measured live), so no calculator
+ * field or estimate content can ever scroll underneath them.
+ */
+.snow-scroll-viewport {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--jc-bottom-overlays, 0px) + var(--jc-snow-quote-bar-h, 0px));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}
+
 /* Desktop snow estimate column: keep the sticky card fully scrollable above any bottom overlays. */
 @media (min-width: 1024px) {
   .snow-estimate-sticky {

@@ -9,7 +9,7 @@ import { useLayoutEffect, type RefObject } from "react";
  */
 export function useBottomOverlayInset(
   ref: RefObject<HTMLElement>,
-  cssVar: "--jc-cookie-bar-h" | "--jc-install-prompt-h",
+  cssVar: `--jc-${string}`,
   active: boolean,
 ) {
   useLayoutEffect(() => {
