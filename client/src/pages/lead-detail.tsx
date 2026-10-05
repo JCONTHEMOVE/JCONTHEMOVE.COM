@@ -516,7 +516,6 @@ export default function LeadDetailPage() {
   const [invoiceAmount, setInvoiceAmount] = useState("");
   const [invoiceDescription, setInvoiceDescription] = useState("");
   const [invoiceDeliveryMethod, setInvoiceDeliveryMethod] = useState<"email" | "sms" | "both">("email");
-  const [orderApplied, setOrderApplied] = useState(false);
   const [showBtcDialog, setShowBtcDialog] = useState(false);
   const [btcAmount, setBtcAmount] = useState("");
   const [btcPaymentLink, setBtcPaymentLink] = useState<string | null>(null);
@@ -536,20 +535,16 @@ export default function LeadDetailPage() {
     : hasAdminAccess ? "/admin/schedule" : "/crew";
 
   // Only secondary notes, media, timeline, and rewards live below the job
-  // essentials. Quote delivery is a focused dialog from the primary action.
+  // essentials. Quote sharing stays on the workflow primary action.
   const [activeTab, setActiveTab] = useState("notes");
-  const [showQuoteDeliveryDialog, setShowQuoteDeliveryDialog] = useState(false);
   const [showOfflineCloseoutDialog, setShowOfflineCloseoutDialog] = useState(false);
   const [offlinePaymentMethod, setOfflinePaymentMethod] = useState<"cash" | "check">("cash");
   const [offlinePaymentDate, setOfflinePaymentDate] = useState("");
   const [offlinePaymentReference, setOfflinePaymentReference] = useState("");
   const [offlinePaymentNote, setOfflinePaymentNote] = useState("");
-  const [quoteNote, setQuoteNote] = useState("");
-  const [quoteDeliveryMethod, setQuoteDeliveryMethod] = useState<"email" | "sms" | "both">("email");
   const [recordSmsConsent, setRecordSmsConsent] = useState(false);
   const [quoteSentAt, setQuoteSentAt] = useState<string | null>(null);
   const [squarePaymentUrl, setSquarePaymentUrl] = useState<string | null>(null);
-  const [copiedPaymentLink, setCopiedPaymentLink] = useState(false);
   const [showJobSetup, setShowJobSetup] = useState(false);
   const [setupDirty, setSetupDirty] = useState(false);
   const [workflowVersion, setWorkflowVersion] = useState("");
@@ -660,7 +655,6 @@ export default function LeadDetailPage() {
       setSelectedCrewMembers(members);
       setQuoteSentAt(lead.quoteSentAt || null);
       setSquarePaymentUrl(lead.squarePaymentUrl || null);
-      setQuoteDeliveryMethod(isSyntheticOrInvalidEmail(lead.email) && !!lead.phone ? "sms" : "email");
       setInvoiceDeliveryMethod(isSyntheticOrInvalidEmail(lead.email) && !!lead.phone ? "sms" : "email");
       setRecordSmsConsent(false);
     }
@@ -758,43 +752,6 @@ export default function LeadDetailPage() {
     },
     onError: (error: Error) => {
       toast({ title: "Package draft failed", description: error.message || "Could not build the package quote.", variant: "destructive" });
-    },
-  });
-
-  const sendQuoteMutation = useMutation({
-    mutationFn: async (deliveryMethod: "email" | "sms" | "both") => {
-      return await apiRequest("POST", `/api/leads/${params?.id}/send-quote`, {
-        message: quoteNote || undefined,
-        deliveryMethod,
-        recordSmsConsent: (deliveryMethod === "sms" || deliveryMethod === "both") ? recordSmsConsent : undefined,
-      });
-    },
-    onSuccess: async (res) => {
-      const data = await res.json();
-      setQuoteSentAt(data.quoteSentAt);
-      if (data.paymentUrl) setSquarePaymentUrl(data.paymentUrl);
-      setShowQuoteDeliveryDialog(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/leads"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id, "history"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id, "jcmoves-status"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/jobs/planner"] });
-      const invoiceNote = data.squareInvoiceCreated ? " + invoice" : "";
-      toast({
-        title: `Quote${invoiceNote} sent!`,
-        description: `Email: ${data.emailSent ? "sent" : "not sent"} - Text: ${data.smsSent ? "sent" : "not sent"}${data.paymentUrl ? " - pay link included" : ""}`,
-      });
-    },
-    onError: (error: Error) => {
-      let msg = error?.message || "Failed to send quote";
-      try {
-        const jsonStart = msg.indexOf("{");
-        if (jsonStart !== -1) {
-          const parsed = JSON.parse(msg.slice(jsonStart));
-          if (parsed?.error) msg = parsed.error;
-        }
-      } catch (_) {}
-      toast({ title: "Send failed", description: msg, variant: "destructive" });
     },
   });
 
@@ -1068,7 +1025,6 @@ export default function LeadDetailPage() {
       lastQuoteUpdatedAt: new Date().toISOString(),
     }, {
       onSuccess: () => {
-        setOrderApplied(true);
         const price = orderData.totalPrice;
         setInvoiceAmount(price ? parseFloat(price).toString() : "");
         setInvoiceDescription(`${lead?.serviceType} - ${lead?.firstName} ${lead?.lastName}`);
@@ -1319,7 +1275,6 @@ export default function LeadDetailPage() {
   const actionPending = updateStatus.isPending
     || markAsPaidMutation.isPending
     || offlineCloseoutMutation.isPending
-    || sendQuoteMutation.isPending
     || applyPackageDraftMutation.isPending;
   const dispatchMissingSetup = manualDispatchMissingSetup(lead);
   const nextStep = (() => {
@@ -1502,7 +1457,7 @@ export default function LeadDetailPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="max-w-4xl mx-auto min-w-0 px-3 py-3 sm:px-6 sm:py-6">
+      <div className="mx-auto min-w-0 max-w-4xl overflow-x-hidden px-3 py-3 sm:px-6 sm:py-6">
         {/* Header */}
         <div className="mb-5">
           <div className="flex items-center justify-between mb-3">
@@ -1527,7 +1482,13 @@ export default function LeadDetailPage() {
               <DropdownMenuTrigger asChild><Button variant="outline" className="min-h-11">Actions <ChevronDown className="ml-2 h-4 w-4" /></Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem className="min-h-11" onSelect={() => setShowCrewSuggestions(true)}>Crew suggestions</DropdownMenuItem>
+                {hasAdminAccess && <DropdownMenuItem className="min-h-11" onSelect={() => {
+                  setInvoiceAmount(lead.totalPrice || lead.basePrice || "");
+                  setInvoiceDescription(`${lead.serviceType || "Service"} - ${lead.firstName} ${lead.lastName}`);
+                  setShowInvoiceDialog(true);
+                }}>Send Square invoice</DropdownMenuItem>}
                 {hasAdminAccess && <DropdownMenuItem className="min-h-11 text-red-400" onSelect={() => { setRemoveIntent("archive"); setShowArchiveDialog(true); }}>Archive job request</DropdownMenuItem>}
+                {hasAdminAccess && <DropdownMenuItem className="min-h-11 text-red-400" onSelect={() => { setRemoveIntent("delete"); setShowArchiveDialog(true); }}>Delete job</DropdownMenuItem>}
               </DropdownMenuContent>
             </DropdownMenu>
             </div>
@@ -1565,7 +1526,7 @@ export default function LeadDetailPage() {
           : <JobOrderTicket order={{ ...lead, customerName: lead.workerVisibility?.customerIdentity === false ? "Customer details protected" : [lead.firstName, lead.lastName].filter(Boolean).join(" ") }} detailPage viewer="crew" action={canClaimJob ? ticketAction : isEmployee && ["start", "complete"].includes(nextStep.key) ? <Button disabled={actionPending} onClick={handleNextStep}>{nextStep.button}</Button> : undefined} className="mb-4" />}
 
         {packageDraft && (
-          <details className="mb-4 rounded-xl border" data-testid="selected-package-summary"><summary className="min-h-12 cursor-pointer px-4 py-3 text-sm font-medium">Customer-selected package</summary><Card className="border-0 shadow-none">
+          <details open className="mb-4 rounded-xl border" data-testid="selected-package-summary"><summary className="min-h-12 cursor-pointer px-4 py-3 text-sm font-medium">Customer-selected package</summary><Card className="border-0 shadow-none">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Customer-selected package</CardTitle>
               <p className="min-w-0 font-medium [overflow-wrap:anywhere]">{packageDraft.label}</p>
@@ -1649,6 +1610,24 @@ export default function LeadDetailPage() {
                 <div className="min-w-0">
                   <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Payment<Popover><PopoverTrigger asChild><button type="button" aria-label="Explain quote"><CircleHelp className="h-3 w-3" /></button></PopoverTrigger><PopoverContent className="w-64 text-xs">The live rate card calculates labor, truck, trailer, stairs, and elevator fees on the server. Manual changes stay labeled for audit.</PopoverContent></Popover></p>
                   <p className="capitalize text-sm font-medium">{paymentState}</p>
+                  {hasAdminAccess && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 min-h-11"
+                      onClick={() => {
+                        const price = lead.totalPrice || lead.basePrice || "";
+                        setBtcAmount(price ? parseFloat(price).toString() : "");
+                        setBtcPaymentLink(null);
+                        setShowBtcDialog(true);
+                      }}
+                      data-testid="button-btc-lightning-checkout"
+                    >
+                      <Bitcoin className="mr-2 h-4 w-4 text-orange-500" />
+                      Bitcoin Lightning checkout
+                    </Button>
+                  )}
 
                 </div>
               </div>
@@ -1765,383 +1744,15 @@ export default function LeadDetailPage() {
               </Card>
             )}
 
-        {/* === Sticky Customer Summary Bar === */}
-        {hasAdminAccess && (
-          <div className="hidden sticky top-0 z-20 mb-4 p-3 rounded-xl border border-slate-700/50 bg-slate-900/95 backdrop-blur-sm flex flex-wrap items-center gap-3 text-sm shadow-md">
-            <div className="flex items-center gap-1.5 font-semibold text-foreground">
-              <Users className="h-4 w-4 text-slate-400" />
-              {lead.firstName} {lead.lastName}
-            </div>
-            {lead.phone && (
-              <a href={`tel:${lead.phone}`} className="flex items-center gap-1 text-blue-400 hover:underline">
-                <Phone className="h-3.5 w-3.5" /> {lead.phone}
-              </a>
-            )}
-            {lead.email && (
-              <a href={`mailto:${lead.email}`} className="flex items-center gap-1 text-slate-400 hover:text-slate-200 hover:underline truncate max-w-[180px]">
-                <Mail className="h-3.5 w-3.5 shrink-0" /> {lead.email}
-              </a>
-            )}
-            <div className="hidden sm:block w-px h-4 bg-slate-600" />
-            <span className="text-slate-400 capitalize">
-              {lead.serviceType?.replace(/_/g, " ")}
-              {(lead.totalPrice || lead.basePrice) && (
-                <span className="text-emerald-400 font-semibold ml-1">
-                  · ${parseFloat(lead.totalPrice || lead.basePrice || "0").toFixed(0)}
-                </span>
-              )}
-            </span>
-            <Badge
-              variant="secondary"
-              className={lead.status === "quoted" || lead.status === "completed" ? "bg-amber-600/20 text-amber-300 border-amber-500/30" : ""}
-            >
-              {lead.status.replace(/_/g, " ").charAt(0).toUpperCase() + lead.status.replace(/_/g, " ").slice(1)}
-            </Badge>
-            {(quoteSentAt || lead.quoteSentAt) && (
-              <Badge className="bg-green-600/20 text-green-300 border-green-500/30 text-[10px]">
-                <CheckCircle className="h-3 w-3 mr-1" /> Quote Sent
-              </Badge>
-            )}
-            {(squarePaymentUrl || lead.squarePaymentUrl) && (
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(squarePaymentUrl || lead.squarePaymentUrl || "");
-                  setCopiedPaymentLink(true);
-                  setTimeout(() => setCopiedPaymentLink(false), 2000);
-                }}
-                className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 text-[10px] hover:bg-emerald-600/30 transition-colors"
-                title="Copy customer payment link"
-              >
-                {copiedPaymentLink ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                Pay link
-              </button>
-            )}
-            <div className="ml-auto">
-              <Button
-                size="sm"
-                className="bg-orange-600 hover:bg-orange-700 text-white"
-                onClick={() => window.dispatchEvent(new Event("jc:review-quote"))}
-              >
-                <Send className="h-3.5 w-3.5 mr-1.5" /> Send Quote
-              </Button>
-            </div>
-          </div>
-        )}
-
         {/* === 4-Tab Interface === */}
         {hasAdminAccess ? <PaymentReconciliationPanel leadId={lead.id} /> : null}
 
         <ProjectIntakeSummary details={lead.details} status={lead.status} confirmedDate={lead.confirmedDate} />
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="mb-6 grid h-auto w-full grid-cols-2">
-            <TabsTrigger className="min-h-11 text-sm" value="notes">Notes & Media</TabsTrigger>
-            <TabsTrigger className="min-h-11 text-sm" value="history">Timeline & Rewards</TabsTrigger>
+          <TabsList className="mb-6 grid h-auto w-full grid-cols-2 gap-1 p-1">
+            <TabsTrigger className="min-h-12 px-3 text-base" value="notes">Notes & Media</TabsTrigger>
+            <TabsTrigger className="min-h-12 px-3 text-base" value="history">Timeline & Rewards</TabsTrigger>
           </TabsList>
-
-          {/* ─────────── TAB: QUOTE & SEND ─────────── */}
-          <TabsContent value="quote" className="hidden space-y-4">
-
-            {/* Crew, schedule, equipment, and pricing edit only in Job Setup. */}
-            {/* Section B — Quote Summary */}
-            <Card className="border-emerald-500/30 bg-slate-900/60">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-base text-emerald-400">
-                  <ShoppingBag className="h-4 w-4" />
-                  Quote Summary
-                  {orderApplied && <Badge className="ml-1 bg-emerald-600/30 text-emerald-300 border-emerald-500/30 text-[10px]">Just updated</Badge>}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {(lead.totalPrice || lead.basePrice) ? (
-                  <>
-                    {lead.orderLineItems && lead.orderLineItems.length > 0 ? (
-                      <div className="space-y-1.5">
-                        {lead.orderLineItems.map((li: OrderLineItem, i: number) => (
-                          <div key={i} className="flex justify-between text-sm text-slate-300">
-                            <span>{li.name}{li.qty > 1 ? ` × ${li.qty}` : ""}</span>
-                            <span className="font-medium">${li.total?.toFixed(2) ?? "0.00"}</span>
-                          </div>
-                        ))}
-                        <div className="flex justify-between font-bold text-white pt-2 border-t border-slate-600/50">
-                          <span>Subtotal</span>
-                          <span>${parseFloat(lead.totalPrice || lead.basePrice || "0").toFixed(2)}</span>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-slate-400">Base Quote</span>
-                        <span className="font-medium">${parseFloat(lead.basePrice || "0").toFixed(2)}</span>
-                      </div>
-                    )}
-                    {/* Special item surcharges */}
-                    {parseFloat(String(lead.totalSpecialItemsFee || "0")) > 0 && (
-                      <div className="flex justify-between text-sm border-t border-slate-700/30 pt-1.5">
-                        <span className="text-slate-400">Special Items Surcharge</span>
-                        <span className="text-orange-400 font-medium">+${parseFloat(String(lead.totalSpecialItemsFee || "0")).toFixed(2)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between text-lg font-bold text-emerald-400 border-t border-slate-600/60 pt-2">
-                      <span>Total</span>
-                      <span>${parseFloat(lead.totalPrice || lead.basePrice || "0").toFixed(2)}</span>
-                    </div>
-                    {/* Token preview */}
-                    {(() => {
-                      const price = parseFloat(lead.totalPrice || lead.basePrice || "0");
-                      const crewCount = lead.crewSize ? parseInt(String(lead.crewSize)) : 0;
-                      const jobTokens = Math.round(price * 15);
-                      const perWorker = crewCount > 0 ? Math.round(jobTokens / crewCount) : jobTokens;
-                      return (
-                        <div className="pt-1.5 border-t border-slate-700/50 space-y-1">
-                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Token conversion · $1 = 15 JCMOVES</p>
-                          <div className="flex items-center gap-1.5 text-xs text-amber-400">
-                            <Zap className="h-3.5 w-3.5 shrink-0" />
-                            <span>Customer earns <strong>~{jobTokens.toLocaleString()}</strong> JCMOVES</span>
-                          </div>
-                          <div className="flex items-center gap-1.5 text-xs text-orange-400">
-                            <Zap className="h-3.5 w-3.5 shrink-0" />
-                            <span>Crew earns <strong>~{jobTokens.toLocaleString()}</strong> JCMOVES{crewCount > 0 && <span className="text-orange-400/70"> (~{perWorker.toLocaleString()} each)</span>}</span>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </>
-                ) : (
-                  <p className="text-sm text-slate-500 italic text-center py-3">No quote set yet. Use "Adjust Quote" to build the quote.</p>
-                )}
-
-                {/* Quote changes use the unified inline Job Setup workspace. */}
-                {hasAdminAccess && (
-                  <div className="pt-1">
-                    <Button variant="outline" className="w-full" onClick={() => openJobSetup("quote")}>
-                      <DollarSign className="h-4 w-4 mr-2" /> Open Job Setup
-                    </Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Section C — Unified Send: Quote Email + Square Invoice */}
-            {hasAdminAccess && (
-              <Card className="border-orange-500/30 bg-orange-950/10">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Send className="h-4 w-4 text-orange-400" />
-                    Send Quote &amp; Invoice
-                  </CardTitle>
-                  <CardDescription>Send the quote email and Square invoice together in one click</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {/* Preview box */}
-                  <div className="p-3 rounded-lg bg-slate-800/60 border border-slate-700/50 text-sm space-y-1.5">
-                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-2">What the customer will receive</p>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Customer</span>
-                      <span className="font-medium">{lead.firstName} {lead.lastName}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Email</span>
-                      <span className="font-medium">{lead.email}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Phone</span>
-                      <span className="font-medium">{lead.phone || "Not set"}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Service</span>
-                      <span className="font-medium capitalize">{lead.serviceType?.replace(/_/g, " ")}</span>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <span className="shrink-0 text-slate-400">Location</span>
-                      <span className="truncate text-right font-medium">{lead.confirmedFromAddress || lead.fromAddress || "Not set"}</span>
-                    </div>
-                    {lead.crewSize && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Crew</span>
-                        <span className="font-medium">{lead.crewSize} mover{lead.crewSize !== 1 ? "s" : ""}</span>
-                      </div>
-                    )}
-                    {lead.confirmedDate && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Date</span>
-                        <span className="font-medium">{lead.confirmedDate}</span>
-                      </div>
-                    )}
-                    {lead.arrivalWindow && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">Arrival window</span>
-                        <span className="font-medium">{lead.arrivalWindow}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between border-t border-slate-700/50 pt-1.5 mt-1.5">
-                      <span className="text-slate-400">Quote total</span>
-                      <span className="font-bold text-emerald-400 text-base">
-                        {(lead.totalPrice || lead.basePrice) ? `$${parseFloat(lead.totalPrice || lead.basePrice || "0").toFixed(2)}` : "Not set"}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium">Send by</Label>
-                    <Select value={quoteDeliveryMethod} onValueChange={(value) => setQuoteDeliveryMethod(value as "email" | "sms" | "both")}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="email" disabled={isSyntheticOrInvalidEmail(lead.email) && !!lead.phone}>Email only</SelectItem>
-                        <SelectItem value="sms" disabled={!lead.phone}>Text message only</SelectItem>
-                        <SelectItem value="both" disabled={!lead.phone || isSyntheticOrInvalidEmail(lead.email)}>Email and text message</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {isSyntheticOrInvalidEmail(lead.email) && lead.phone && (
-                      <p className="text-xs text-amber-300">This customer has a test or invalid email, so text message delivery is selected.</p>
-                    )}
-                    {(quoteDeliveryMethod === "sms" || quoteDeliveryMethod === "both") && !lead.smsConsent && (
-                      <label className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
-                        <Checkbox checked={recordSmsConsent} onCheckedChange={(value) => setRecordSmsConsent(value === true)} />
-                        <span>I verified the customer gave verbal consent to receive this quote by text message.</span>
-                      </label>
-                    )}
-                    {(quoteDeliveryMethod === "sms" || quoteDeliveryMethod === "both") && lead.smsConsent && (
-                      <p className="text-xs text-emerald-300">SMS consent is already recorded for this customer.</p>
-                    )}
-                  </div>
-
-                  {/* Note textarea */}
-                  <div>
-                    <Label className="text-sm font-medium mb-1 block">Add a personal note (optional)</Label>
-                    <Textarea
-                      placeholder="e.g. Thanks for reaching out! We're excited to help with your move."
-                      value={quoteNote}
-                      onChange={(e) => setQuoteNote(e.target.value)}
-                      rows={2}
-                      className="resize-none text-sm"
-                    />
-                  </div>
-
-                  {/* Already sent status */}
-                  {(quoteSentAt || lead.quoteSentAt) && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-sm text-green-400 bg-green-600/10 border border-green-500/20 rounded-lg px-3 py-2">
-                        <CheckCircle className="h-4 w-4 shrink-0" />
-                        <span>
-                          {(squarePaymentUrl || lead.squarePaymentUrl) ? "Quote + invoice sent" : "Quote sent"}{" "}
-                          {new Date(quoteSentAt || lead.quoteSentAt!).toLocaleString()}
-                        </span>
-                      </div>
-                      {(squarePaymentUrl || lead.squarePaymentUrl) && (
-                        <div className="flex items-center gap-2 p-2.5 rounded-lg bg-emerald-900/20 border border-emerald-500/30">
-                          <span className="text-xs text-emerald-400 font-medium shrink-0">Customer pay link:</span>
-                          <a
-                            href={squarePaymentUrl || lead.squarePaymentUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-emerald-300 underline truncate flex-1"
-                          >
-                            {(squarePaymentUrl || lead.squarePaymentUrl)?.replace("https://", "")}
-                          </a>
-                          <button
-                            onClick={() => {
-                              navigator.clipboard.writeText(squarePaymentUrl || lead.squarePaymentUrl || "");
-                              setCopiedPaymentLink(true);
-                              setTimeout(() => setCopiedPaymentLink(false), 2000);
-                            }}
-                            className="text-emerald-400 hover:text-emerald-300 shrink-0"
-                            title="Copy payment link"
-                          >
-                            {copiedPaymentLink ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Existing invoices */}
-                  {leadInvoices.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Square Invoices</p>
-                      {leadInvoices.map((inv) => {
-                        const statusColors: Record<string, string> = {
-                          draft: "bg-slate-600/20 text-slate-300 border-slate-500/30",
-                          sent: "bg-blue-600/20 text-blue-300 border-blue-500/30",
-                          paid: "bg-green-600/20 text-green-300 border-green-500/30",
-                          canceled: "bg-red-600/20 text-red-300 border-red-500/30",
-                          failed: "bg-red-600/20 text-red-300 border-red-500/30",
-                        };
-                        const badgeCls = statusColors[inv.status] ?? "bg-slate-600/20 text-slate-300 border-slate-500/30";
-                        return (
-                          <div key={inv.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-muted/30 border border-muted text-sm">
-                            <div className="min-w-0">
-                              <p className="font-medium truncate">${parseFloat(inv.amount).toFixed(2)}</p>
-                              {inv.squareInvoiceNumber && (
-                                <p className="text-[10px] font-mono text-slate-400">{inv.squareInvoiceNumber}</p>
-                              )}
-                              <p className="text-[10px] text-muted-foreground">{new Date(inv.createdAt).toLocaleDateString()}</p>
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <Badge className={`text-[10px] px-1.5 py-0 capitalize ${badgeCls}`}>{inv.status}</Badge>
-                              {inv.invoiceUrl && (
-                                <a href={inv.invoiceUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground">
-                                  <ExternalLink className="h-3.5 w-3.5" />
-                                </a>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Primary action: Send Quote Email + Square Invoice + SMS together */}
-                  <Button
-                    className="w-full bg-orange-600 hover:bg-orange-700 text-white font-semibold"
-                    onClick={() => sendQuoteMutation.mutate(quoteDeliveryMethod)}
-                    disabled={sendQuoteMutation.isPending || !(lead.totalPrice || lead.basePrice) || ((quoteDeliveryMethod === "sms" || quoteDeliveryMethod === "both") && !lead.smsConsent && !recordSmsConsent)}
-                  >
-                    {sendQuoteMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Send className="h-4 w-4 mr-2" />
-                    )}
-                    {(quoteSentAt || lead.quoteSentAt) ? "Re-send Quote & Invoice" : "Send Quote & Invoice"}
-                  </Button>
-                  <p className="text-[10px] text-slate-500 text-center">Square creates the secure payment link; text delivery uses the recorded customer consent.</p>
-
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full border-red-500/40 text-red-300 hover:bg-red-950/40 hover:text-red-200"
-                    onClick={() => { setRemoveIntent("delete"); setShowArchiveDialog(true); }}
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />Delete Job
-                  </Button>
-
-                  {!(lead.totalPrice || lead.basePrice) && (
-                    <p className="text-xs text-amber-400 flex items-center gap-1.5">
-                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                      Build a quote first before sending.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Bitcoin Lightning Payment (Admin Only) */}
-            {hasAdminAccess && (
-              <Card className="border-orange-500/30">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Bitcoin className="h-4 w-4 text-orange-500" /> Bitcoin Lightning Payment
-                  </CardTitle>
-                  <CardDescription>5% discount + 5% of the discounted payment back in JCMOVES</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Button onClick={() => { const price = lead.totalPrice || lead.basePrice || ""; setBtcAmount(price ? parseFloat(price).toString() : ""); setBtcPaymentLink(null); setShowBtcDialog(true); }} className="w-full bg-orange-600 hover:bg-orange-700 text-white">
-                    <Zap className="h-4 w-4 mr-2" /> Generate Lightning Checkout
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
-          </TabsContent>
 
           {/* ─────────── TAB: NOTES ─────────── */}
           <TabsContent value="notes" className="space-y-4">
@@ -2629,60 +2240,6 @@ export default function LeadDetailPage() {
             >
               {offlineCloseoutMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
               Record {formatMoney(lead.totalPrice || lead.basePrice)} Paid &amp; Complete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Single, consent-aware quote delivery control. The old standalone
-          quote tab is intentionally retired to keep this job card focused. */}
-      <Dialog open={showQuoteDeliveryDialog} onOpenChange={setShowQuoteDeliveryDialog}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Send className="h-5 w-5 text-cyan-400" />
-              Send Quote &amp; Invoice
-            </DialogTitle>
-            <DialogDescription>
-              The saved quote is sent with its Square payment link. Text delivery requires recorded customer consent.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="rounded-lg border border-muted bg-muted/30 p-3 text-sm">
-              <div className="flex justify-between gap-3"><span className="text-muted-foreground">Customer</span><span className="text-right font-medium">{lead.firstName} {lead.lastName}</span></div>
-              <div className="mt-1 flex justify-between gap-3"><span className="text-muted-foreground">Saved total</span><span className="font-bold text-emerald-400">{leadHasQuote ? `$${parseFloat(lead.totalPrice || lead.basePrice || "0").toFixed(2)}` : "Not set"}</span></div>
-            </div>
-            <div>
-              <Label>Send by</Label>
-              <Select value={quoteDeliveryMethod} onValueChange={(value) => setQuoteDeliveryMethod(value as "email" | "sms" | "both")}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="email" disabled={isSyntheticOrInvalidEmail(lead.email) && !!lead.phone}>Email only</SelectItem>
-                  <SelectItem value="sms" disabled={!lead.phone}>Text message only</SelectItem>
-                  <SelectItem value="both" disabled={!lead.phone || isSyntheticOrInvalidEmail(lead.email)}>Email and text message</SelectItem>
-                </SelectContent>
-              </Select>
-              {(quoteDeliveryMethod === "sms" || quoteDeliveryMethod === "both") && !lead.smsConsent && (
-                <label className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
-                  <Checkbox checked={recordSmsConsent} onCheckedChange={(value) => setRecordSmsConsent(value === true)} />
-                  <span>I verified the customer gave verbal consent to receive this quote by text message.</span>
-                </label>
-              )}
-            </div>
-            <div>
-              <Label>Personal note (optional)</Label>
-              <Textarea className="mt-1 resize-none" rows={3} value={quoteNote} onChange={(event) => setQuoteNote(event.target.value)} placeholder="Thanks for reaching out — we're ready to help." />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowQuoteDeliveryDialog(false)}>Cancel</Button>
-            <Button
-              onClick={() => sendQuoteMutation.mutate(quoteDeliveryMethod)}
-              disabled={sendQuoteMutation.isPending || !leadHasQuote || ((quoteDeliveryMethod === "sms" || quoteDeliveryMethod === "both") && !lead.smsConsent && !recordSmsConsent)}
-              className="bg-cyan-600 text-white hover:bg-cyan-700"
-            >
-              {sendQuoteMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-              Send quote &amp; invoice
             </Button>
           </DialogFooter>
         </DialogContent>
