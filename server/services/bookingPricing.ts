@@ -68,6 +68,9 @@ export interface BookingPricingItemInput {
   priceMode?: "fixed" | "hourly" | "per_unit" | "quote";
   /** When false, this line is excluded from the bundle-discount base. */
   discountEligible?: boolean;
+  /** Server-only floor override for calculator lines that already enforce
+   * their own minimum. Never populate directly from an intake request. */
+  minimumLineSubtotal?: number;
   details?: Record<string, unknown>;
   /** Task #218 — labor-hours breakdown for the customer-facing card.
    *  Always populated by routes/bookings.ts:resolveItems before the
@@ -220,7 +223,9 @@ function computeLineSubtotal(item: BookingPricingItemInput, serviceMinimums = SE
   // priceMode is "quote" AND raw is 0 — those are still pending pricing and
   // are not yet a charge. Once a quoted line has any positive amount, we
   // clamp it up to the floor.
-  const floor = serviceMinimums[item.serviceCode];
+  const floor = item.minimumLineSubtotal != null && Number.isFinite(item.minimumLineSubtotal) && item.minimumLineSubtotal >= 0
+    ? item.minimumLineSubtotal
+    : serviceMinimums[item.serviceCode];
   if (floor != null && raw > 0 && raw < floor) {
     return round2(floor);
   }

@@ -33,15 +33,19 @@ try {
     INSERT INTO users VALUES('owner');
     CREATE TABLE leads(id varchar PRIMARY KEY,booking_id varchar,service_type text,quote_sent_at timestamptz,
       quote_snapshot jsonb,order_line_items jsonb,zone_snapshot jsonb,base_price numeric,total_price numeric,
-      bundle_discount_amount numeric,quote_notes text,last_quote_updated_at timestamptz,created_at timestamptz);
-    CREATE TABLE quote_approvals(lead_id varchar,booking_id varchar,submitted_by_user_id varchar,
-      approved_by_user_id varchar,approval_role text,status text,notes text,created_at timestamptz DEFAULT NOW());
-    INSERT INTO leads(id,base_price,total_price) VALUES('job',100,100);`);
+      bundle_discount_amount numeric,quote_notes text,last_quote_updated_at timestamptz,created_at timestamptz,
+      from_address text, to_address text, confirmed_from_address text, confirmed_to_address text,
+      confirmed_date text, move_date text, crew_size integer, confirmed_hours numeric,
+      total_special_items_fee numeric);
+    CREATE TABLE quote_approvals(lead_id varchar,booking_id varchar,quote_revision_id varchar,
+      submitted_by_user_id varchar, approved_by_user_id varchar,approval_role text,status text,notes text,
+      created_at timestamptz DEFAULT NOW());
+    INSERT INTO leads(id,base_price,total_price,service_type,from_address) VALUES('job',100,100,'moving','Address TBD');`);
   await ensureQuoteRevisionInfrastructure();
   const quoteId = (await database.query("SELECT id FROM quote_revisions WHERE lead_id='job'")).rows[0].id;
   await database.query("UPDATE quote_revisions SET status='approved',approved_at=NOW() WHERE id=$1", [quoteId]);
-  await database.exec(`INSERT INTO quote_revisions(id,lead_id,revision,status,subtotal,final_pre_tax_total,customer_total)
-    VALUES('replacement','job',2,'draft',200,200,200);`);
+  await database.exec(`INSERT INTO quote_revisions(id,lead_id,revision,status,subtotal,discount_total,final_pre_tax_total,customer_total,line_items)
+    VALUES('replacement','job',2,'draft',200,0,200,200,'[{"name":"Service","quantity":1,"unitPrice":200,"total":200}]'::jsonb);`);
   assert.equal((await getLatestApprovedQuote('job'))?.id, quoteId);
   const input = { quoteId: 'replacement', actor: { userId: 'owner', isOwner: true, canApproveStandard: true },
     overrideReason: 'Controlled synthetic quote approval test' };
@@ -173,14 +177,10 @@ try {
   await assert.rejects(approveQuoteRevision(input), /Only a draft/);
   await database.exec(`INSERT INTO quote_revisions(id,lead_id,revision,status) VALUES
     ('older-draft','job',3,'draft'),('newer-draft','job',4,'draft');`);
-  await assert.rejects(approveQuoteRevision({ ...input, quoteId: 'older-draft' }), /newer quote revision/);
+  await assert.rejects(approveQuoteRevision({ ...input, quoteId: 'older-draft' }), /Only the latest quote revision can be approved/);
   assert.equal((await getLatestApprovedQuote('job'))?.id, 'replacement');
   console.log('PASS: actual quote approval rolls back quote/history/lead together, retries and rejects duplicate approval');
-  await database.exec(`ALTER TABLE leads ADD COLUMN from_address text, ADD COLUMN to_address text,
-    ADD COLUMN confirmed_from_address text, ADD COLUMN confirmed_to_address text,
-    ADD COLUMN confirmed_date text, ADD COLUMN move_date text, ADD COLUMN crew_size integer,
-    ADD COLUMN confirmed_hours numeric, ADD COLUMN total_special_items_fee numeric;
-    INSERT INTO leads(id,service_type,crew_size,confirmed_hours,quote_notes,from_address)
+  await database.exec(`INSERT INTO leads(id,service_type,crew_size,confirmed_hours,quote_notes,from_address)
       VALUES('draft-race','moving',2,2,'Original notes','Address TBD');`);
   for (const update of ["crew_size=3", "confirmed_hours=4", "quote_notes='Changed notes'",
     "quote_snapshot='{\"serviceStops\":[]}'::jsonb", "booking_id='changed-booking'"]) {

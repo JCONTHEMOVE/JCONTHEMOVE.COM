@@ -7,7 +7,7 @@ export interface NotificationOptions {
   onClick?: () => void;
 }
 
-function urlBase64ToUint8Array(base64String: string) {
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = atob(base64);
@@ -18,10 +18,9 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
-class PushNotificationService {
+export class PushNotificationService {
   private swRegistration: ServiceWorkerRegistration | null = null;
-  private subscriptionPending: Promise<boolean> | null = null;
-  lastPushError: string | null = null;
+  private subscriptionAttempt: Promise<boolean> | null = null;
 
   isSupported(): boolean {
     return 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
@@ -50,13 +49,7 @@ class PushNotificationService {
     if (this.swRegistration) return this.swRegistration;
     if (!('serviceWorker' in navigator)) return null;
     try {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        this.swRegistration = await Promise.race([
-          navigator.serviceWorker.ready,
-          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Service worker timed out.')), 10000); }),
-        ]);
-      } finally { clearTimeout(timer); }
+      this.swRegistration = await navigator.serviceWorker.ready;
       return this.swRegistration;
     } catch {
       return null;
@@ -64,31 +57,60 @@ class PushNotificationService {
   }
 
   subscribeToServerPush(): Promise<boolean> {
-    if (!this.subscriptionPending) {
-      this.subscriptionPending = this.registerServerPush().finally(() => { this.subscriptionPending = null; });
+    if (!this.isSupported() || Notification.permission !== 'granted') {
+      return Promise.resolve(false);
     }
-    return this.subscriptionPending;
+    // Permission prompts and mount effects can both request enrollment.
+    if (!this.subscriptionAttempt) {
+      this.subscriptionAttempt = this.syncServerPush().finally(() => {
+        this.subscriptionAttempt = null;
+      });
+    }
+    return this.subscriptionAttempt;
   }
 
-  private async registerServerPush(): Promise<boolean> {
+  private async syncServerPush(): Promise<boolean> {
+    const controller = new AbortController();
+    let timeout = setTimeout(() => controller.abort(), 15000);
     try {
-      this.lastPushError = null;
-      if (!this.isSupported() || Notification.permission !== 'granted') throw new Error('Browser push is unsupported or permission has not been granted.');
-      const configResponse = await fetch('/api/notifications/vapid-public-key', { cache: 'no-store' });
-      if (!configResponse.ok) throw new Error('Server push configuration is not ready. Ask the owner to check push readiness.');
-      const { publicKey } = await configResponse.json();
+      // Read the runtime key before touching a working browser subscription.
+      const keyResponse = await fetch('/api/notifications/vapid-public-key', {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal: controller.signal,
+      });
+      if (!keyResponse.ok) return false;
+      const { publicKey } = await keyResponse.json();
+      if (typeof publicKey !== 'string' || !/^[A-Za-z0-9_-]{87}$/.test(publicKey)) return false;
       const applicationServerKey = urlBase64ToUint8Array(publicKey);
-      if (applicationServerKey.length !== 65 || applicationServerKey[0] !== 4) throw new Error('Server returned an invalid push public key.');
-      const registration = await this.getSwRegistration();
-      if (!registration) throw new Error('Service worker is unavailable.');
+      // Web Push uses an uncompressed P-256 public key.
+      if (applicationServerKey.length !== 65 || applicationServerKey[0] !== 4) return false;
+
+      const registration = await Promise.race([
+        this.getSwRegistration(),
+        new Promise<null>((resolve) => {
+          if (controller.signal.aborted) resolve(null);
+          else controller.signal.addEventListener('abort', () => resolve(null), { once: true });
+        }),
+      ]);
+      if (!registration || controller.signal.aborted || Notification.permission !== 'granted') return false;
+
+      // Native PushManager operations cannot be cancelled. Once migration
+      // starts, do not let the discovery deadline strand an unsubscribed user.
+      clearTimeout(timeout);
 
       let subscription = await registration.pushManager.getSubscription();
-      const existingKey = subscription?.options.applicationServerKey;
-      if (subscription && (!existingKey || new Uint8Array(existingKey).length !== applicationServerKey.length ||
-        !new Uint8Array(existingKey).every((value, index) => value === applicationServerKey[index]))) {
-        if (!await subscription.unsubscribe()) throw new Error('Could not replace the old push subscription. Retry enabling notifications.');
-        subscription = null;
+      if (subscription) {
+        const existingKey = subscription.options.applicationServerKey;
+        const bytes = existingKey ? new Uint8Array(existingKey) : null;
+        const matches = bytes?.length === applicationServerKey.length &&
+          applicationServerKey.every((byte, index) => bytes[index] === byte);
+        if (!matches) {
+          if (!await subscription.unsubscribe()) return false;
+          subscription = null;
+        }
       }
+      if (controller.signal.aborted || Notification.permission !== 'granted') return false;
       if (!subscription) {
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
@@ -96,19 +118,23 @@ class PushNotificationService {
         });
       }
 
+      const registrationController = new AbortController();
+      timeout = setTimeout(() => registrationController.abort(), 15000);
       const res = await fetch('/api/notifications/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ ...subscription.toJSON(), applicationServerKey: publicKey }),
+        signal: registrationController.signal,
+        body: JSON.stringify(subscription.toJSON()),
       });
 
-      if (!res.ok) throw new Error(`Could not save push subscription (${res.status}). Sign in and retry enabling notifications.`);
-      return true;
-    } catch (error) {
-      this.lastPushError = error instanceof Error ? error.message : 'Push subscription failed.';
-      console.warn(this.lastPushError);
+      return res.ok;
+    } catch {
+      // Avoid logging subscription endpoints or provider payloads.
+      console.warn('Browser push enrollment failed; retry when connected.');
       return false;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 

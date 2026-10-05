@@ -10,11 +10,17 @@ import router from '../server/routes/regionalAutomation';
  * unrelated regional migration are stubbed. Route, token SQL and attachment run. */
 export async function checkCloseoutRequestRecovery(executeSql:(sql:string)=>Promise<unknown>) {
   const priorQuery=pool.query,priorLead=storage.getLead,priorInvoice=squareInvoiceService.createInvoiceForLead;
-  await executeSql(`ALTER TABLE leads ADD COLUMN first_name text,ADD COLUMN last_name text,
-    ADD COLUMN confirmed_date text,ADD COLUMN move_date text,ADD COLUMN from_address text,ADD COLUMN to_address text,
-    ADD COLUMN final_invoice_url text,ADD COLUMN final_balance_amount numeric;
-    ALTER TABLE job_closeouts ADD COLUMN customer_token_hash text,ADD COLUMN customer_token_expires_at timestamptz,
-    ADD COLUMN square_invoice_id text;
+  await executeSql(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS first_name text;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_name text;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS confirmed_date text;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS move_date text;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS from_address text;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS to_address text;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS final_invoice_url text;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS final_balance_amount numeric;
+    ALTER TABLE job_closeouts ADD COLUMN IF NOT EXISTS customer_token_hash text;
+    ALTER TABLE job_closeouts ADD COLUMN IF NOT EXISTS customer_token_expires_at timestamptz;
+    ALTER TABLE job_closeouts ADD COLUMN IF NOT EXISTS square_invoice_id text;
     CREATE TABLE job_change_orders(id text,code text,description text,quantity numeric,unit_price numeric,total numeric,
       catalog_backed boolean,customer_acknowledged_at timestamptz,closeout_id text,created_at timestamptz);
     CREATE TABLE square_invoices(square_invoice_id text PRIMARY KEY,lead_id text,closeout_id text,quote_revision_id text,
@@ -52,8 +58,7 @@ export async function checkCloseoutRequestRecovery(executeSql:(sql:string)=>Prom
   } finally {
     await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
     pool.query=priorQuery;storage.getLead=priorLead;squareInvoiceService.createInvoiceForLead=priorInvoice;
-    await executeSql(`DELETE FROM job_financial_notifications; DROP TABLE square_invoices;
-      ALTER TABLE leads DROP COLUMN from_address,DROP COLUMN to_address,DROP COLUMN confirmed_date,DROP COLUMN move_date;
+    await executeSql(`DELETE FROM job_financial_notifications; DROP TABLE IF EXISTS square_invoices;
       UPDATE job_closeouts SET status='approved',square_invoice_id=NULL WHERE id='closeout'`);
   }
 }

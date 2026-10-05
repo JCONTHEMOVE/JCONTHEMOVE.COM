@@ -559,9 +559,10 @@ export async function getLatestApprovedQuote(leadId: string): Promise<QuoteRevis
   const result = await pool.query(`
     SELECT * FROM quote_revisions
     WHERE lead_id=$1
+      AND status IN ('approved', 'sent')
     ORDER BY revision DESC LIMIT 1
   `, [leadId]);
-  return result.rows[0] && ['approved', 'sent'].includes(result.rows[0].status) ? rowToQuote(result.rows[0]) : null;
+  return result.rows[0] ? rowToQuote(result.rows[0]) : null;
 }
 
 /** Validate saved amounts against the same approval policy without persisting

@@ -14,6 +14,8 @@ import crypto from "crypto";
 import { eq, and, asc, desc, or, inArray, ilike, gte, lte, sql } from "drizzle-orm";
 import { disburseBookingTokens, loadBookingRewardSettings } from "../services/disburseBookingTokens";
 import { bookingAddOnTotal, computeBookingReward } from "../services/bookingPricing";
+import { assertSnowDraftPaymentAllowed, isSnowCalculatorItem, resolveSnowBookingItem, snowWorkflowLeadFields } from "../services/snowBookingPricing";
+import { SnowPricingValidationError } from "../../shared/snowPricing";
 import { notifyAdminNewQuote, notifyCustomerBookingRequestReceived } from "../services/email";
 import { smsService } from "../services/sms";
 import { ZodError, z } from "zod";
@@ -681,6 +683,8 @@ type ServiceAddressPricingAdjustment = {
 };
 
 type BookingPricingWithAddressDiscount = BookingPricingResult & {
+  reviewRequired?: boolean;
+  reviewReasons?: string[];
   serviceAddressDiscount?: ServiceAddressDiscount;
   serviceAddressPricingAdjustment?: ServiceAddressPricingAdjustment;
   serviceAddressDiscountHint?: ReturnType<typeof getRouteDayDiscountEligibility>;
@@ -928,7 +932,11 @@ async function applyBookingGeographicPricing(input: {
     snapshot: input.pricing,
   });
   if (!preliminary) {
-    return { ...input.quote, routeEvidence, serviceabilityTotal: input.quote.finalTotal };
+    return {
+      ...input.quote, routeEvidence, serviceabilityTotal: input.quote.finalTotal,
+      reviewRequired: (input.pricingReviewReasons?.length ?? 0) > 0,
+      reviewReasons: input.pricingReviewReasons || [],
+    };
   }
 
   // Promotions are evaluated after the geographic and weekend premiums.
@@ -983,6 +991,8 @@ async function applyBookingGeographicPricing(input: {
     travelEligibility,
     routeEvidence,
     serviceabilityTotal: evaluated.finalPreTaxTotal,
+    reviewRequired: pricingReviewReasons.length > 0 || travelEligibility.requiresOwner,
+    reviewReasons: pricingReviewReasons,
   };
 }
 
@@ -1371,6 +1381,13 @@ function resolveItems(
     const cat = catalog.get(item.serviceCode);
     if (!cat) {
       throw new HttpError(`Unknown serviceCode: ${item.serviceCode}`, 400);
+    }
+    const snow = resolveSnowBookingItem(item);
+    if (snow) {
+      pricingInputs.push(snow.line);
+      persistInputs.push({ ...snow.line, serviceLabel: snow.line.label });
+      pricingReviewReasons.push(...snow.reviewReasons);
+      continue;
     }
     let unitPrice =
       item.unitPrice != null
@@ -2028,6 +2045,7 @@ router.post("/instant-booking/hold", async (req: Request, res: Response) => {
 router.post("/bookings/quote", async (req: Request, res: Response) => {
   try {
     const body = bookingQuoteRequestSchema.parse(req.body);
+    assertSnowDraftPaymentAllowed(body.items, body);
     const activePricing = await getActivePricingSnapshot();
     const catalog = await loadCatalog();
     const activeRateSelection = await resolveBookingRateContext(body, body.items, activePricing.snapshot);
@@ -2198,6 +2216,7 @@ router.post("/bookings/quote", async (req: Request, res: Response) => {
       success: true,
       quote: {
         ...result,
+        ...(persistInputs.some(isSnowCalculatorItem) ? { tokenEstimate: 0, rewardsPendingCompletion: true } : {}),
         pricingVersion: activePricing.snapshot.version,
         pricingSource: activePricing.source,
       },
@@ -2206,6 +2225,9 @@ router.post("/bookings/quote", async (req: Request, res: Response) => {
   } catch (err) {
     if (err instanceof ZodError) {
       return res.status(400).json({ error: "Invalid request", details: err.errors });
+    }
+    if (err instanceof SnowPricingValidationError) {
+      return res.status(400).json({ error: err.message });
     }
     if (err instanceof HttpError) {
       return res.status(err.status).json({ error: err.message });
@@ -2386,6 +2408,7 @@ async function autoProvisionTrashSubscriptionFromBooking(args: {
 router.post("/bookings", async (req: Request, res: Response) => {
   try {
     const body = bookingCreateRequestSchema.parse(req.body);
+    assertSnowDraftPaymentAllowed(body.items, body);
     const activePricing = await getActivePricingSnapshot();
     const catalog = await loadCatalog();
     const activeRateSelection = await resolveBookingRateContext(body, body.items, activePricing.snapshot);
@@ -2521,6 +2544,8 @@ router.post("/bookings", async (req: Request, res: Response) => {
     const requestUser = await getRequestUser(req);
     const requestAuthority = await getAuthorityForUser(requestUser);
     const isWorkerCreated = body.source === "crew_add_job";
+    const isSnowDraft = persistInputs.some(isSnowCalculatorItem);
+    if (isSnowDraft) quote = { ...quote, tokenEstimate: 0 };
     const marketingTracking = safeMarketingTracking(body.marketingTracking);
     const marketingPromoCode = body.promoCode ? body.promoCode.toUpperCase().trim() : "";
     const marketingReferralSlug = body.referralSlug ? body.referralSlug.toLowerCase().trim() : "";
@@ -2588,6 +2613,8 @@ router.post("/bookings", async (req: Request, res: Response) => {
               routeEvidence: quote.routeEvidence ?? null,
               serviceabilityTotal: quote.serviceabilityTotal ?? quote.finalTotal,
               tokenRedemption: quote.tokenRedemption ?? null,
+              reviewRequired: quote.reviewRequired ?? false,
+              reviewReasons: quote.reviewReasons || [],
               items: quote.items,
             },
           },
@@ -2772,6 +2799,8 @@ router.post("/bookings", async (req: Request, res: Response) => {
           bundleApplied: quote.bundleApplied ?? null,
           pricingAdjustments: quote.pricingAdjustments ?? null,
           travelEligibility: quote.travelEligibility ?? null,
+          reviewRequired: quote.reviewRequired ?? false,
+          reviewReasons: quote.reviewReasons || [],
           routeEvidence: quote.routeEvidence ?? null,
           serviceabilityTotal: quote.serviceabilityTotal ?? quote.finalTotal,
           marketplaceQuotePreview,
@@ -2816,6 +2845,7 @@ router.post("/bookings", async (req: Request, res: Response) => {
           confirmedHours,
           basePrice: money(quote.subtotal),
           totalPrice: money(quote.finalTotal),
+          ...(isSnowDraft ? snowWorkflowLeadFields(quote) : {}),
           quoteNotes: body.notes || null,
           lastQuoteUpdatedAt: new Date(),
           bookingId: booking.id,
@@ -2987,11 +3017,18 @@ router.post("/bookings", async (req: Request, res: Response) => {
       walletPay,
       lead: linkedLead,
       quoteRevision,
+      ...(isSnowDraft ? {
+        workflowStatus: linkedLead && quoteRevision ? "ready_for_review" : "needs_staff_recovery",
+        rewardsPendingCompletion: true,
+      } : {}),
       confirmationEmailSent,
     });
   } catch (err) {
     if (err instanceof ZodError) {
       return res.status(400).json({ error: "Invalid request", details: err.errors });
+    }
+    if (err instanceof SnowPricingValidationError) {
+      return res.status(400).json({ error: err.message });
     }
     if (err instanceof HttpError) {
       return res.status(err.status).json({ error: err.message });
@@ -3602,6 +3639,11 @@ router.post(
       if (!parent) return res.status(404).json({ error: "Booking not found" });
 
       const [linkedLead] = await db.select().from(leads).where(eq(leads.bookingId, parent.id)).limit(1);
+      const serviceItems = await db.select().from(bookingServiceItems).where(eq(bookingServiceItems.bookingId, parent.id));
+      const isSnowDraft = serviceItems.some(isSnowCalculatorItem);
+      if (isSnowDraft && !linkedLead) {
+        return res.status(409).json({ error: "Link this snow request to a lead and approve its quote revision before confirming." });
+      }
       if (linkedLead) {
         const revision = await getLatestQuoteRevision(linkedLead.id);
         if (!revision || !["approved", "sent"].includes(revision.status)) {
@@ -3697,6 +3739,10 @@ router.post(
     try {
       const body = overrideSchema.parse(req.body);
       const adminUserId = req.user?.id || (req.session as any)?.userId;
+      const serviceItems = await db.select().from(bookingServiceItems).where(eq(bookingServiceItems.bookingId, req.params.id));
+      if (serviceItems.some(isSnowCalculatorItem)) {
+        return res.status(409).json({ error: "Edit this snow request through its linked lead quote review so its approved revision and Square invoice stay aligned." });
+      }
 
       const result = await db.transaction(async (tx) => {
         const [parent] = await tx
