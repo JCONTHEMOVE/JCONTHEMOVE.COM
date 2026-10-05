@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { X, Download, Share } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useBottomOverlayInset } from "@/hooks/useBottomOverlayInset";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -12,6 +13,9 @@ export default function PwaInstallPrompt() {
   const [showBanner, setShowBanner] = useState(false);
   const [isIos, setIsIos] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const promptRef = useRef<HTMLDivElement>(null);
+  // Reserve space for the prompt so it never covers page content (e.g. the snow estimate).
+  useBottomOverlayInset(promptRef, "--jc-install-prompt-h", showBanner && !dismissed);
 
   useEffect(() => {
     // Don't show if already installed (running in standalone mode)
@@ -66,7 +70,12 @@ export default function PwaInstallPrompt() {
   if (!showBanner || dismissed) return null;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 p-3 animate-in slide-in-from-bottom-4 duration-300">
+    // Stacks directly above the cookie notice (if shown) instead of overlapping it.
+    <div
+      ref={promptRef}
+      className="fixed left-0 right-0 z-50 p-3 animate-in slide-in-from-bottom-4 duration-300"
+      style={{ bottom: "var(--jc-cookie-bar-h, env(safe-area-inset-bottom, 0px))" }}
+    >
       <div className="max-w-md mx-auto bg-slate-900 border border-blue-500/30 rounded-2xl shadow-2xl shadow-blue-900/40 p-4">
         <div className="flex items-start gap-3">
           <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center flex-shrink-0 text-white font-black text-lg">

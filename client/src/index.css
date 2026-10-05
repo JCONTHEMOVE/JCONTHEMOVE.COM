@@ -121,6 +121,29 @@
   }
 }
 
+/*
+ * Fixed bottom overlays (cookie notice + app install prompt) publish their
+ * heights via useBottomOverlayInset. Pad the document by that amount so the
+ * overlays push content up instead of covering it (e.g. the snow estimate
+ * card and driveway sliders on /snow-removal).
+ */
+:root {
+  --jc-bottom-overlays: calc(var(--jc-cookie-bar-h, 0px) + var(--jc-install-prompt-h, 0px));
+}
+
+body {
+  padding-bottom: var(--jc-bottom-overlays);
+}
+
+/* Desktop snow estimate column: keep the sticky card fully scrollable above any bottom overlays. */
+@media (min-width: 1024px) {
+  .snow-estimate-sticky {
+    max-height: calc(100vh - 2.5rem - var(--jc-bottom-overlays));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
 .safe-area-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
