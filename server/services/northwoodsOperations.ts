@@ -1,3 +1,4 @@
+import { normalizeCustomerPhone, phoneError } from "@shared/phone";
 import type { NorthwoodsAvailabilityInput } from "@shared/northwoodsMarketing";
 import { pool } from "../db";
 import { dispatchJob } from "../dispatch";
@@ -104,7 +105,7 @@ export async function getNorthwoodsDashboard() {
     activeCampaign: campaign.rows[0] || null,
     metrics: {
       confirmedOpenings: availability.rows.filter((row: any) => row.confirmed_at && row.status !== "closed" && Number(row.open_slots) > 0).length,
-      advertisingMarkets: marketRows.filter((row: any) => row.ads_enabled).length,
+      advertisingMarkets: marketRows.filter((row: any) => row.ads_enabled && row.verification_status === "verified").length,
       newReservations: reservations.rows.filter((row: any) => ["new", "needs_review", "changed"].includes(row.status)).length,
       importIssues: importIssues.rows.length,
       pendingScans: scans.rows.filter((row: any) => row.status === "pending_review").length,
@@ -177,6 +178,9 @@ export async function ignoreNorthwoodsReservation(id: string, actorUserId: strin
 }
 
 async function createOperationalJob(tx: TransactionClient, reservation: any, actorUserId: string) {
+  const normalizedPhone = normalizeCustomerPhone(reservation.customer_phone);
+  if (!normalizedPhone) throw new Error(phoneError(String(reservation.customer_phone || "")) || "Correct the customer phone number before confirming this reservation.");
+  reservation = { ...reservation, customer_phone: normalizedPhone };
   const marketResult = await tx.query<any>(`
     SELECT m.*,c.verification_status,c.ads_enabled FROM northwoods_markets m
     JOIN service_area_capabilities c ON c.code=m.service_area_code WHERE m.id=$1 LIMIT 1
@@ -292,6 +296,11 @@ export async function applyNorthwoodsReservationChanges(id: string, actorUserId:
       const durationHours = Number(changes.durationHours || reservation.duration_hours);
       const crewSize = Number(changes.crewSize || reservation.crew_size);
       const startAt = centralDateTimeToUtc(serviceDate, startTime);
+      if (changes.customerPhone !== undefined && changes.customerPhone !== reservation.customer_phone) {
+        const normalizedPhone = normalizeCustomerPhone(changes.customerPhone);
+        if (!normalizedPhone) throw new Error(phoneError(String(changes.customerPhone || "")) || "Correct the customer phone number.");
+        changes.customerPhone = normalizedPhone;
+      }
       await client.query(`
         UPDATE leads SET first_name=COALESCE($2,first_name),last_name=COALESCE($3,last_name),email=COALESCE($4,email),
           phone=COALESCE($5,phone),from_address=COALESCE($6,from_address),to_address=COALESCE($7,to_address),

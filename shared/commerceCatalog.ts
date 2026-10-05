@@ -1,3 +1,4 @@
+import { optionalPhoneNumberSchema } from "./schema";
 import { z } from "zod";
 import { CANONICAL_PRICING_2026_08, roundCurrency } from "./canonicalPricing";
 
@@ -117,7 +118,7 @@ export const commerceCheckoutSchema = z.object({
     firstName: z.string().trim().min(1).max(100),
     lastName: z.string().trim().min(1).max(100),
     email: z.string().email(),
-    phone: z.string().trim().min(7).max(30).nullable().optional(),
+    phone: optionalPhoneNumberSchema,
   }),
   serviceAddress: z.string().trim().max(500).nullable().optional(),
   serviceDate: z.string().trim().max(40).nullable().optional(),

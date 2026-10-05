@@ -1,3 +1,4 @@
+import { leadPhoneNumberSchema } from "@shared/schema";
 import { Router, Request, Response, NextFunction } from "express";
 import { randomUUID } from "crypto";
 import { db } from "../db";
@@ -80,7 +81,7 @@ const bundleScheduleSchema = z.object({
 
 const quoteRequestSchema = z.object({
   customerName: z.string().min(1),
-  phone: z.string().min(7),
+  phone: leadPhoneNumberSchema,
   email: z.string().email().optional().or(z.literal("")),
   address: z.string().min(3),
   city: z.string().optional(),

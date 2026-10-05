@@ -7,6 +7,7 @@ import { getActivePricingSnapshot, getPricingSnapshotByCode } from "./pricingVer
 import { emitCustomerLifecycleEvent } from "./customerLifecycle";
 import { storage } from "../storage";
 import { squareInvoiceService } from "./square-invoice";
+import { canRetryCloseoutInvoice } from './closeoutRecoveryAvailability';
 
 type CloseoutLead = {
   id: string;
@@ -127,6 +128,7 @@ export async function submitJobCloseout(input: {
   try {
     await client.query("BEGIN");
     await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`job-closeout:${input.leadId}`]);
+    await client.query('SELECT id FROM leads WHERE id=$1 FOR UPDATE', [input.leadId]);
     const lockedExisting = await client.query<{ status: string }>(`SELECT status FROM job_closeouts WHERE lead_id=$1`, [input.leadId]);
     if (["awaiting_customer", "approved", "balance_due", "paid", "refund_review"].includes(lockedExisting.rows[0]?.status || "")) {
       throw new Error("This closeout is already in customer, payment, or refund review and cannot be replaced by crew");
@@ -166,9 +168,11 @@ export async function submitJobCloseout(input: {
     }
     await client.query(
       `UPDATE leads SET status='completed', dispatch_state='completed', completed_at=COALESCE(completed_at,$2),
-              closeout_status=$3, financial_status=$4, final_balance_amount=$5, total_price=$6
+              closeout_status=$3, financial_status=$4, final_balance_amount=$5,
+              total_price=CASE WHEN $7::boolean THEN total_price ELSE $6::numeric END
         WHERE id=$1`,
-      [input.leadId, actualEnd, status, status === "awaiting_customer" ? "awaiting_customer_approval" : status, balanceDue, calculatedFinalTotal],
+      [input.leadId, actualEnd, status, status === "awaiting_customer" ? "awaiting_customer_approval" : status, balanceDue, calculatedFinalTotal,
+        process.env.JOB_PAYMENT_LEDGER_ENABLED === 'true'],
     );
     await client.query(
       `UPDATE job_assignments SET hours_worked=$2, updated_at=NOW() WHERE lead_id=$1`,
@@ -216,7 +220,7 @@ async function loadCloseoutByToken(token: string) {
        FROM job_change_orders WHERE closeout_id=$1 ORDER BY created_at`,
     [rows[0].id],
   );
-  return { ...rows[0], change_orders: changes.rows };
+  return { ...rows[0], canRetryInvoice:canRetryCloseoutInvoice(rows[0]), change_orders: changes.rows };
 }
 
 export async function getCustomerCloseout(token: string) {
@@ -267,26 +271,31 @@ export async function rejectCustomerCloseout(token: string, note: string) {
 
 export async function approveCustomerCloseout(token: string) {
   const closeout = await loadCloseoutByToken(token);
-  if (closeout.status !== "awaiting_customer") {
+  if (closeout.status !== "awaiting_customer"
+      && !(process.env.JOB_PAYMENT_LEDGER_ENABLED === 'true' && closeout.status === 'approved')) {
     throw new Error("This closeout is not ready for customer approval");
   }
-  const claimed = await pool.query<{ id: string }>(
+  const canonicalApproval = process.env.JOB_PAYMENT_LEDGER_ENABLED === 'true'
+    ? await (await import('./canonicalCloseoutApproval')).approveCanonicalCloseout(closeout.id) : null;
+  const claimed = canonicalApproval ? { rows: [{ id: closeout.id }] } : await pool.query<{ id: string }>(
     `UPDATE job_closeouts SET status='approved', customer_approved_at=COALESCE(customer_approved_at,NOW()), updated_at=NOW()
       WHERE id=$1 AND status='awaiting_customer' RETURNING id`,
     [closeout.id],
   );
   if (!claimed.rows[0]) throw new Error("This closeout approval is already being processed");
-  const balanceDue = Number(closeout.balance_due || 0);
+  const balanceDue = canonicalApproval?.balanceDue ?? Number(closeout.balance_due || 0);
   if (balanceDue <= 0) {
-    await pool.query(`UPDATE job_closeouts SET status='paid', customer_approved_at=COALESCE(customer_approved_at,NOW()), updated_at=NOW() WHERE id=$1`, [closeout.id]);
-    await pool.query(`UPDATE leads SET closeout_status='paid', financial_status='paid', payment_paid_at=COALESCE(payment_paid_at,NOW()) WHERE id=$1`, [closeout.lead_id]);
+    if (!canonicalApproval) {
+      await pool.query(`UPDATE job_closeouts SET status='paid', customer_approved_at=COALESCE(customer_approved_at,NOW()), updated_at=NOW() WHERE id=$1`, [closeout.id]);
+      await pool.query(`UPDATE leads SET closeout_status='paid', financial_status='paid', payment_paid_at=COALESCE(payment_paid_at,NOW()) WHERE id=$1`, [closeout.lead_id]);
+    }
     try {
       const { disburseJobTokens } = await import("./disburse-job-tokens");
       await disburseJobTokens(closeout.lead_id);
     } catch (error) {
       console.error("[job-closeout] zero-balance reward disbursement failed:", error);
     }
-    await emitCustomerLifecycleEvent({
+    if (!canonicalApproval) await emitCustomerLifecycleEvent({
       leadId: closeout.lead_id,
       type: "final_payment_received",
       eventKey: `${closeout.lead_id}:financially_complete:${closeout.id}`,
@@ -304,28 +313,39 @@ export async function approveCustomerCloseout(token: string) {
       lead,
       balanceDue,
       `Final balance after completion — actual hours and approved changes`,
-      undefined,
+      canonicalApproval?.invoiceDueDate,
       /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(lead.email) ? "email" : "none",
-      { purpose: "final_balance", closeoutId: closeout.id },
+      { purpose: "final_balance", closeoutId: closeout.id, quoteRevisionId: canonicalApproval?.quoteRevisionId,
+        idempotencyKey: canonicalApproval?.invoiceRequestKey },
     );
   } catch (error) {
-    await pool.query(
+    // Canonical approval is durable. A failed response may follow provider
+    // acceptance; preserve approval and let the same request resume safely.
+    if (!canonicalApproval) await pool.query(
       `UPDATE job_closeouts SET status='awaiting_customer', customer_approved_at=NULL, updated_at=NOW()
         WHERE id=$1 AND status='approved' AND square_invoice_id IS NULL`,
       [closeout.id],
     );
     throw error;
   }
-  await pool.query(
-    `UPDATE job_closeouts SET status='balance_due', customer_approved_at=COALESCE(customer_approved_at,NOW()),
+  if (canonicalApproval) {
+    const { attachCanonicalFinalInvoice } = await import('./reconciledCloseout');
+    const attached = await attachCanonicalFinalInvoice({ leadId:closeout.lead_id,closeoutId:closeout.id,
+      quoteId:canonicalApproval.quoteRevisionId,invoiceId:invoice.squareInvoiceId,invoiceUrl:invoice.invoiceUrl,balanceDue });
+    if (attached.status === 'paid') return { ok:true,status:'paid',balanceDue:0,invoiceUrl:null };
+    return { ok:true,status:'balance_due',balanceDue,invoiceUrl:invoice.invoiceUrl };
+  } else {
+    await pool.query(
+      `UPDATE job_closeouts SET status='balance_due', customer_approved_at=COALESCE(customer_approved_at,NOW()),
             square_invoice_id=$2, updated_at=NOW() WHERE id=$1`,
-    [closeout.id, invoice.squareInvoiceId],
-  );
-  await pool.query(
-    `UPDATE leads SET closeout_status='balance_due', financial_status='balance_due',
+      [closeout.id, invoice.squareInvoiceId],
+    );
+    await pool.query(
+      `UPDATE leads SET closeout_status='balance_due', financial_status='balance_due',
             final_invoice_url=$2, final_balance_amount=$3 WHERE id=$1`,
-    [closeout.lead_id, invoice.invoiceUrl, balanceDue],
-  );
+      [closeout.lead_id, invoice.invoiceUrl, balanceDue],
+    );
+  }
   await emitCustomerLifecycleEvent({
     leadId: closeout.lead_id,
     type: "final_invoice_sent",

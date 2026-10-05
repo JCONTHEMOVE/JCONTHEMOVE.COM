@@ -575,6 +575,72 @@ server.listen(port, '0.0.0.0', () => {
     app.use('/api', createJcOperationsRouter());
     console.log('Application routes registered successfully');
 
+    // Opt-in only after canonical ledger migration and owner acceptance.
+    if (process.env.JOB_PAYMENT_LEDGER_ENABLED === "true"
+        && process.env.JOB_PAYMENT_REWARDS_ENABLED === "true"
+        && process.env.JOB_PAYMENT_REWARD_WORKER_ENABLED === "true") {
+      let rewardTickRunning = false;
+      const rewardTick = async () => {
+        if (rewardTickRunning) return;
+        rewardTickRunning = true;
+        try {
+          const { enqueueCompletedPaidJobs, processOneJobReward } = await import('./services/jobRewardWorker');
+          await enqueueCompletedPaidJobs();
+          for (let count = 0; count < 10; count++) {
+            const result = await processOneJobReward();
+            if (result.status === 'idle' || result.status === 'disabled') break;
+          }
+        } catch {
+          console.error('[job-rewards] queue sweep failed; durable claims will retry');
+        } finally { rewardTickRunning = false; }
+      };
+      setTimeout(rewardTick, 15_000);
+      setInterval(rewardTick, 60_000);
+    }
+
+    // Invoice collection recovery stays off until migration/provider acceptance.
+    if (process.env.JOB_PAYMENT_LEDGER_ENABLED === 'true'
+        && process.env.SQUARE_JOB_PAYMENT_LEDGER_ENABLED === 'true'
+        && process.env.JOB_INVOICE_RECONCILIATION_ENABLED === 'true') {
+      let invoiceTickRunning = false;
+      const invoiceTick = async () => {
+        if (invoiceTickRunning) return;
+        invoiceTickRunning = true;
+        try {
+          const { enqueueInvoiceReconciliationBacklog } = await import('./services/jobInvoiceReconciliationQueue');
+          const { processOneJobInvoiceReconciliation } = await import('./services/jobInvoiceReconciliationWorker');
+          await enqueueInvoiceReconciliationBacklog();
+          for (let count = 0; count < 10; count++) {
+            const result = await processOneJobInvoiceReconciliation();
+            if (result.status === 'idle' || result.status === 'disabled') break;
+          }
+        } catch { console.error('[invoice-reconciliation] sweep failed; durable claims will retry'); }
+        finally { invoiceTickRunning = false; }
+      };
+      setTimeout(invoiceTick, 15_000);
+      setInterval(invoiceTick, 60_000);
+    }
+
+    // Canonical customer notices require explicit activation after acceptance.
+    if (process.env.JOB_PAYMENT_LEDGER_ENABLED === 'true'
+        && process.env.JOB_FINANCIAL_NOTIFICATIONS_ENABLED === 'true') {
+      let noticeTickRunning = false;
+      const noticeTick = async () => {
+        if (noticeTickRunning) return;
+        noticeTickRunning = true;
+        try {
+          const { processOneFinancialNotice } = await import('./services/jobFinancialNoticeWorker');
+          for (let count = 0; count < 10; count++) {
+            const result = await processOneFinancialNotice();
+            if (result.status === 'idle' || result.status === 'disabled') break;
+          }
+        } catch { console.error('[financial-notices] sweep failed; durable attempts retained'); }
+        finally { noticeTickRunning = false; }
+      };
+      setTimeout(noticeTick, 15_000);
+      setInterval(noticeTick, 60_000);
+    }
+
     // Lead-response safety net. The sweep is idempotent and guarded by a
     // Postgres advisory lock, so multiple Railway instances cannot deliver
     // the same 24-hour reminder or 48-hour red flag twice.

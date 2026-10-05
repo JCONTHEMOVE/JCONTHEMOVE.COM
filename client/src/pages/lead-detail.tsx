@@ -24,6 +24,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AdminJobPaymentShortcut } from "@/components/AdminJobPaymentShortcut";
 import { closeoutRepairs, type JobCloseoutRepair } from "@/lib/job-closeout-repair";
 import { JobOrderTicket } from "@/components/job-order-ticket";
+import { PaymentReconciliationPanel } from "@/components/PaymentReconciliationPanel";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { JobSetupWorkspace, type JobSetupSection } from "@/components/job-setup-workspace";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1828,6 +1829,8 @@ export default function LeadDetailPage() {
         )}
 
         {/* === 4-Tab Interface === */}
+        {hasAdminAccess ? <PaymentReconciliationPanel leadId={lead.id} /> : null}
+
         <ProjectIntakeSummary details={lead.details} status={lead.status} confirmedDate={lead.confirmedDate} />
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="mb-6 grid h-auto w-full grid-cols-2">

@@ -1,3 +1,4 @@
+import { leadPhoneNumberSchema } from "@shared/schema";
 // POST /api/pipeline/run — unified orchestrator endpoint (Task #170).
 //
 // Accepts the same booking shape as /api/bookings/quote but returns the
@@ -32,7 +33,7 @@ const inputSchema = z.object({
   items: z.array(itemSchema).min(1),
   customerName: z.string().optional(),
   customerEmail: z.string().optional(),
-  customerPhone: z.string().optional(),
+  customerPhone: z.union([z.literal(""), leadPhoneNumberSchema]).optional(),
   serviceAddress: z.string().optional(),
   requestedDate: z.string().optional(),
   notes: z.string().optional(),

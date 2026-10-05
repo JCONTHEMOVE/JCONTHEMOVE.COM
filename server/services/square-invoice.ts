@@ -3,6 +3,11 @@ import { storage } from "../storage";
 import type { InsertSquareInvoice, Lead } from "@shared/schema";
 import type { InvoicePurpose } from "@shared/regionalAutomation";
 import { getSquareAccessToken, getSquareEnvironment, getSquareLocationId } from "./squareConfig";
+import { squareInvoiceRequestKeys, persistSquareInvoiceOnce } from './squareInvoiceRetry';
+import { recordSquareInvoicePublication } from './squareInvoicePublication';
+import { assertCanonicalFinalInvoicePublication } from './canonicalInvoicePublication';
+import { cancelSquareInvoiceWithRecovery, recordSquareInvoiceCancellation } from './squareInvoiceCancellation';
+import { reserveSquareInvoiceIntent, recoverSquareInvoicePhase } from './squareInvoiceIntent';
 
 export type InvoiceDeliveryMethod = "email" | "sms" | "both" | "none";
 
@@ -23,6 +28,7 @@ export interface InvoiceRecipient {
 }
 
 export interface LeadInvoiceOptions {
+  idempotencyKey?: string;
   purpose?: InvoicePurpose;
   quoteRevisionId?: string | null;
   closeoutId?: string | null;
@@ -99,16 +105,24 @@ async function applyDualDelivery(
 export class SquareInvoiceService {
   private locationId: string | null = null;
 
+  constructor(private readonly dependencies: {
+    getClient?: () => Promise<SquareClient>;
+    getLocationId?: () => string | undefined | null;
+    invoiceStore?: Pick<typeof storage, 'getSquareInvoiceBySquareId' | 'createSquareInvoice'>;
+    recordPublication?: typeof recordSquareInvoicePublication;
+    recordCancellation?: typeof recordSquareInvoiceCancellation;
+  } = {}) {}
+
   async getLocationId(): Promise<string> {
     if (this.locationId) return this.locationId;
-    const configuredLocation = getSquareLocationId();
+    const configuredLocation = (this.dependencies.getLocationId || getSquareLocationId)();
     if (configuredLocation) {
       this.locationId = configuredLocation;
       return configuredLocation;
     }
 
     try {
-      const client = await getSquareClient();
+      const client = await (this.dependencies.getClient || getSquareClient)();
       const response = await client.locations.list();
       const locations = response.locations;
       if (!locations || locations.length === 0) {
@@ -130,9 +144,9 @@ export class SquareInvoiceService {
     }
   }
 
-  async createOrGetCustomer(email: string | null | undefined, name: string, phone?: string): Promise<string> {
+  async createOrGetCustomer(email: string | null | undefined, name: string, phone?: string, idempotencyKey?: string): Promise<string> {
     try {
-      const client = await getSquareClient();
+      const client = await (this.dependencies.getClient || getSquareClient)();
       const customerEmail = isDeliverableEmail(email) ? email.trim() : undefined;
 
       if (customerEmail) {
@@ -167,7 +181,7 @@ export class SquareInvoiceService {
         givenName: firstName,
         familyName: lastName,
         phoneNumber: phone,
-        idempotencyKey: `customer-${customerEmail || phone || name}-${Date.now()}`,
+        idempotencyKey: idempotencyKey || `customer-${customerEmail || phone || name}-${Date.now()}`,
       });
 
       return createResponse.customer!.id!;
@@ -186,75 +200,96 @@ export class SquareInvoiceService {
     deliveryMethod: InvoiceDeliveryMethod = "email",
     options: LeadInvoiceOptions = {},
   ): Promise<{ invoiceId: string; invoiceUrl: string; squareInvoiceId: string }> {
-    const client = await getSquareClient();
-    const locationId = await this.getLocationId();
+    const canonicalFinal = process.env.JOB_PAYMENT_LEDGER_ENABLED === 'true' && options.purpose === 'final_balance';
+    lead = { ...lead };
+    options = { ...options };
+    let intentLocation: string | undefined;
+    const invoiceDueDate = dueDate || this.getDefaultDueDate();
+    if (canonicalFinal) {
+      const configuredLocation=(this.dependencies.getLocationId || getSquareLocationId)();
+      if (!options.idempotencyKey || !options.quoteRevisionId || !options.closeoutId || !dueDate || !configuredLocation
+        || !Number.isSafeInteger(Math.round(amount*100)) || amount<=0 || amount!==Math.round(amount*100)/100) throw new Error('Canonical invoice intent requires stable financial inputs');
+      intentLocation=configuredLocation;
+      await reserveSquareInvoiceIntent(options.idempotencyKey,lead.id,{
+        version:1,environment:getSquareEnvironment(),locationId:configuredLocation,
+        quoteRevisionId:options.quoteRevisionId,closeoutId:options.closeoutId,amountCents:Math.round(amount*100),
+        dueDate:invoiceDueDate,deliveryMethod,firstName:lead.firstName || '',lastName:lead.lastName || '',
+        email:lead.email || null,phone:lead.phone || null,serviceType:lead.serviceType || null,description:description || null,
+      });
+    }
+    const client = await (this.dependencies.getClient || getSquareClient)();
+    const locationId = intentLocation || await this.getLocationId();
     const customerName = `${lead.firstName} ${lead.lastName}`;
-    const customerId = await this.createOrGetCustomer(lead.email, customerName, lead.phone || undefined);
+    const requestKeys = squareInvoiceRequestKeys(options.idempotencyKey);
+    const createCustomer = async () => ({ id:await this.createOrGetCustomer(lead.email, customerName, lead.phone || undefined, requestKeys.customer) });
+    const customer = canonicalFinal ? await recoverSquareInvoicePhase(options.idempotencyKey!,'customer',createCustomer) : await createCustomer();
+    const customerId = customer.id;
 
     const amountInCents = BigInt(Math.round(amount * 100));
 
-    const orderResponse = await client.orders.create({
-      idempotencyKey: `order-${lead.id}-${Date.now()}`,
-      order: {
-        locationId,
-        customerId,
-        lineItems: [
-          {
-            name: description || `Moving Service - ${lead.serviceType}`,
-            quantity: "1",
-            basePriceMoney: {
-              amount: amountInCents,
-              currency: "USD",
+    const createOrder = async () => {
+      const orderResponse = await client.orders.create({
+        idempotencyKey: requestKeys.order,
+        order: {
+          locationId,
+          customerId,
+          lineItems: [
+            {
+              name: description || `Moving Service - ${lead.serviceType}`,
+              quantity: "1",
+              basePriceMoney: {
+                amount: amountInCents,
+                currency: "USD",
+              },
             },
-          },
-        ],
-      },
-    });
+          ],
+        },
+      });
 
-    const orderId = orderResponse.order!.id!;
+      return { id:orderResponse.order?.id! };
+    };
+    const order = canonicalFinal ? await recoverSquareInvoicePhase(options.idempotencyKey!,'order',createOrder) : await createOrder();
+    const orderId = order.id;
     const squareDelivery = primarySquareDeliveryMethod(deliveryMethod);
 
-    const invoiceResponse = await client.invoices.create({
-      idempotencyKey: `invoice-${lead.id}-${Date.now()}`,
-      invoice: {
-        orderId,
-        locationId,
-        primaryRecipient: {
-          customerId,
-        },
-        paymentRequests: [
-          {
-            requestType: "BALANCE",
-            dueDate: dueDate || this.getDefaultDueDate(),
+    const createInvoice = async () => {
+      const invoiceResponse = await client.invoices.create({
+        idempotencyKey: requestKeys.invoice,
+        invoice: {
+          orderId,
+          locationId,
+          primaryRecipient: {
+            customerId,
           },
-        ],
-        deliveryMethod: squareDelivery,
-        acceptedPaymentMethods: {
-          card: true,
-          bankAccount: true,
-          squareGiftCard: true,
-          buyNowPayLater: false,
-          cashAppPay: true,
+          paymentRequests: [
+            {
+              requestType: "BALANCE",
+              dueDate: invoiceDueDate,
+            },
+          ],
+          deliveryMethod: squareDelivery,
+          acceptedPaymentMethods: {
+            card: true,
+            bankAccount: true,
+            squareGiftCard: true,
+            buyNowPayLater: false,
+            cashAppPay: true,
+          },
+          title: `Invoice - JC ON THE MOVE`,
+          description: description || `Moving service for ${customerName}`,
         },
-        title: `Invoice - JC ON THE MOVE`,
-        description: description || `Moving service for ${customerName}`,
-      },
-    });
+      });
 
-    const squareInvoice = invoiceResponse.invoice!;
+      return { id:invoiceResponse.invoice?.id!,version:invoiceResponse.invoice?.version!,invoiceNumber:invoiceResponse.invoice?.invoiceNumber ?? undefined };
+    };
+    const squareInvoice = canonicalFinal ? await recoverSquareInvoicePhase(options.idempotencyKey!,'invoice',createInvoice) : await createInvoice();
 
-    const publishResponse = await client.invoices.publish({
-      invoiceId: squareInvoice.id!,
-      version: squareInvoice.version!,
-      idempotencyKey: `publish-${squareInvoice.id}-${Date.now()}`,
-    });
-
-    const publishedInvoice = publishResponse.invoice!;
-
+    // Persist provider identity and financial bindings before making the invoice
+    // collectible. A lost publish response must leave a recoverable draft row.
     const invoiceData: InsertSquareInvoice = {
       leadId: safeLeadId(lead.id),
-      squareInvoiceId: publishedInvoice.id!,
-      squareInvoiceNumber: publishedInvoice.invoiceNumber ?? undefined,
+      squareInvoiceId: squareInvoice.id!,
+      squareInvoiceNumber: squareInvoice.invoiceNumber ?? undefined,
       squareOrderId: orderId,
       customerId,
       customerEmail: lead.email,
@@ -262,15 +297,44 @@ export class SquareInvoiceService {
       amount: amount.toString(),
       currency: "USD",
       description: description || `Moving service - ${lead.serviceType}`,
-      status: "sent",
-      invoiceUrl: publishedInvoice.publicUrl,
-      dueDate: dueDate || this.getDefaultDueDate(),
+      status: "draft",
+      dueDate: invoiceDueDate,
       purpose: options.purpose || "legacy_unknown",
       quoteRevisionId: options.quoteRevisionId || undefined,
       closeoutId: options.closeoutId || undefined,
     };
 
-    const savedInvoice = await storage.createSquareInvoice(invoiceData);
+    const savedInvoice = await persistSquareInvoiceOnce(invoiceData, {
+      find: id => (this.dependencies.invoiceStore || storage).getSquareInvoiceBySquareId(id),
+      create: data => (this.dependencies.invoiceStore || storage).createSquareInvoice(data),
+    });
+
+    if (['canceled', 'failed', 'refunded'].includes(savedInvoice.status)) {
+      throw new Error('Square invoice is closed; reconciliation is required before retrying');
+    }
+    if (process.env.JOB_PAYMENT_LEDGER_ENABLED === 'true' && options.purpose === 'final_balance') {
+      await assertCanonicalFinalInvoicePublication({ leadId: lead.id, amount,
+        closeoutId: options.closeoutId, quoteRevisionId: options.quoteRevisionId });
+      if (savedInvoice.status === 'sent') {
+        if (!savedInvoice.invoiceUrl || !savedInvoice.squareInvoiceId || savedInvoice.squareInvoiceId!==squareInvoice.id) {
+          throw new Error('Published invoice URL requires reconciliation');
+        }
+        return {invoiceId:savedInvoice.id,squareInvoiceId:savedInvoice.squareInvoiceId,invoiceUrl:savedInvoice.invoiceUrl};
+      }
+    }
+    const publishResponse = await client.invoices.publish({
+      invoiceId: squareInvoice.id!,
+      version: squareInvoice.version!,
+      idempotencyKey: requestKeys.publish,
+    });
+    const publishedInvoice = publishResponse.invoice!;
+    if (publishedInvoice?.id !== squareInvoice.id) {
+      throw new Error('Square publication identity requires reconciliation');
+    }
+    await (this.dependencies.recordPublication || recordSquareInvoicePublication)({
+      squareInvoiceId: publishedInvoice.id!, invoiceUrl: publishedInvoice.publicUrl,
+      invoiceNumber: publishedInvoice.invoiceNumber,
+    });
 
     return {
       invoiceId: savedInvoice.id,
@@ -289,7 +353,7 @@ export class SquareInvoiceService {
     deliveryMethod: InvoiceDeliveryMethod = "email",
     options: { idempotencyKey?: string; purpose?: InvoicePurpose } = {},
   ): Promise<{ invoiceId: string; invoiceUrl: string; squareInvoiceId: string }> {
-    const client = await getSquareClient();
+    const client = await (this.dependencies.getClient || getSquareClient)();
     const locationId = await this.getLocationId();
     const customerId = await this.createOrGetCustomer(email, name, phone);
 
@@ -402,7 +466,7 @@ export class SquareInvoiceService {
     deliveryMethod: InvoiceDeliveryMethod = "email",
     options: ItemizedInvoiceOptions = {},
   ): Promise<{ invoiceId: string; invoiceUrl: string; squareInvoiceId: string }> {
-    const client = await getSquareClient();
+    const client = await (this.dependencies.getClient || getSquareClient)();
     const locationId = await this.getLocationId();
     const customerName = `${lead.firstName} ${lead.lastName}`;
     const customerId = await this.createOrGetCustomer(lead.email, customerName, lead.phone || undefined);
@@ -536,7 +600,7 @@ export class SquareInvoiceService {
 
   async getInvoiceStatus(squareInvoiceId: string): Promise<string> {
     try {
-      const client = await getSquareClient();
+      const client = await (this.dependencies.getClient || getSquareClient)();
       const response = await client.invoices.get({ invoiceId: squareInvoiceId });
       return response.invoice?.status || "UNKNOWN";
     } catch (error: unknown) {
@@ -547,31 +611,17 @@ export class SquareInvoiceService {
   }
 
   async cancelInvoice(squareInvoiceId: string): Promise<void> {
-    try {
-      const client = await getSquareClient();
-      const getResponse = await client.invoices.get({ invoiceId: squareInvoiceId });
-      const version = getResponse.invoice?.version;
-
-      if (!version) {
-        throw new Error("Could not get invoice version");
-      }
-
-      await client.invoices.cancel({
-        invoiceId: squareInvoiceId,
-        version,
-      });
-
-      await storage.updateSquareInvoiceStatus(squareInvoiceId, "canceled");
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error("Error canceling invoice:", msg);
-      throw new Error(`Failed to cancel invoice: ${msg}`);
-    }
+    const client = await (this.dependencies.getClient || getSquareClient)();
+    await cancelSquareInvoiceWithRecovery(squareInvoiceId, {
+      get: async () => (await client.invoices.get({ invoiceId: squareInvoiceId }, { timeoutInSeconds: 10, maxRetries: 0 })).invoice,
+      cancel: async version => (await client.invoices.cancel({ invoiceId: squareInvoiceId, version }, { timeoutInSeconds: 10, maxRetries: 0 })).invoice,
+      recordCanceled: () => (this.dependencies.recordCancellation || recordSquareInvoiceCancellation)(squareInvoiceId),
+    });
   }
 
   async syncInvoiceStatus(squareInvoiceId: string): Promise<string> {
     try {
-      const client = await getSquareClient();
+      const client = await (this.dependencies.getClient || getSquareClient)();
       const response = await client.invoices.get({ invoiceId: squareInvoiceId });
       const invoice = response.invoice;
 

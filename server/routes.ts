@@ -1,3 +1,9 @@
+import { createSquareWebhookHandler } from './squareWebhook';
+import { recordJobRevenue } from "./services/jobRevenueAllocation";
+import { creditJobCash } from "./services/jobCashCredit";
+import { validateCustomerPhoneSubmission } from "./services/customerPhoneValidation";
+import { normalizeCustomerPhone, phoneError, unchangedLegacyPhone } from "@shared/phone";
+import { optionalPhoneNumberSchema } from "@shared/schema";
 import { quickRequestSchema, projectIntakeInput } from "./services/quickRequest";
 import { projectIntakeSchema, projectScheduleLabel, projectServiceLabel } from "@shared/projectRequest";
 import { manualDispatchMissingSetup } from "@shared/manualDispatchReadiness";
@@ -108,12 +114,16 @@ import { solanaTransferService } from "./services/solana-transfer";
 import { jupiterSwapService, SUPPORTED_TOKENS } from "./services/jupiter-swap";
 import { ensureMomsAccount } from "./services/generosityFund";
 import { classifyJobInvoicePayment } from "./services/jobPaymentClassification";
+import { createPaymentReconciliationHandler } from "./services/paymentReconciliationHandler";
+import { createFinancialNoticeReviewHandler } from "./services/financialNoticeReviewHandler";
 import { grantLotteryTicketsForActivity } from "./services/disburse-job-tokens";
 import { getDepositInfo, extractZip } from "@shared/depositRules";
 import { MIN_REDEMPTION_TOKENS, REDEMPTION_INCREMENT, roundToIncrement, validateRedemption, tokensToDollars } from "@shared/tokenRedemptionRules";
 import { calculateBtcLightningOffer } from "@shared/btcLightningOffer";
 import { emitJobEvent, eventTypeForStatus, deliverCrewAnnouncementToWebhooks, getJobEventWebhookReadiness } from "./services/jobEventBus";
 import { notificationService } from "./services/notification";
+import { getPushReadiness, pushConfig } from './services/pushConfig';
+import { createOwnerPushTestHandlers, OWNER_PUSH_TEST_ID } from './services/ownerPushTest';
 import { buildJobFlowRecords, jobBelongsToCrew, toCrewBoardFlow } from "./services/jobFlow";
 import { projectWorkerOrder, type WorkerOrderContext } from "./services/workerOrderVisibility";
 import { acceptAssignedJob, AssignedJobRequestError, declineAssignedJob, listPendingJobRequests } from "./services/assignedJobRequests";
@@ -311,7 +321,7 @@ async function recordVerbalSmsConsent(leadId: string, actorId: string | null): P
 
 const staffJobIntakeSchema = z.object({
   customerName: z.string().trim().min(1, "Customer name is required").max(120),
-  phone: z.string().trim().min(7, "A customer phone number is required").max(32),
+  phone: leadPhoneNumberSchema,
   email: z.union([z.string().trim().email("Enter a valid email address"), z.literal("")]).optional()
     .transform((value) => value?.trim() || ""),
   serviceCode: z.enum(["load_unload", "pack_unpack", "delivery", "ubox", "junk", "commercial"]),
@@ -1764,6 +1774,7 @@ async function findOrCreateGoogleUser(profile: {
 }
 
 export async function registerRoutes(app: Express, httpServer: Server = createServer(app)): Promise<Server> {
+  app.use(validateCustomerPhoneSubmission);
   try {
     const { registerAshleyShopRoutes } = await import("./routes/ashleyShop");
     await registerAshleyShopRoutes(app);
@@ -1775,7 +1786,9 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
   try {
     const { ensureRegionalAutomationSchema } = await import("./services/regionalAutomationMigration");
     await ensureRegionalAutomationSchema();
+    if (process.env.QUICK_BOOK_ENABLED === "true") await ensureQuickBookingSchema();
   } catch (error) {
+    if (process.env.QUICK_BOOK_ENABLED === "true") throw error;
     console.error("regional automation migration error (non-fatal):", error);
     if (process.env.QUICK_BOOK_ENABLED === "true") throw error;
   }
@@ -3463,7 +3476,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     password: z.string().min(8, "Password must be at least 8 characters").regex(/^(?=.*[A-Za-z])(?=.*\d)/, "Password must contain letters and numbers"),
     firstName: z.string().min(1, "First name is required"),
     lastName: z.string().min(1, "Last name is required"),
-    phoneNumber: z.string().min(10, "Phone number is required"),
+    phoneNumber: leadPhoneNumberSchema,
     rewardsEnrolled: z.boolean().optional().default(false),
     dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be in YYYY-MM-DD format"),
     tosAccepted: z.boolean().refine(v => v === true, { message: "You must accept the Terms of Service to register" }),
@@ -3848,7 +3861,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     password: z.string().min(8, "Password must be at least 8 characters"),
     firstName: z.string().min(1, "First name is required"),
     lastName: z.string().min(1, "Last name is required"),
-    phoneNumber: z.string().optional(),
+    phoneNumber: optionalPhoneNumberSchema,
     rewardsEnrolled: z.boolean().optional().default(false),
     dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be in YYYY-MM-DD format"),
     tosAccepted: z.boolean().refine(v => v === true, { message: "You must accept the Terms of Service to register" }),
@@ -5316,7 +5329,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     firstName:       z.string().trim().min(1, "First name is required"),
     lastName:        z.string().trim().default("Customer"),
     email:           z.string().trim().email().optional().or(z.literal("")).default(""),
-    phone:           z.string().trim().min(7, "A valid phone number is required"),
+    phone:           leadPhoneNumberSchema,
     address:         z.string().trim().min(8, "A full street address is required (e.g. 123 Main St, City, MI)"),
     standardWindows: z.coerce.number().int().min(0).default(0),
     largeWindows:    z.coerce.number().int().min(0).default(0),
@@ -10085,12 +10098,13 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
       const closeoutRows = leadIds.length
         ? await pool.query(
             `SELECT id, lead_id, status, actual_hours, calculated_final_total,
-                    deposit_applied, balance_due, square_invoice_id, updated_at
+                    deposit_applied, balance_due, square_invoice_id, customer_approved_at, updated_at
                FROM job_closeouts WHERE lead_id = ANY($1::varchar[])`,
             [leadIds],
           ).then((result) => result.rows).catch(() => [])
         : [];
-      const closeoutByLead = new Map(closeoutRows.map((row) => [row.lead_id, row]));
+      const { canRetryCloseoutInvoice } = await import('./services/closeoutRecoveryAvailability');
+      const closeoutByLead = new Map(closeoutRows.map((row) => [row.lead_id, { ...row, canRetryInvoice:canRetryCloseoutInvoice(row) }]));
       const crewIds = Array.from(new Set(customerLeads.flatMap((lead) => Array.isArray(lead.crewMembers) ? lead.crewMembers : [])));
       const crewRows = crewIds.length
         ? await pool.query<{ id: string; first_name: string | null; last_name: string | null }>(
@@ -12021,6 +12035,11 @@ Thank you for your business!
         return res.status(404).json({ error: "Lead not found" });
       }
 
+      if (updateData.phone !== undefined && updateData.phone !== currentLead.phone && !unchangedLegacyPhone(String(updateData.phone ?? ""), currentLead.phone)) {
+        const message = typeof updateData.phone === "string" ? phoneError(updateData.phone) : "Enter a complete 10-digit phone number.";
+        if (message) return res.status(400).json({ error: message, fieldErrors: { phone: message } });
+        updateData.phone = normalizeCustomerPhone(updateData.phone);
+      }
       // Privileged-action guard: modifying payout-driving fields requires admin or business_owner.
       const PAYOUT_FIELDS = [
         "totalPrice", "basePrice", "tokenAllocation", "crewMembers", "crewBonusFlags", "confirmedHours",
@@ -12590,6 +12609,10 @@ Thank you for your business!
   const jobPlanDetailsSchema = z.object({
     accessCode: z.string().trim().max(1000).optional().default(""),
     entryInstructions: z.string().trim().max(4000).optional().default(""),
+    pickupAccessCode: z.string().trim().max(1000).optional().default(""),
+    pickupInstructions: z.string().trim().max(4000).optional().default(""),
+    destinationAccessCode: z.string().trim().max(1000).optional().default(""),
+    destinationInstructions: z.string().trim().max(4000).optional().default(""),
     stairsFlights: z.number().int().min(0).max(50).optional().default(0),
     hasElevator: z.boolean().optional().default(false),
     workScope: z.enum(["load_only", "unload_only", "load_unload"]).optional().default("load_only"),
@@ -12598,6 +12621,11 @@ Thank you for your business!
       address: z.string().trim().min(1).max(500),
       note: z.string().trim().max(1000).optional().default(""),
     })).max(8).optional().default([]),
+    propertySize: z.string().trim().max(120).optional().default(""),
+    bedrooms: z.number().int().min(0).max(20).nullable().optional().default(null),
+    truckSize: quickBookTruckSizeSchema.optional().default("none"),
+    inventory: quickBookInventorySchema.optional(),
+    specialItems: quickBookSpecialItemsSchema.optional(),
   });
 
   const jobSetupSchema = z.object({
@@ -12641,6 +12669,11 @@ Thank you for your business!
 
       const currentLead = await storage.getLead(req.params.id);
       if (!currentLead) return res.status(404).json({ error: "Lead not found" });
+      if (!unchangedLegacyPhone(input.phone, currentLead.phone) && input.phone.trim() !== (currentLead.phone || "").trim()) {
+        const message = phoneError(input.phone);
+        if (message) return res.status(400).json({ error: message, fieldErrors: { phone: message } });
+        input.phone = normalizeCustomerPhone(input.phone)!;
+      }
       if (input.arrivalWindow !== undefined
         && input.arrivalWindow !== (currentLead.arrivalWindow || "")
         && input.arrivalWindow !== ""
@@ -12722,9 +12755,20 @@ Thank you for your business!
         // designation when that worker is removed from the assigned crew.
         if (input.crewMembers !== undefined && currentLead.driverUserId && !effectiveDriver) patch.driverUserId = null;
         if (input.jobPlanDetails !== undefined) {
-          const { accessCode, entryInstructions, ...operationalDetails } = input.jobPlanDetails;
+          const {
+            accessCode,
+            entryInstructions,
+            pickupAccessCode,
+            pickupInstructions,
+            destinationAccessCode,
+            destinationInstructions,
+            ...operationalDetails
+          } = input.jobPlanDetails;
           patch.jobPlanDetails = { ...((currentLead.jobPlanDetails as Record<string, unknown>) || {}), ...operationalDetails };
-          patch.accessInstructionsCiphertext = encryptJobAccessDetails({ accessCode, entryInstructions });
+          patch.accessInstructionsCiphertext = encryptJobAccessDetails({
+            accessCode: [accessCode, pickupAccessCode && `Pickup: ${pickupAccessCode}`, destinationAccessCode && `Destination: ${destinationAccessCode}`].filter(Boolean).join("\n"),
+            entryInstructions: [entryInstructions, pickupInstructions && `Pickup: ${pickupInstructions}`, destinationInstructions && `Destination: ${destinationInstructions}`].filter(Boolean).join("\n"),
+          });
         }
 
         if (input.quote) {
@@ -13060,7 +13104,16 @@ Thank you for your business!
       const updates: Record<string, string> = {};
       if (firstName !== undefined) updates.firstName = firstName;
       if (lastName !== undefined) updates.lastName = lastName;
-      if (phone !== undefined) updates.phone = phone;
+      if (phone !== undefined) {
+        const existing = await storage.getLead(id);
+        if (!existing) return res.status(404).json({ error: "Lead not found" });
+        if (phone === existing.phone || unchangedLegacyPhone(String(phone ?? ""), existing.phone)) updates.phone = existing.phone;
+        else {
+          const message = typeof phone === "string" ? phoneError(phone) : "Enter a complete 10-digit phone number.";
+          if (message) return res.status(400).json({ error: message, fieldErrors: { phone: message } });
+          updates.phone = normalizeCustomerPhone(phone)!;
+        }
+      }
       if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No fields to update" });
       const updatedLead = await storage.updateLeadQuote(id, updates);
       if (!updatedLead) return res.status(404).json({ error: "Lead not found" });
@@ -15770,14 +15823,39 @@ Thank you for your business!
 
   // Return VAPID public key for client-side push subscription setup
   app.get("/api/notifications/vapid-public-key", (req, res) => {
-    const key = process.env.VAPID_PUBLIC_KEY;
-    if (!key) return res.status(503).json({ error: "Push notifications not configured" });
-    res.json({ publicKey: key });
+    res.setHeader('Cache-Control', 'no-store');
+    if (!pushConfig.ready) return res.status(503).json({ error: "Push notifications not configured" });
+    res.json({ publicKey: pushConfig.publicKey });
   });
+
+  const ownerPushTest = createOwnerPushTestHandlers({
+    getUser: id => storage.getUser(id),
+    readiness: getPushReadiness,
+    claim: async userId => {
+      const result = await pool.query(`INSERT INTO job_alert_deliveries
+        (event_id, recipient_user_id, channel, status, error_message, metadata)
+        VALUES ($1, $2, 'push', 'skipped', 'Owner test reserved; delivery not yet confirmed.', $3::jsonb)
+        ON CONFLICT (event_id, recipient_user_id, channel) DO NOTHING RETURNING event_id`,
+        [OWNER_PUSH_TEST_ID, userId, JSON.stringify({ ownerOnly: true, test: true, source: 'JC-87' })]);
+      return (result.rowCount || 0) === 1;
+    },
+    send: (id, payload) => notificationService.sendPushNotification(id, payload),
+    record: async (userId, result) => {
+      await pool.query(`UPDATE job_alert_deliveries SET status = $3, error_message = $4, updated_at = NOW()
+        WHERE event_id = $1 AND recipient_user_id = $2 AND channel = 'push'`,
+        [OWNER_PUSH_TEST_ID, userId, result.status, result.error || null]);
+    },
+  });
+  app.get('/api/admin/notifications/push-readiness', isAuthenticated, ownerPushTest.readiness);
+  app.post('/api/admin/notifications/owner-push-test', isAuthenticated, ownerPushTest.send);
 
   app.post("/api/notifications/subscribe", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = (req.session as any).userId;
+      const userId = req.user?.id || req.currentUser?.id || req.session?.userId;
+      if (!pushConfig.ready) return res.status(503).json({ error: 'Push configuration is not ready.' });
+      if (req.body?.applicationServerKey !== pushConfig.publicKey) {
+        return res.status(409).json({ error: 'Push key changed. Reload and enable notifications again.' });
+      }
       const { pushSubscriptionSchema } = await import("@shared/schema");
       const subscription = pushSubscriptionSchema.parse(req.body);
       
@@ -23849,13 +23927,21 @@ Thank you for your business!
       const prevStatus = invoice.status;
       const newStatus = await squareInvoiceService.syncInvoiceStatus(invoice.squareInvoiceId);
 
-      // If status just transitioned to paid, mint JCMOVES USD and record revenue split
-      if (newStatus === 'paid' && prevStatus !== 'paid' && invoice.leadId) {
+      // Invoice PAID is not job paid-in-full. Canonical mode settles only from
+      // verified payment records, so status sync must not bypass that pipeline.
+      if (newStatus === 'paid' && prevStatus !== 'paid' && invoice.leadId
+          && process.env.JOB_PAYMENT_LEDGER_ENABLED !== 'true') {
         const lead = await storage.getLead(invoice.leadId);
-        const amountUsd = parseFloat(lead?.totalPrice || lead?.basePrice || invoice.amount || "0");
-        if (amountUsd > 0) {
-          await recordRevenueSplit(amountUsd, invoice.leadId, 'invoice_sync');
-          await creditJcMovesUsd(invoice.leadId, amountUsd, 'invoice_sync');
+        if (lead) {
+          const payment = classifyJobInvoicePayment({
+            invoiceAmount: invoice.amount, jobTotal: lead.totalPrice,
+            depositAmount: lead.depositAmount, depositRequired: lead.depositRequired,
+            depositAlreadyPaid: lead.depositPaid, invoicePurpose: invoice.purpose,
+          });
+          if (payment.kind === 'paid_in_full') {
+            await recordRevenueSplit(payment.jobTotal, invoice.leadId, 'invoice_sync');
+            await creditJcMovesUsd(invoice.leadId, payment.jobTotal, 'invoice_sync');
+          }
         }
       }
 
@@ -23935,6 +24021,9 @@ Thank you for your business!
         depositRequired: lead.depositRequired,
         depositAlreadyPaid: lead.depositPaid,
       });
+      if (payment.kind === "partial") {
+        return res.json({ success: true, leadId, finalStatus: lead.status, paymentKind: payment.kind, dispatchState: "skipped", log });
+      }
       const simulatedStatus = payment.kind === "deposit" ? "confirmed" : "paid";
       await db.update(leads)
         .set({
@@ -23984,401 +24073,10 @@ Thank you for your business!
   // Listens for Square invoice events (payment_made, updated, etc.).
   // SQUARE_WEBHOOK_SIGNATURE_KEY must be set; requests without a valid
   // HMAC-SHA256 signature are rejected with 401.
-  app.post("/api/webhooks/square", async (req: Request, res: Response) => {
-    let claimedWebhookEventId: string | null = null;
-    let claimedPaymentInvoiceId: string | null = null;
-    try {
-      const rawBody = req.body as Buffer;
-      const bodyStr = rawBody.toString("utf8");
-
-      let event: Record<string, unknown>;
-      try {
-        event = JSON.parse(bodyStr) as Record<string, unknown>;
-      } catch {
-        return res.status(400).json({ error: "Invalid JSON body" });
-      }
-
-      const signatureKey = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY;
-      if (!signatureKey) {
-        console.error("[Square webhook] SQUARE_WEBHOOK_SIGNATURE_KEY is not configured — rejecting event");
-        return res.status(401).json({ error: "Webhook signature key not configured" });
-      }
-
-      const signature = req.headers["x-square-hmacsha256-signature"];
-      if (!signature || typeof signature !== "string") {
-        console.warn("[Square webhook] Missing or malformed signature header");
-        return res.status(401).json({ error: "Missing signature" });
-      }
-
-      const notificationUrl =
-        process.env.SQUARE_WEBHOOK_URL || `https://${req.headers.host}/api/webhooks/square`;
-      const hmac = crypto.createHmac("sha256", signatureKey);
-      hmac.update(notificationUrl + bodyStr);
-      const expectedBuf = hmac.digest();
-      const receivedBuf = Buffer.from(signature, "base64");
-      const signatureValid =
-        expectedBuf.length === receivedBuf.length &&
-        crypto.timingSafeEqual(expectedBuf, receivedBuf);
-      if (!signatureValid) {
-        console.warn("[Square webhook] Signature mismatch — rejecting event");
-        return res.status(401).json({ error: "Invalid signature" });
-      }
-
-      const eventType = typeof event.type === "string" ? event.type : "";
-      const data = (event.data as Record<string, unknown> | undefined)?.object as Record<string, unknown> | undefined;
-
-      const webhookEventId = typeof event.event_id === "string"
-        ? event.event_id
-        : typeof event.id === "string" ? event.id : "";
-      if (!webhookEventId) return res.status(400).json({ error: "Square event id is required" });
-      const eventObject = (data?.invoice || data?.payment || data?.refund || data?.dispute || data?.gift_card_activity) as Record<string, unknown> | undefined;
-      const squareObjectId = typeof eventObject?.id === "string" ? eventObject.id : null;
-      const { claimSquareWebhookEvent, completeSquareWebhookEvent } = await import("./services/squareWebhookIdempotency");
-      const webhookClaim = await claimSquareWebhookEvent({ eventId: webhookEventId, eventType, squareObjectId, rawBody: bodyStr });
-      if (webhookClaim === "processed") {
-        return res.status(200).json({ received: true, duplicate: true });
-      }
-      if (webhookClaim === "in_progress") {
-        res.setHeader("Retry-After", "10");
-        return res.status(503).json({ received: false, retry: true });
-      }
-      claimedWebhookEventId = webhookEventId;
-
-      console.log(`[Square webhook] Received event: ${eventType}`);
-
-      const { squareInvoiceService } = await import("./services/square-invoice");
-
-      if (eventType === "catalog.version.updated") {
-        const { scanSquareCatalogDrift } = await import("./services/commerceSquareCatalog");
-        const drift = await scanSquareCatalogDrift();
-        console.log(`[Square webhook] Catalog drift scan checked ${drift.checked} managed objects; ${drift.drift.length} require review`);
-      } else if (eventType === "gift_card.activity.created" || eventType === "gift_card.activity.updated") {
-        const { handleSquareGiftCardActivityEvent } = await import("./services/giftCardBonuses");
-        await handleSquareGiftCardActivityEvent(data?.gift_card_activity || data?.giftCardActivity);
-      } else if (eventType === "refund.updated") {
-        const { handleSquareGiftCardRefundEvent } = await import("./services/giftCardBonuses");
-        await handleSquareGiftCardRefundEvent(data?.refund);
-      } else if (eventType === "dispute.created" || eventType === "dispute.updated") {
-        const { handleSquareGiftCardDisputeEvent } = await import("./services/giftCardBonuses");
-        await handleSquareGiftCardDisputeEvent(data?.dispute);
-      } else if (eventType === "invoice.payment_made" || eventType === "invoice.paid") {
-        const invoice = (data?.invoice as Record<string, unknown> | undefined);
-        const squareInvoiceId = typeof invoice?.id === "string" ? invoice.id : undefined;
-
-        // INVARIANT — JCMOVES USD only mints on payment RECEIVED IN FULL.
-        // `invoice.payment_made` fires on EVERY payment, including partial
-        // ones (e.g. $50 paid on a $300 invoice). Only `invoice.paid` is
-        // guaranteed fully-paid. We gate ALL wallet-affecting work below
-        // on the actual invoice status from Square's payload — accepted
-        // statuses are PAID and the legacy alias "paid". This prevents a
-        // partial payment from minting the full shop-card grant, marking
-        // the lead paid, dispatching crew, or recording revenue.
-        const invoiceStatus = typeof invoice?.status === "string" ? invoice.status.toUpperCase() : "";
-        const isFullyPaid = invoiceStatus === "PAID" || eventType === "invoice.paid";
-        if (!isFullyPaid) {
-          console.log(`[Square webhook] ${eventType} for ${squareInvoiceId} — invoice status=${invoiceStatus || "unknown"}, NOT fully paid, skipping wallet/lead/dispatch work (waiting for invoice.paid)`);
-          await completeSquareWebhookEvent(webhookEventId);
-          return res.json({ received: true, skipped: "partial_payment" });
-        }
-
-        if (squareInvoiceId) {
-          const { claimSquareInvoicePaymentEffect } = await import("./services/squareWebhookIdempotency");
-          if (!(await claimSquareInvoicePaymentEffect(squareInvoiceId, webhookEventId))) {
-            await completeSquareWebhookEvent(webhookEventId);
-            return res.status(200).json({ received: true, duplicateInvoicePayment: true });
-          }
-          claimedPaymentInvoiceId = squareInvoiceId;
-          // Task #199 — fire any shop-card wallet grants tied to this
-          // invoice. This runs FIRST and is idempotent so duplicate
-          // webhook deliveries can't double-mint. Gated on isFullyPaid
-          // above per the JCMOVES USD invariant.
-          try {
-            const { rows: grantSourceRows } = await pool.query<{
-              source_type: string;
-              source_id: string;
-            }>(
-              `SELECT DISTINCT source_type, source_id
-                 FROM wallet_credit_grants
-                WHERE square_invoice_id = $1`,
-              [squareInvoiceId],
-            );
-            if (grantSourceRows.length > 0) {
-              const { grantWalletCreditForSource } = await import("./services/bundleBilling");
-              for (const src of grantSourceRows) {
-                await grantWalletCreditForSource({
-                  sourceType: src.source_type as "lead" | "lawn_care_quote",
-                  sourceId: src.source_id,
-                  paymentReference: `square_invoice:${squareInvoiceId}`,
-                  squareInvoiceId,
-                });
-              }
-            }
-          } catch (grantErr) {
-            console.error("[Square webhook] shop-card grant disbursement failed:", (grantErr as Error).message);
-          }
-
-          const localInvoice = await storage.getSquareInvoiceBySquareId(squareInvoiceId);
-          if (localInvoice) {
-            await storage.updateSquareInvoiceStatus(squareInvoiceId, "paid", new Date());
-            try {
-              const { markCommerceCheckoutPaid } = await import("./services/commerceCheckout");
-              await markCommerceCheckoutPaid(squareInvoiceId);
-            } catch (checkoutError) {
-              console.error("[Square webhook] commerce checkout update failed:", checkoutError);
-              throw checkoutError;
-            }
-            console.log(`[Square webhook] Invoice ${squareInvoiceId} marked as paid`);
-
-            if (localInvoice.squareOrderId) {
-              try {
-                const { recordSquareGiftCardTenderForOrder } = await import("./services/giftCardBonuses");
-                await recordSquareGiftCardTenderForOrder(localInvoice.squareOrderId);
-              } catch (tenderError) {
-                console.error("[Square webhook] Gift-card tender accounting failed:", (tenderError as Error).message);
-                throw tenderError;
-              }
-            }
-
-            if (localInvoice.leadId) {
-              const lead = await storage.getLead(localInvoice.leadId);
-              if (lead) {
-                type SquareMoneyField = { amount?: number; currency?: string };
-                type SquareInvoicePayload = { total_money?: SquareMoneyField };
-                const squareCents = (invoice as SquareInvoicePayload).total_money?.amount;
-                const invoiceAmount = typeof squareCents === "number" && squareCents > 0
-                  ? squareCents / 100
-                  : Number(localInvoice.amount || 0);
-                const payment = classifyJobInvoicePayment({
-                  invoiceAmount,
-                  jobTotal: lead.totalPrice,
-                  depositAmount: lead.depositAmount,
-                  depositRequired: lead.depositRequired,
-                  depositAlreadyPaid: lead.depositPaid,
-                  invoicePurpose: localInvoice.purpose,
-                });
-
-                if (payment.kind === "deposit") {
-                  const updated = await pool.query<{ status: string }>(
-                    `UPDATE leads
-                        SET deposit_paid = true,
-                            status = CASE
-                              WHEN status IN ('new','quote_requested','quoted','awaiting_deposit','paid') THEN 'confirmed'
-                              ELSE status
-                            END,
-                             last_quote_updated_at = NOW()
-                            ,financial_status = 'deposit_paid'
-                      WHERE id = $1
-                      RETURNING status`,
-                    [localInvoice.leadId],
-                  );
-                  const nextStatus = String(updated.rows[0]?.status || lead.status);
-                  try {
-                    await writeLeadHistory(localInvoice.leadId, lead.status, nextStatus, null, `Scheduling deposit paid: ${squareInvoiceId}`);
-                  } catch (histErr) {
-                    console.error("[Square webhook] deposit history write failed:", histErr);
-                  }
-                  console.log(`[Square webhook] Lead ${localInvoice.leadId} deposit paid; remaining job balance is still due`);
-                  try {
-                    const { emitCustomerLifecycleEvent } = await import("./services/customerLifecycle");
-                    await emitCustomerLifecycleEvent({
-                      leadId: localInvoice.leadId,
-                      type: "deposit_received",
-                      eventKey: `${localInvoice.leadId}:deposit_received:${squareInvoiceId}`,
-                      title: "Your scheduling deposit is received",
-                      message: "Your time is confirmed. JC crew assignment is now in progress.",
-                      payload: { squareInvoiceId, amountUsd: payment.invoiceAmount },
-                    });
-                    await emitCustomerLifecycleEvent({
-                      leadId: localInvoice.leadId,
-                      type: "crew_confirmation_in_progress",
-                      eventKey: `${localInvoice.leadId}:crew_confirmation_in_progress:${squareInvoiceId}`,
-                      title: "Crew confirmation is in progress",
-                      message: "The system is filling each required JC crew position. You will be notified when the full roster is confirmed.",
-                    });
-                  } catch (customerEventError) {
-                    console.error("[Square webhook] deposit customer lifecycle notification failed:", customerEventError);
-                  }
-                  await emitJobEvent("job_updated", { ...lead, status: nextStatus, depositPaid: true } as any, {
-                    source: "square_webhook",
-                    previousStatus: lead.status,
-                    status: nextStatus,
-                    note: "Scheduling deposit paid. Paid-in-full rewards and accounting remain locked until the balance is paid.",
-                    extra: { squareInvoiceId, paymentReceived: true, paymentScope: "deposit", amountUsd: payment.invoiceAmount },
-                  });
-                } else {
-                  const nextStatus = lead.status === "completed" ? "completed" : "paid";
-                  await pool.query(
-                    `UPDATE leads
-                        SET status = CASE WHEN status = 'completed' THEN status ELSE 'paid' END,
-                            payment_paid_at = COALESCE(payment_paid_at, NOW()),
-                            deposit_paid = CASE WHEN deposit_required THEN true ELSE deposit_paid END,
-                             last_quote_updated_at = NOW()
-                            ,financial_status = 'paid'
-                            ,closeout_status = CASE WHEN closeout_status IS NOT NULL THEN 'paid' ELSE closeout_status END
-                      WHERE id = $1`,
-                    [localInvoice.leadId],
-                  );
-                  if (lead.status !== "paid" && lead.status !== "completed") {
-                    try {
-                      await writeLeadHistory(localInvoice.leadId, lead.status, "paid", null, `Square job balance paid: ${squareInvoiceId}`);
-                    } catch (histErr) {
-                      console.error("[Square webhook] paid history write failed:", histErr);
-                    }
-                  }
-                  if (lead.status === "completed") {
-                    try {
-                      const { disburseJobTokens } = await import("./services/disburse-job-tokens");
-                      await disburseJobTokens(localInvoice.leadId);
-                    } catch (disbursementError) {
-                      console.error("[Square webhook] completed-job JCMOVES disbursement failed:", disbursementError);
-                    }
-                    try {
-                      if (localInvoice.closeoutId) {
-                        await pool.query(
-                          `UPDATE job_closeouts SET status='paid', updated_at=NOW() WHERE id=$1`,
-                          [localInvoice.closeoutId],
-                        );
-                      }
-                      const { emitCustomerLifecycleEvent } = await import("./services/customerLifecycle");
-                      await emitCustomerLifecycleEvent({
-                        leadId: localInvoice.leadId,
-                        type: "final_payment_received",
-                        eventKey: `${localInvoice.leadId}:final_payment_received:${squareInvoiceId}`,
-                        title: "Final payment received",
-                        message: "Your JC ON THE MOVE job is financially complete. Thank you for choosing our crew.",
-                        payload: { squareInvoiceId, amountUsd: payment.invoiceAmount },
-                      });
-                      const paidLead = await storage.getLead(localInvoice.leadId);
-                      if (paidLead) await sendCompletedJobReviewRequest(paidLead);
-                    } catch (customerEventError) {
-                      console.error("[Square webhook] final customer lifecycle notification failed:", customerEventError);
-                    }
-                  }
-                  if (payment.accountingAmount > 0) {
-                    await recordRevenueSplit(payment.accountingAmount, localInvoice.leadId, "square_payment_in_full");
-                    await creditJcMovesUsd(localInvoice.leadId, payment.accountingAmount, "square_webhook_paid_in_full");
-                  }
-                  await emitJobEvent("job_updated", { ...lead, status: nextStatus, depositPaid: lead.depositRequired ? true : lead.depositPaid } as any, {
-                    source: "square_webhook",
-                    previousStatus: lead.status,
-                    status: nextStatus,
-                    note: "Square confirmed the approved job balance paid in full.",
-                    extra: { squareInvoiceId, paymentReceived: true, paymentScope: "paid_in_full", amountUsd: payment.accountingAmount },
-                  });
-                }
-
-                // A paid deposit or a full payment confirms an exact-time
-                // hold. This does not imply that the full job balance is paid.
-                try {
-                  await pool.query(
-                    "UPDATE booking_slot_holds SET status='confirmed', updated_at=NOW() " +
-                    "WHERE lead_id=$1 AND status='awaiting_deposit'",
-                    [localInvoice.leadId],
-                  );
-                  await pool.query(
-                    "UPDATE bookings SET status='booked' WHERE id IN " +
-                    "(SELECT booking_id FROM booking_slot_holds WHERE lead_id=$1 AND status='confirmed')",
-                    [localInvoice.leadId],
-                  );
-                } catch (holdErr) {
-                  console.warn("[Square webhook] booking hold confirmation skipped:", holdErr instanceof Error ? holdErr.message : holdErr);
-                }
-
-                if (lead.status !== "completed") {
-                  try {
-                    const { dispatchJob } = await import("./dispatch");
-                    const dispatchResult = await dispatchJob(lead.id, { reason: `square_${payment.kind}` });
-                    console.log(`[Square webhook] Dispatch request for ${lead.id}: ${dispatchResult.state}${dispatchResult.message ? ` (${dispatchResult.message})` : ""}`);
-                  } catch (dispatchErr: unknown) {
-                    const msg = dispatchErr instanceof Error ? dispatchErr.message : String(dispatchErr);
-                    console.error(`[Square webhook] Auto-dispatch failed for lead ${localInvoice.leadId}:`, msg);
-                  }
-                }
-              }
-            }
-          } else {
-            throw new Error(`No local invoice found for Square ID: ${squareInvoiceId}`);
-          }
-        }
-      } else if (eventType === "payment.created" || eventType === "payment.updated") {
-        // Detect Prepaid Credit Top-Up payments by matching Square order_id against
-        // our prepaid_credit_intents table. We only credit on COMPLETED payments.
-        try {
-          const payment = (data?.payment as Record<string, unknown> | undefined);
-          const status = typeof payment?.status === "string" ? payment.status : undefined;
-          const orderId = typeof payment?.order_id === "string" ? payment.order_id : undefined;
-          const paymentId = typeof payment?.id === "string" ? payment.id : undefined;
-          if (status === "COMPLETED" && orderId && paymentId) {
-            await pool.query(`
-              UPDATE commerce_checkout_intents c
-              SET status='paid', square_payment_id=$2, updated_at=now()
-              FROM square_invoices si
-              WHERE c.square_invoice_id=si.square_invoice_id AND si.square_order_id=$1
-            `, [orderId, paymentId]).catch(() => undefined);
-            try {
-              const { handleSquareGiftCardPaymentEvent, recordSquareGiftCardTenderForOrder } = await import("./services/giftCardBonuses");
-              await handleSquareGiftCardPaymentEvent(payment);
-              await recordSquareGiftCardTenderForOrder(orderId);
-            } catch (giftCardError) {
-              console.error("[Square webhook] Gift-card bonus/tender handling failed:", (giftCardError as Error).message);
-              throw giftCardError;
-            }
-            const { rows } = await pool.query(
-              `SELECT id, user_id, amount_usd, status, pack_id, bonus_tokens, bonus_awarded_at
-               FROM prepaid_credit_intents WHERE square_order_id = $1 LIMIT 1`,
-              [orderId]
-            );
-            if (rows.length && rows[0].status !== 'paid') {
-              const intent = rows[0];
-              await creditJcMovesUsdFromPrepaid(intent.user_id, parseFloat(intent.amount_usd), paymentId);
-              await awardPrepaidCreditBonusTokens(intent, paymentId);
-              await pool.query(
-                `UPDATE prepaid_credit_intents
-                 SET status='paid', square_payment_id=$1, paid_at=NOW()
-                 WHERE id=$2`,
-                [paymentId, intent.id]
-              );
-              console.log(`[Square webhook] Prepaid credit minted for intent ${intent.id} ($${intent.amount_usd})`);
-            } else if (rows.length) {
-              await awardPrepaidCreditBonusTokens(rows[0], paymentId);
-            }
-          }
-        } catch (prepaidErr) {
-          console.error("[Square webhook] Prepaid credit handling failed:", prepaidErr);
-          throw prepaidErr;
-        }
-      } else if (eventType === "invoice.updated") {
-        const invoice = (data?.invoice as Record<string, unknown> | undefined);
-        const squareInvoiceId = typeof invoice?.id === "string" ? invoice.id : undefined;
-        const squareStatus = typeof invoice?.status === "string" ? invoice.status : undefined;
-        if (squareInvoiceId && squareStatus) {
-          const mappedStatus = squareInvoiceService.mapSquareStatus(squareStatus);
-          await storage.updateSquareInvoiceStatus(squareInvoiceId, mappedStatus);
-          console.log(`[Square webhook] Invoice ${squareInvoiceId} status synced to ${mappedStatus}`);
-        }
-      }
-
-      if (claimedPaymentInvoiceId) {
-        const { completeSquareInvoicePaymentEffect } = await import("./services/squareWebhookIdempotency");
-        await completeSquareInvoicePaymentEffect(claimedPaymentInvoiceId);
-      }
-      await completeSquareWebhookEvent(webhookEventId);
-      res.status(200).json({ received: true });
-    } catch (error: unknown) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error("[Square webhook] Error processing event:", msg);
-      if (claimedWebhookEventId) {
-        const { failSquareWebhookEvent } = await import("./services/squareWebhookIdempotency");
-        await failSquareWebhookEvent(claimedWebhookEventId, error);
-      }
-      if (claimedPaymentInvoiceId) {
-        const { failSquareInvoicePaymentEffect } = await import("./services/squareWebhookIdempotency");
-        await failSquareInvoicePaymentEffect(claimedPaymentInvoiceId, error);
-      }
-      res.status(500).json({ error: "Webhook processing failed" });
-    }
-  });
-
+  app.post("/api/webhooks/square", createSquareWebhookHandler({
+    writeLeadHistory, sendCompletedJobReviewRequest, recordRevenueSplit,
+    creditJcMovesUsd, creditJcMovesUsdFromPrepaid, awardPrepaidCreditBonusTokens,
+  }));
   // ===== SNOW REMOVAL ROUTES =====
 
   // Get all snow customers
@@ -26917,6 +26615,10 @@ Thank you for your business!
       res.status(500).json({ error: error.message });
     }
   });
+
+  app.get("/api/admin/payments/reconciliation/:leadId", isAuthenticated, requireAdmin, createPaymentReconciliationHandler());
+  app.get("/api/admin/payments/notices/:leadId", isAuthenticated, requireAdmin, createFinancialNoticeReviewHandler());
+  app.post("/api/admin/payments/notices/:leadId/review", isAuthenticated, requireAdmin, createFinancialNoticeReviewHandler());
 
   app.get("/api/admin/btc-payments", isAuthenticated, requireBusinessOwner, async (_req, res) => {
     try {
@@ -32737,55 +32439,15 @@ async function ensureRevenueAllocationsTable() {
  * Record a 40/30/20/10 planning allocation when payment is confirmed.
  * This is accounting-only: it never transfers, converts, or distributes the
  * underlying cash, check proceeds, processor balance, or crypto asset.
- * Non-fatal — all errors are caught and logged only.
+ * Allocation failures propagate so callers can retry the transaction.
  */
 async function recordRevenueSplit(
   paymentAmountUsd: number,
-  leadId: string | null,
+  leadId: string,
   source: string = 'square_payment'
 ): Promise<void> {
-  try {
-    // Idempotency guard: one revenue split per lead regardless of source.
-    // A lead can only be paid once — guard on lead_id alone to prevent
-    // cross-source duplicates (e.g. Square webhook + admin mark-paid).
-    if (leadId) {
-      const existing = await pool.query(
-        `SELECT id FROM revenue_allocations WHERE lead_id = $1 LIMIT 1`,
-        [leadId]
-      );
-      if (existing.rows.length > 0) {
-        console.log(`💰 Revenue split already recorded for lead ${leadId} — skipping duplicate (source: ${source})`);
-        return;
-      }
-    }
-
-    const buyback   = Math.round(paymentAmountUsd * 0.40 * 100) / 100;
-    const staking   = Math.round(paymentAmountUsd * 0.30 * 100) / 100;
-    const jackpot   = Math.round(paymentAmountUsd * 0.20 * 100) / 100;
-    const liquidity = Math.round(paymentAmountUsd * 0.10 * 100) / 100;
-
-    await pool.query(
-      `INSERT INTO revenue_allocations
-         (lead_id, payment_amount_usd, buyback_usd, staking_usd, jackpot_usd, liquidity_usd, source)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [leadId, paymentAmountUsd, buyback, staking, jackpot, liquidity, source]
-    );
-
-    // Credit the buyback fund (token buy-pressure reserve)
-    const [fundRow] = await db.select().from(buybackFund).limit(1);
-    if (fundRow) {
-      await db.update(buybackFund).set({
-        lastUpdated: new Date(),
-        feeContributionCount: (fundRow.feeContributionCount ?? 0) + 1,
-      }).where(eq(buybackFund.id, fundRow.id));
-    }
-
-    console.log(`💰 Accounting allocation recorded (no funds moved): $${paymentAmountUsd} → buyback $${buyback} / staking $${staking} / jackpot $${jackpot} / liquidity $${liquidity} (lead: ${leadId || 'N/A'})`);
-  } catch (err) {
-    console.error(`⚠️ recordRevenueSplit failed (non-fatal):`, err);
-  }
+  await recordJobRevenue(paymentAmountUsd, leadId, source);
 }
-
 // ── JCMOVES USD: Mint service credit on confirmed payment ────────────────────
 // Credits `cash_balance` in wallet_accounts for the customer who owns the lead.
 // Uses the `rewards` table (rewardType='jcmoves_usd_mint') for idempotency.
@@ -32794,82 +32456,9 @@ async function creditJcMovesUsd(
   amountUsd: number,
   source: string = 'payment'
 ): Promise<void> {
-  try {
-    // Guardrail: refuse non-finite, NaN, negative, or zero amounts. JCMOVES USD
-    // is service credit — credits must always be a positive USD value.
-    if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
-      console.warn(`[JCMOVES USD] Refused invalid mint amount=${amountUsd} for lead ${leadId} (source: ${source})`);
-      return;
-    }
-
-    // Idempotency: one mint per lead
-    const existing = await pool.query(
-      `SELECT id FROM rewards WHERE reward_type = 'jcmoves_usd_mint' AND reference_id = $1 LIMIT 1`,
-      [leadId]
-    );
-    if (existing.rows.length > 0) {
-      console.log(`[JCMOVES USD] Already minted for lead ${leadId} — skipping (source: ${source})`);
-      return;
-    }
-
-    // Find customer by email from lead
-    const leadRow = await pool.query(
-      `SELECT email FROM leads WHERE id = $1 LIMIT 1`,
-      [leadId]
-    );
-    if (!leadRow.rows.length || !leadRow.rows[0].email) {
-      console.warn(`[JCMOVES USD] No email on lead ${leadId} — cannot mint`);
-      return;
-    }
-    const email = leadRow.rows[0].email as string;
-
-    const userRow = await pool.query(
-      `SELECT id FROM users WHERE email = $1 LIMIT 1`,
-      [email]
-    );
-    if (!userRow.rows.length) {
-      console.warn(`[JCMOVES USD] No user found for email ${email} (lead ${leadId}) — cannot mint`);
-      return;
-    }
-    const userId = userRow.rows[0].id as string;
-
-    // Ensure wallet exists
-    await pool.query(
-      `INSERT INTO wallet_accounts (user_id, token_balance, cash_balance)
-       VALUES ($1, '0', '0.00')
-       ON CONFLICT (user_id) DO NOTHING`,
-      [userId]
-    );
-
-    // Credit cash_balance and read back the new balance for the ledger entry
-    const { rows: updatedRows } = await pool.query(
-      `UPDATE wallet_accounts SET cash_balance = cash_balance + $1 WHERE user_id = $2
-       RETURNING cash_balance`,
-      [amountUsd.toFixed(2), userId]
-    );
-    const balanceAfter = updatedRows[0]?.cash_balance ?? amountUsd.toFixed(2);
-
-    // Record in rewards table for idempotency guard (one row per lead)
-    await pool.query(
-      `INSERT INTO rewards (user_id, reward_type, token_amount, cash_value, status, reference_id, metadata)
-       VALUES ($1, 'jcmoves_usd_mint', '0', $2, 'confirmed', $3, $4)`,
-      [userId, amountUsd.toFixed(2), leadId, JSON.stringify({ source, leadId })]
-    );
-
-    // Write wallet_transactions ledger entry (type = jcmoves_usd_mint)
-    // user_wallet_id is nullable — we use null since this is cash_balance, not the crypto wallet
-    await pool.query(
-      `INSERT INTO wallet_transactions (transaction_type, amount, balance_after, status, metadata)
-       VALUES ('jcmoves_usd_mint', $1, $2, 'confirmed', $3::jsonb)`,
-      [amountUsd.toFixed(2), balanceAfter, JSON.stringify({ userId, leadId, source, currency: 'JCMOVES_USD' })]
-    );
-
-    console.log(`[JCMOVES USD] Minted $${amountUsd.toFixed(2)} credit for user ${userId} (lead ${leadId}, source: ${source})`);
-  } catch (err) {
-    console.error(`⚠️ creditJcMovesUsd failed (non-fatal):`, err);
-  }
+  const result = await creditJobCash(leadId, amountUsd, source);
+  console.log(`[JCMOVES USD] Job credit ${result} (lead ${leadId}, source: ${source})`);
 }
-
 // ── JCMOVES USD: Mint service credit from a Prepaid Top-Up ───────────────────
 // Used when a customer purchases JCMOVES USD credit directly (not tied to a job).
 // Idempotent on the Square payment ID (one mint per payment).

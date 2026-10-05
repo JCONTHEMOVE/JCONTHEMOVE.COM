@@ -907,7 +907,7 @@ export function HomepageBookingCalculator({ preset }: Props) {
             </div>
             <div className="space-y-2">
               <Label className="text-slate-200">Phone</Label>
-              <Input value={booking.phone} onChange={(e) => updateField("phone", e.target.value)} className="border-slate-700 bg-slate-900 text-white" />
+              <Input type="tel" required value={booking.phone} onChange={(e) => updateField("phone", e.target.value)} className="border-slate-700 bg-slate-900 text-white" />
             </div>
             <div className="space-y-2">
               <Label className="text-slate-200">Move date</Label>

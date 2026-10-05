@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import { pool } from '../server/db';
+import { recordJobWebhookDelivery,hasSuccessfulJobWebhookDelivery,hasJobAlertDelivery,recordJobAlertDelivery } from '../server/services/jobAlertDelivery';
+import { createDisposableLedgerDatabase } from './disposable-ledger-database';
+const database=await createDisposableLedgerDatabase(process.argv[2]);
+const priorQuery=pool.query;
+pool.query=((sql:string,args?:unknown[])=>database.query(sql,args)) as typeof pool.query;
+try {
+  await database.exec(`CREATE TABLE job_webhook_deliveries(event_id text,lead_id varchar,webhook_url_hash text,provider text,
+    status text CHECK(status IN ('sent','failed')),response_status integer,error_message text,attempts integer,
+    metadata jsonb,updated_at timestamptz,UNIQUE(event_id,webhook_url_hash))`);
+  const base={eventId:'event',leadId:'job',webhookUrlHash:'synthetic-hash',provider:'discord',attempts:1};
+  await recordJobWebhookDelivery({...base,status:'failed',responseStatus:503,errorMessage:'Unavailable'});
+  assert.equal(await hasSuccessfulJobWebhookDelivery('event','synthetic-hash'),false);
+  await recordJobWebhookDelivery({...base,status:'sent',responseStatus:204,metadata:{receipt:'confirmed'}});
+  await recordJobWebhookDelivery({...base,status:'failed',responseStatus:500,errorMessage:'Late failure',metadata:{receipt:'unconfirmed'}});
+  const row=(await database.query('SELECT * FROM job_webhook_deliveries')).rows[0];
+  assert.equal(row.status,'sent');assert.equal(row.response_status,204);assert.equal(row.error_message,null);
+  assert.deepEqual(row.metadata,{receipt:'confirmed'});assert.equal(row.attempts,3);
+  assert.equal(await hasSuccessfulJobWebhookDelivery('event','synthetic-hash'),true);
+  assert.equal(await hasSuccessfulJobWebhookDelivery('event','other-target'),false);
+  await recordJobWebhookDelivery({...base,webhookUrlHash:'other-target',status:'failed',responseStatus:401});
+  assert.equal(await hasSuccessfulJobWebhookDelivery('event','other-target'),false);
+  console.log('PASS: actual webhook audit SQL preserves confirmed delivery across late failures while accumulating attempts and isolating targets');
+  await database.exec(`CREATE TABLE job_alert_deliveries(event_id text,lead_id text,recipient_user_id text,channel text,
+    status text,error_message text,metadata jsonb,attempts integer DEFAULT 1,updated_at timestamptz,
+    UNIQUE(event_id,recipient_user_id,channel))`);
+  await recordJobAlertDelivery({eventId:'personal-event',recipientUserId:'first',channel:'in_app',status:'sent'});
+  assert.equal(await hasJobAlertDelivery('personal-event','first'),true);
+  assert.equal(await hasJobAlertDelivery('personal-event','second'),false);
+  await recordJobAlertDelivery({eventId:'personal-event',recipientUserId:'third',channel:'push',status:'failed'});
+  assert.equal(await hasJobAlertDelivery('personal-event','second'),false,'a failed recipient cannot block an unattempted recipient');
+  assert.equal(await hasJobAlertDelivery('another-event','first'),false);
+  console.log('PASS: personal alert attempt lookup isolates recipients and events');
+  const personal={eventId:'personal-event',recipientUserId:'third',channel:'push' as const};
+  await recordJobAlertDelivery({...personal,status:'sent',metadata:{receipt:'confirmed'}});
+  await recordJobAlertDelivery({...personal,status:'failed',errorMessage:'Late failure',metadata:{receipt:'failed'}});
+  await recordJobAlertDelivery({...personal,status:'skipped',errorMessage:'Subscription removed',metadata:{receipt:'skipped'}});
+  const personalRow=(await database.query("SELECT * FROM job_alert_deliveries WHERE recipient_user_id='third' AND channel='push'")).rows[0];
+  assert.equal(personalRow.status,'sent');assert.equal(personalRow.error_message,null);
+  assert.deepEqual(personalRow.metadata,{receipt:'confirmed'});assert.equal(personalRow.attempts,4);
+  await recordJobAlertDelivery({...personal,channel:'email',status:'failed',errorMessage:'Email unavailable'});
+  const emailRow=(await database.query("SELECT * FROM job_alert_deliveries WHERE recipient_user_id='third' AND channel='email'")).rows[0];
+  assert.equal(emailRow.status,'failed');assert.equal(emailRow.error_message,'Email unavailable');assert.equal(emailRow.attempts,1);
+  console.log('PASS: personal alert audit preserves successful channel evidence after late failure/skip, accumulates attempts and isolates channels');
+} finally {pool.query=priorQuery;await database.close();}

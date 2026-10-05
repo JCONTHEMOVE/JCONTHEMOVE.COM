@@ -1,6 +1,6 @@
 # JC ON THE MOVE Master Game Plan
 
-_Authoritative strategy snapshot: September 2, 2026 (America/Chicago)._
+_Authoritative strategy snapshot: September 3, 2026 (America/Chicago)._
 
 ## Operating idea
 
@@ -49,6 +49,7 @@ Booked-job economics outrank raw transaction volume. A verified $25 referral or 
 
 - Keep Square as the only public card/invoice processor.
 - Use `/book` as the canonical phone-first customer and authorized-worker request engine: choose the work, resolve the address, select a shared Central-time hourly window, review the server quote, submit, and receive a request receipt. The receipt is not a final price, crew assignment, dispatch, or guaranteed appointment.
+- Add `/quick-book` as the authenticated staff accelerator: speak or type the call, correct only uncertain fields, explicitly tap Yes/No for SMS consent, confirm the suggested named crew and lead, review the same canonical server quote, then use one final Book & Alert Crew action. Incomplete or review-only intake remains a resumable draft with no alerts, customer messages, invoices, or payment requests.
 - Keep one Confirmed Job Date in Job Setup (`confirmedDate`, with historical `moveDate` fallback), preserve saved legacy arrival windows, and require new selections to use the shared 7:00–8:00 AM through 4:00–5:00 PM list or Flexible/TBD.
 - Keep location and pricing authority on the server. Verified Ironwood/Bessemer work is local; unmatched/outside-zone work is global. `LOCAL3X2` is a code-required September 2026 labor-only $450 base package for exactly three movers/two hours with customer/no JC equipment, while extras and the pre-promo JCMOVES basis remain intact.
 - Keep driver premiums in Finance and keep crew/schedule alerts automatic only when a complete assigned plan changes. Contact-only and quote-only edits remain audit-only.
@@ -58,6 +59,8 @@ Booked-job economics outrank raw transaction volume. A verified $25 referral or 
 - Measure the funnel daily: lead, quote, scheduled job, payment link, paid/dispatch, completed job, payout approved, reward issued, rebooked job.
 
 **Current Stage 1 decision:** scheduling/local pricing is deployed (`8c9a06c4`) and the final unified phone-booking application release is deployed (`d9974bf5`). On September 3, 2026, JC-87 was owner-authorized and saved for September 4, 10:00–11:00 AM with three movers, two hours, loading only, customer truck, `LOCAL3X2`, and a $450 customer total while preserving the $525 JCMOVES basis. Darrell Jackson, Evan, and Troy Tom each received exactly one in-app alert; the three push attempts were skipped because VAPID keys are not configured. No customer quote was sent and no Square invoice was created. Controlled in-app crew updates may begin, but push-dependent mass delivery remains paused pending VAPID configuration and a live push test. Customer broadcasts still require separate owner authorization. Square/JCMOVES closeout plus backup/alerting drills remain separate launch-readiness gates.
+
+The 60-Second Quick Book code is locally complete and verified, but not yet deployed. It is feature-flagged off by default, uses AI only for structured suggestions and questions, retains deterministic fallback intake, and keeps pricing, availability, saving, consent, and notification authority outside the model. Rollout remains owner-only fixtures → internal non-customer job → owner/admin live booking → approved-staff drafts. Do not widen booking permission until the median routine completion time is at most 60 seconds and quote/notification checks pass.
 
 **Exit gate:** an owner-controlled job travels from quote through completed payment, payout review, and one correct JCMOVES issuance with no duplicate side effects.
 
