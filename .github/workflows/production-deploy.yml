@@ -48,6 +48,9 @@ jobs:
       - name: Run server tests
         run: npm run test:server
 
+      - name: Verify push enrollment and key migration
+        run: npm run test:push
+
       - name: Build release artifact
         run: npm run build
 

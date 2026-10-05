@@ -7,8 +7,6 @@ export interface NotificationOptions {
   onClick?: () => void;
 }
 
-const VAPID_PUBLIC_KEY = 'BFveYlkHTlnZsPBa4mWnX1pN-iOQskYGQh_SPrRJPZTpEFMFI9jTlf5iokygJORfaMtIE62eLAAnKP8pExq4QVc';
-
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -20,8 +18,9 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return outputArray;
 }
 
-class PushNotificationService {
+export class PushNotificationService {
   private swRegistration: ServiceWorkerRegistration | null = null;
+  private subscriptionAttempt: Promise<boolean> | null = null;
 
   isSupported(): boolean {
     return 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
@@ -57,30 +56,85 @@ class PushNotificationService {
     }
   }
 
-  async subscribeToServerPush(): Promise<boolean> {
+  subscribeToServerPush(): Promise<boolean> {
+    if (!this.isSupported() || Notification.permission !== 'granted') {
+      return Promise.resolve(false);
+    }
+    // Permission prompts and mount effects can both request enrollment.
+    if (!this.subscriptionAttempt) {
+      this.subscriptionAttempt = this.syncServerPush().finally(() => {
+        this.subscriptionAttempt = null;
+      });
+    }
+    return this.subscriptionAttempt;
+  }
+
+  private async syncServerPush(): Promise<boolean> {
+    const controller = new AbortController();
+    let timeout = setTimeout(() => controller.abort(), 15000);
     try {
-      const registration = await this.getSwRegistration();
-      if (!registration) return false;
+      // Read the runtime key before touching a working browser subscription.
+      const keyResponse = await fetch('/api/notifications/vapid-public-key', {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal: controller.signal,
+      });
+      if (!keyResponse.ok) return false;
+      const { publicKey } = await keyResponse.json();
+      if (typeof publicKey !== 'string' || !/^[A-Za-z0-9_-]{87}$/.test(publicKey)) return false;
+      const applicationServerKey = urlBase64ToUint8Array(publicKey);
+      // Web Push uses an uncompressed P-256 public key.
+      if (applicationServerKey.length !== 65 || applicationServerKey[0] !== 4) return false;
+
+      const registration = await Promise.race([
+        this.getSwRegistration(),
+        new Promise<null>((resolve) => {
+          if (controller.signal.aborted) resolve(null);
+          else controller.signal.addEventListener('abort', () => resolve(null), { once: true });
+        }),
+      ]);
+      if (!registration || controller.signal.aborted || Notification.permission !== 'granted') return false;
+
+      // Native PushManager operations cannot be cancelled. Once migration
+      // starts, do not let the discovery deadline strand an unsubscribed user.
+      clearTimeout(timeout);
 
       let subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        const existingKey = subscription.options.applicationServerKey;
+        const bytes = existingKey ? new Uint8Array(existingKey) : null;
+        const matches = bytes?.length === applicationServerKey.length &&
+          applicationServerKey.every((byte, index) => bytes[index] === byte);
+        if (!matches) {
+          if (!await subscription.unsubscribe()) return false;
+          subscription = null;
+        }
+      }
+      if (controller.signal.aborted || Notification.permission !== 'granted') return false;
       if (!subscription) {
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+          applicationServerKey,
         });
       }
 
+      const registrationController = new AbortController();
+      timeout = setTimeout(() => registrationController.abort(), 15000);
       const res = await fetch('/api/notifications/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
+        signal: registrationController.signal,
         body: JSON.stringify(subscription.toJSON()),
       });
 
       return res.ok;
-    } catch (error) {
-      console.error('Error subscribing to push notifications:', error);
+    } catch {
+      // Avoid logging subscription endpoints or provider payloads.
+      console.warn('Browser push enrollment failed; retry when connected.');
       return false;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
