@@ -71,7 +71,7 @@ export class PushNotificationService {
 
   private async syncServerPush(): Promise<boolean> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    let timeout = setTimeout(() => controller.abort(), 15000);
     try {
       // Read the runtime key before touching a working browser subscription.
       const keyResponse = await fetch('/api/notifications/vapid-public-key', {
@@ -95,6 +95,10 @@ export class PushNotificationService {
       ]);
       if (!registration || controller.signal.aborted || Notification.permission !== 'granted') return false;
 
+      // Native PushManager operations cannot be cancelled. Once migration
+      // starts, do not let the discovery deadline strand an unsubscribed user.
+      clearTimeout(timeout);
+
       let subscription = await registration.pushManager.getSubscription();
       if (subscription) {
         const existingKey = subscription.options.applicationServerKey;
@@ -114,11 +118,13 @@ export class PushNotificationService {
         });
       }
 
+      const registrationController = new AbortController();
+      timeout = setTimeout(() => registrationController.abort(), 15000);
       const res = await fetch('/api/notifications/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        signal: controller.signal,
+        signal: registrationController.signal,
         body: JSON.stringify(subscription.toJSON()),
       });
 

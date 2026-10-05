@@ -17,12 +17,17 @@ function setup(options: { existing?: Uint8Array; unknownKey?: boolean; permissio
   let postStatus = 200;
   let failSubscribe = false;
   let unsubscribeSucceeds = true;
+  let unsubscribeWait: Promise<void> | undefined;
+  let signalUnsubscribeStarted: () => void;
+  const unsubscribeStarted = new Promise<void>((resolve) => { signalUnsubscribeStarted = resolve; });
   function subscription(key?: Uint8Array): any {
     return {
       options: { applicationServerKey: key?.buffer },
       toJSON: () => ({ endpoint: 'https://push.invalid/test' }),
       unsubscribe: async () => {
         calls.push('unsubscribe');
+        signalUnsubscribeStarted();
+        await unsubscribeWait;
         if (unsubscribeSucceeds) active = null;
         return unsubscribeSucceeds;
       },
@@ -50,6 +55,7 @@ function setup(options: { existing?: Uint8Array; unknownKey?: boolean; permissio
     calls.push('post');
     assert.equal(url, '/api/notifications/subscribe');
     assert.equal(init.credentials, 'include');
+    assert.equal(init.signal?.aborted, false);
     return { ok: postStatus === 200 };
   }) as typeof fetch;
   return {
@@ -58,6 +64,8 @@ function setup(options: { existing?: Uint8Array; unknownKey?: boolean; permissio
     setPost: (status: number) => { postStatus = status; },
     setSubscribeFailure: (value: boolean) => { failSubscribe = value; },
     setUnsubscribeSuccess: (value: boolean) => { unsubscribeSucceeds = value; },
+    setUnsubscribeWait: (value: Promise<void>) => { unsubscribeWait = value; },
+    unsubscribeStarted,
   };
 }
 
@@ -153,4 +161,16 @@ test('unready service worker times out without changing subscription', async (t)
   Object.defineProperty(serviceWorker, 'ready', { configurable: true, value: readyRegistration });
   assert.equal(await s.service.subscribeToServerPush(), true);
   assert.deepEqual(s.calls, ['key', 'key', 'unsubscribe', 'subscribe', 'post']);
+});
+test('slow unsubscribe finishes migration after the discovery deadline', async (t) => {
+  const s = setup({ existing: oldKey });
+  let finishUnsubscribe!: () => void;
+  s.setUnsubscribeWait(new Promise<void>((resolve) => { finishUnsubscribe = resolve; }));
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const attempt = s.service.subscribeToServerPush();
+  await s.unsubscribeStarted;
+  t.mock.timers.tick(15001);
+  finishUnsubscribe();
+  assert.equal(await attempt, true);
+  assert.deepEqual(s.calls, ['key', 'unsubscribe', 'subscribe', 'post']);
 });
