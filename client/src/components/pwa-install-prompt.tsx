@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { X, Download, Share } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useLocation } from "wouter";
 import { useBottomOverlayInset } from "@/hooks/useBottomOverlayInset";
+import { QUOTE_REVIEWED_EVENT, hasReviewedQuote, isQuoteCalculatorRoute } from "@/lib/installPromptGate";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -14,8 +16,20 @@ export default function PwaInstallPrompt() {
   const [isIos, setIsIos] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const promptRef = useRef<HTMLDivElement>(null);
+  const [location] = useLocation();
+  const [quoteReviewed, setQuoteReviewed] = useState(hasReviewedQuote);
+  // On quote/calculator pages (e.g. /snow-removal) hold the prompt back until the
+  // visitor clicks "Review quote" or submits, so it never covers the estimate.
+  const heldForQuote = isQuoteCalculatorRoute(location) && !quoteReviewed;
+  const visible = showBanner && !dismissed && !heldForQuote;
   // Reserve space for the prompt so it never covers page content (e.g. the snow estimate).
-  useBottomOverlayInset(promptRef, "--jc-install-prompt-h", showBanner && !dismissed);
+  useBottomOverlayInset(promptRef, "--jc-install-prompt-h", visible);
+
+  useEffect(() => {
+    const release = () => setQuoteReviewed(true);
+    window.addEventListener(QUOTE_REVIEWED_EVENT, release);
+    return () => window.removeEventListener(QUOTE_REVIEWED_EVENT, release);
+  }, []);
 
   useEffect(() => {
     // Don't show if already installed (running in standalone mode)
@@ -67,7 +81,7 @@ export default function PwaInstallPrompt() {
     localStorage.setItem("pwa-prompt-dismissed", Date.now().toString());
   };
 
-  if (!showBanner || dismissed) return null;
+  if (!visible) return null;
 
   return (
     // Stacks directly above the cookie notice (if shown) instead of overlapping it.

@@ -4,6 +4,7 @@ import { ArrowRight, Check, ChevronLeft, ChevronRight, Snowflake } from "lucide-
 import { Button } from "@/components/ui/button";
 import AddressField from "@/components/AddressField";
 import { useBottomOverlayInset } from "@/hooks/useBottomOverlayInset";
+import { markQuoteReviewed } from "@/lib/installPromptGate";
 import { buildBookHref } from "@/lib/servicePagePrefill";
 import {
   SNOW_DEPTHS, SNOW_PROPERTIES, SNOW_SERVICES, SNOW_INITIAL_SELECTION, SNOW_PRICING_DEFAULTS,
@@ -72,6 +73,7 @@ export default function SnowRemovalPublicPage() {
     update({ scenario: id, backDragPercent: scenario.backDragPercent, visitsPerMonth: scenario.visitsPerMonth });
   }
   function handleBooking() {
+    markQuoteReviewed();
     const destination = new URL(buildBookHref({ service: "snow_removal", address: serviceAddress, label: "Snow service estimate — review required", details: buildSnowQuoteDetails(input) }), window.location.origin);
     // Keep representative credit and campaign context through the existing booking entrypoint.
     new URLSearchParams(window.location.search).forEach((value, key) => {
@@ -184,7 +186,7 @@ export default function SnowRemovalPublicPage() {
       <details className={`${panel} mt-6`}><summary className={`cursor-pointer rounded-lg font-bold ${focus}`}>Compare all 12 scenarios <span className="ml-2 text-xs font-normal text-slate-400">3 property sizes × 4 snow depths</span></summary><p className="mb-4 mt-3 text-sm text-slate-400">{input.scenario[0].toUpperCase() + input.scenario.slice(1)} pricing case · current service and handling choices. Select a row to load it above.</p><div className="overflow-x-auto"><table className="w-full min-w-[600px] text-left text-sm"><caption className="sr-only">Twelve snow-removal planning scenarios</caption><thead className="border-b border-slate-600 text-xs text-slate-400"><tr><th scope="col" className="py-3">Property</th><th scope="col">Snow</th><th scope="col">Single</th><th scope="col">Monthly</th><th scope="col">Season</th><th scope="col"><span className="sr-only">Load scenario</span></th></tr></thead><tbody>{scenarios.map(row => <tr key={row.id} className="border-b border-slate-800"><th scope="row" className="py-3 pr-3 font-medium">{row.property}<span className="block text-xs font-normal text-slate-500">{row.widthFeet} × {row.lengthFeet} ft</span></th><td>{row.depthInches}″{row.depthInches >= 24 && <span className="block text-[10px] text-amber-300">Site review</span>}</td><td>{endOnly ? "Review" : money(row.selected.single)}</td><td>{endOnly ? "Review" : money(row.selected.monthly)}</td><td>{endOnly ? "Review" : money(row.selected.seasonal)}</td><td><button type="button" aria-label={`Use ${row.property}, ${row.depthInches} inches snow`} onClick={() => { update({ widthFeet: row.widthFeet, lengthFeet: row.lengthFeet, depthInches: row.depthInches }); document.getElementById("snow-property-heading")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }); }} className={`rounded-lg px-3 py-2 text-cyan-200 hover:bg-cyan-950 ${focus}`}>Use <ArrowRight className="inline h-3 w-3" aria-hidden="true" /></button></td></tr>)}</tbody></table></div></details>
       <div ref={quoteBarRef} className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-between gap-3 border-t border-cyan-800 bg-slate-950/95 px-4 py-3 backdrop-blur lg:hidden" style={{ bottom: "var(--jc-bottom-overlays, 0px)", paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
         <div><p className="text-[11px] text-slate-400">Draft {plans[planIndex].label.toLowerCase()} estimate</p><p className="text-xl font-black text-cyan-100">{endOnly ? "Manual quote" : money(quote.amount)}</p></div>
-        <button type="button" onClick={() => document.getElementById("snow-estimate-review")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" })} className={`rounded-xl bg-cyan-200 px-4 py-3 text-sm font-bold text-slate-950 ${focus}`}>Review quote <ArrowRight className="ml-1 inline h-4 w-4" aria-hidden="true" /></button>
+        <button type="button" onClick={() => { markQuoteReviewed(); document.getElementById("snow-estimate-review")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" }); }} className={`rounded-xl bg-cyan-200 px-4 py-3 text-sm font-bold text-slate-950 ${focus}`}>Review quote <ArrowRight className="ml-1 inline h-4 w-4" aria-hidden="true" /></button>
       </div>
       <footer className="mt-6 text-center text-xs leading-relaxed text-slate-500">JC ON THE MOVE LLC · JCOnTheMove.com<br />We MOVE with PURPOSE GLORY to GOD</footer>
     </div>
