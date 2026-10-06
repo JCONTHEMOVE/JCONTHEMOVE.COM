@@ -1,8 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { X } from "lucide-react";
+import { useBottomOverlayInset } from "@/hooks/useBottomOverlayInset";
 
 export default function CookieBanner() {
   const [visible, setVisible] = useState(false);
+  const barRef = useRef<HTMLDivElement>(null);
+  // Reserve space for the notice so it never covers page content (e.g. the snow estimate).
+  useBottomOverlayInset(barRef, "--jc-cookie-bar-h", visible);
 
   useEffect(() => {
     const dismissed = localStorage.getItem("jc_cookie_notice_dismissed");
@@ -17,7 +21,13 @@ export default function CookieBanner() {
   if (!visible) return null;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 bg-zinc-900 border-t border-zinc-700 px-4 py-3 flex items-center justify-between gap-4 shadow-xl">
+    <div
+      ref={barRef}
+      role="region"
+      aria-label="Cookie notice"
+      className="fixed bottom-0 left-0 right-0 z-50 bg-zinc-900 border-t border-zinc-700 px-4 pt-3 flex items-center justify-between gap-4 shadow-xl"
+      style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}
+    >
       <p className="text-xs text-zinc-400 flex-1">
         <span className="text-white font-semibold">🍪 Cookie notice: </span>
         This site uses a single session cookie (for login only) and a local visitor ID to count
