@@ -5,6 +5,7 @@ import { ArrowLeft, Sparkles, X } from "lucide-react";
 import { Link } from "wouter";
 import QuoteForm from "@/components/QuoteForm";
 import { getService } from "@/lib/services";
+import { markQuoteReviewed } from "@/lib/installPromptGate";
 import { useAuth } from "@/hooks/useAuth";
 
 function AccountCTABanner({ onDismiss }: { onDismiss: () => void }) {
@@ -74,6 +75,7 @@ export default function QuotePage() {
   };
 
   const handleSuccess = () => {
+    markQuoteReviewed();
     setPrefilledService("");
     setPrefilledDate("");
     setPrefilledPromoCode("");
