@@ -34,6 +34,7 @@ for (const enabled of [undefined, 'false', 'TRUE', 'true']) {
     for (const route of routes.keys()) assert.equal((await request(route, role)).status, 403, `${role}: ${route}`);
   }
   assert.equal((await request('get /api/quick-book/health', 'business_owner')).body.canComplete, false);
+  assert.equal((await request('get /api/quick-book/health', 'business_owner')).body.bookingBlocker, 'live_booking_disabled');
   for (const route of dataRoutes) {
     if (enabled !== 'true') assert.equal((await request(route, 'business_owner')).status, 503);
   }
@@ -46,9 +47,14 @@ assert.equal((await request('get /api/quick-book/health', 'employee')).status, 4
 env.QUICK_BOOK_OWNER_ONLY = 'false';
 assert.equal((await request('get /api/quick-book/health', 'employee')).status, 200);
 assert.equal((await request('post /api/quick-book/sessions/:id/book', 'employee')).status, 403);
+assert.equal((await request('get /api/quick-book/health', 'employee')).body.bookingBlocker,'owner_required');
+const disabledOwner = await request('post /api/quick-book/sessions/:id/book', 'business_owner');
+assert.equal(disabledOwner.body.bookingBlocker,'live_booking_disabled');
+assert.match(disabledOwner.body.error,/server configuration/);
 env.QUICK_BOOK_LIVE_BOOKING_ENABLED = 'true';
 assert.equal((await request('get /api/quick-book/health', 'employee')).body.canComplete, false);
 assert.equal((await request('get /api/quick-book/health', 'business_owner')).body.canComplete, true);
+assert.equal((await request('get /api/quick-book/health', 'business_owner')).body.bookingBlocker, null);
 assert.equal((await request('get /api/quick-book/health', 'admin')).body.canComplete, true);
 assert.equal((await request('get /api/quick-book/sessions/current', 'business_owner')).body, null);
 assert.equal(lookupActor,'owner');
