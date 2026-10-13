@@ -1,3 +1,9 @@
+import { bookingTimeZoneSchema, bookingDateTimeToUtc, bookingTimeLabel, movePlanSchema, recommendMove, validBookingDate } from "@shared/homepageBooking";
+import { PUBLIC_BOOKING_REQUEST_SCHEMA, bindPublicBookingRequest, lockPublicBookingRequest, publicBookingStatus, publicInstantQuote } from "../services/publicBookingRequests";
+import { expireBookingHolds, instantCrewCapacity, lockBookingCapacity, lockActiveBookingHold } from "../services/instantBookingIntegrity";
+import { ensureJcOperationsInfrastructure } from "../services/jcOperations";
+import { ensureQuoteRevisionInfrastructure } from "../services/quoteRevisions";
+import { resolvePersonalPromoAttribution } from "../services/personalPromoCodes";
 import { leadPhoneNumberSchema } from "@shared/schema";
 // Multi-Service Booking endpoints (Task #128).
 //
@@ -112,6 +118,13 @@ const INSTANT_BOOKING_START_HOURS = [8, 10, 12, 14, 16] as const;
 const HOLD_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
 const instantBookingRequestSchema = z.object({
+  requestKey: z.string().uuid().optional(),
+  reviewedQuoteFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  timeZone: bookingTimeZoneSchema.default("America/Chicago"),
+  movePlan: movePlanSchema.optional(),
+  promoCode: z.string().trim().max(50).default(""),
+  referralSlug: z.string().trim().max(80).default(""),
+  marketingCampaignId: z.string().trim().max(120).default(""),
   service: z.enum(["moving", "labor", "junk"]),
   customerName: z.string().trim().min(2, "Enter your name").max(120),
   customerEmail: z.union([z.string().trim().email(), z.literal("")]).optional().transform((value) => value || ""),
@@ -137,6 +150,12 @@ const instantBookingRequestSchema = z.object({
   termsAccepted: z.boolean().default(false),
   termsVersion: z.string().trim().min(1).max(80).default("2026-08-regional-v1"),
 }).superRefine((value, ctx) => {
+  if (!validBookingDate(value.requestedDate)) ctx.addIssue({ code: "custom", path: ["requestedDate"], message: "Choose a valid calendar date." });
+  if (value.movePlan) {
+    const recommendation = recommendMove(value.movePlan);
+    if (recommendation.overridden && !value.movePlan.overrideReason) ctx.addIssue({ code: "custom", path: ["movePlan", "overrideReason"], message: "Explain the change to the recommendation so the team can review it." });
+    if (recommendation.selectedHours > 12) ctx.addIssue({ code: "custom", path: ["movePlan"], message: "This move needs a callback to plan the duration." });
+  }
   if (value.service === "moving" && !value.destinationAddress) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["destinationAddress"], message: "Enter the moving destination" });
   }
@@ -174,7 +193,8 @@ function ensureInstantBookingTables(): Promise<void> {
         ON booking_slot_holds (service_date, start_at, status);
       CREATE INDEX IF NOT EXISTS idx_booking_slot_holds_lead
         ON booking_slot_holds (lead_id);
-    `).then(() => undefined).catch((error) => {
+      ${PUBLIC_BOOKING_REQUEST_SCHEMA}
+    `).then(async () => { await ensureJcOperationsInfrastructure(); await ensureQuoteRevisionInfrastructure(); }).catch((error) => {
       instantBookingTablesReady = null;
       throw error;
     });
@@ -183,23 +203,7 @@ function ensureInstantBookingTables(): Promise<void> {
 }
 
 function centralDateTimeToUtc(date: string, time: string): Date {
-  const [year, month, day] = date.split("-").map(Number);
-  const [hour, minute] = time.split(":").map(Number);
-  const wantedWallTime = Date.UTC(year, month - 1, day, hour, minute, 0);
-  let instant = wantedWallTime;
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: INSTANT_BOOKING_TIME_ZONE,
-    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
-  });
-  // Two passes correctly resolve either CST or CDT without assuming a fixed
-  // offset. Booking slots are daytime, so the DST transition hour is avoided.
-  for (let pass = 0; pass < 2; pass += 1) {
-    const parts = formatter.formatToParts(new Date(instant));
-    const part = (type: string) => Number(parts.find((item) => item.type === type)?.value || 0);
-    const renderedWallTime = Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), 0);
-    instant += wantedWallTime - renderedWallTime;
-  }
-  return new Date(instant);
+  return bookingDateTimeToUtc(date, time);
 }
 
 function centralDateKey(value = new Date()): string {
@@ -219,30 +223,16 @@ function timeLabel(time: string) {
 
 async function expireInstantBookingHolds() {
   await ensureInstantBookingTables();
-  const expired = await pool.query<{ lead_id: string; booking_id: string; previous_status: string }>(`
-    WITH due AS (
-      SELECT id, lead_id, booking_id, status AS previous_status
-        FROM booking_slot_holds
-       WHERE status IN ('pending_review','awaiting_deposit')
-         AND expires_at IS NOT NULL AND expires_at <= NOW()
-       FOR UPDATE SKIP LOCKED
-    )
-    UPDATE booking_slot_holds h
-       SET status='expired', updated_at=NOW()
-      FROM due
-     WHERE h.id=due.id
-    RETURNING h.lead_id, h.booking_id, due.previous_status
-  `);
-  if (!expired.rows.length) return 0;
-  const bookingIds = expired.rows.map((row) => row.booking_id);
-  const leadIds = expired.rows.map((row) => row.lead_id);
-  await pool.query(`UPDATE bookings SET status='expired' WHERE id=ANY($1::varchar[]) AND status IN ('pending_review','awaiting_deposit')`, [bookingIds]);
-  await pool.query(
-    `UPDATE leads SET status=CASE WHEN status='awaiting_deposit' THEN 'quote_requested' ELSE status END,
-                      financial_status=CASE WHEN financial_status='awaiting_deposit' THEN 'deposit_expired' ELSE financial_status END
-      WHERE id=ANY($1::varchar[])`,
-    [leadIds],
-  );
+  const tx = await pool.connect();
+  let expired: Array<{ lead_id: string; booking_id: string }>;
+  try {
+    await tx.query("BEGIN");
+    expired = await expireBookingHolds(tx);
+    await tx.query("COMMIT");
+  } catch (error) { await tx.query("ROLLBACK"); throw error; }
+  finally { tx.release(); }
+  if (!expired.length) return 0;
+  const leadIds = expired.map(row => row.lead_id);
   const invoices = await pool.query<{ square_invoice_id: string }>(
     `SELECT square_invoice_id FROM square_invoices
       WHERE lead_id=ANY($1::varchar[]) AND purpose='deposit'
@@ -257,7 +247,7 @@ async function expireInstantBookingHolds() {
       });
     }
   }
-  return expired.rows.length;
+  return expired.length;
 }
 
 function profileForInstantBooking(input: InstantBookingRequest) {
@@ -274,8 +264,9 @@ function profileForInstantBooking(input: InstantBookingRequest) {
     if (item.pounds >= 200) return Math.max(highest, 2);
     return highest;
   }, 1);
-  const baseCrew = junk?.crewSize || 2;
-  const requestedHours = junk?.hours || input.requestedHours;
+  const recommendation = input.movePlan ? recommendMove(input.movePlan) : null;
+  const baseCrew = junk?.crewSize || recommendation?.selectedCrewSize || 2;
+  const requestedHours = junk?.hours || recommendation?.selectedHours || input.requestedHours;
   const crewSize = Math.max(baseCrew, heavyCrew);
   const difficultyMultiplier = input.difficulty === "difficult" ? 1.3 : input.difficulty === "moderate" ? 1.15 : 1;
   const stairsMultiplier = input.stairsFlights > 0 ? 1.5 : 1;
@@ -285,7 +276,8 @@ function profileForInstantBooking(input: InstantBookingRequest) {
     durationMinutes: Math.ceil(requestedHours * 60),
     difficultyMultiplier,
     stairsMultiplier,
-    reviewRequired: input.difficulty === "difficult",
+    recommendation,
+    reviewRequired: input.difficulty === "difficult" || Boolean(recommendation?.reviewRequired),
     serviceCode: "load_unload",
   };
 }
@@ -310,6 +302,7 @@ async function attachOperatingEligibility(input: InstantBookingRequest, quote: a
   });
   return {
     ...quote,
+    recommendation: input.movePlan ? recommendMove(input.movePlan) : null,
     routeEvidence,
     operatingEligibility,
     autoBookEligible: operatingEligibility.decision === "eligible",
@@ -606,61 +599,25 @@ async function capacityForInstantBooking(
 ) {
   await ensureInstantBookingTables();
   const quote = quoteOverride || await instantBookingQuote(input);
-  const startAt = centralDateTimeToUtc(input.requestedDate, startTime);
-  const endAt = new Date(startAt.getTime() + quote.durationMinutes * 60_000);
-  await client.query(`
-    UPDATE booking_slot_holds
-    SET status = 'expired', updated_at = NOW()
-    WHERE status IN ('pending_review','awaiting_deposit') AND expires_at IS NOT NULL AND expires_at <= NOW()
-  `);
-
-  const [employees, legacyResult, holdResult] = await Promise.all([
-    storage.getEmployees(),
-    client.query(`
-      SELECT COALESCE(SUM(COALESCE(crew_size, 2)), 0)::int AS reserved_crew
-      FROM leads
-      WHERE (confirmed_date = $1 OR move_date = $1)
-        AND COALESCE(source, '') <> 'instant_booking_hold'
-        AND COALESCE(status, '') NOT IN ('cancelled', 'completed', 'archived')
-        AND archived_at IS NULL
-    `, [input.requestedDate]),
-    client.query(`
-      SELECT COALESCE(SUM(crew_size), 0)::int AS reserved_crew
-      FROM booking_slot_holds
-      WHERE service_date = $1::date
-        AND status IN ('pending_review', 'awaiting_deposit', 'confirmed')
-        AND (expires_at IS NULL OR expires_at > NOW() OR status <> 'pending_review')
-        AND start_at < $3::timestamptz
-        AND start_at + (duration_minutes * INTERVAL '1 minute') > $2::timestamptz
-    `, [input.requestedDate, startAt.toISOString(), endAt.toISOString()]),
-  ]);
-  const capacity = employees.length;
-  const legacyReserved = Number(legacyResult.rows[0]?.reserved_crew || 0);
-  const heldReserved = Number(holdResult.rows[0]?.reserved_crew || 0);
-  const availableCrew = Math.max(0, capacity - legacyReserved - heldReserved);
-  return {
-    quote,
-    startAt,
-    endAt,
-    capacity,
-    legacyReserved,
-    heldReserved,
-    availableCrew,
-    available: quote.eligibleForHold !== false && capacity > 0 && availableCrew >= quote.crewSize,
-  };
+  const capacity = await instantCrewCapacity(client, {
+    date: input.requestedDate, time: startTime, durationMinutes: quote.durationMinutes, crewSize: quote.crewSize,
+  });
+  return { ...capacity, quote, available: quote.eligibleForHold !== false && capacity.available };
 }
 
 async function availableInstantBookingSlots(input: InstantBookingRequest) {
   const today = centralDateKey();
   const quote = await instantBookingQuote(input);
   if (input.requestedDate < today) return { quote, slots: [] };
-  const slots = [] as Array<{ time: string; label: string; availableCrew: number }>;
+  const slots = [] as Array<{ time: string; label: string; startAt: string; centralLabel: string; easternLabel: string }>;
   for (const hour of INSTANT_BOOKING_START_HOURS) {
     const time = `${String(hour).padStart(2, "0")}:00`;
     const startAt = centralDateTimeToUtc(input.requestedDate, time);
     if (startAt.getTime() < Date.now() + 60 * 60_000) continue;
     const capacity = await capacityForInstantBooking(input, time, pool, quote);
-    if (capacity.available) slots.push({ time, label: timeLabel(time), availableCrew: capacity.availableCrew });
+    if (capacity.available) slots.push({ time, startAt: startAt.toISOString(),
+      label: bookingTimeLabel(startAt, input.timeZone),
+      centralLabel: bookingTimeLabel(startAt, "America/Chicago"), easternLabel: bookingTimeLabel(startAt, "America/Detroit") });
   }
   return { quote, slots };
 }
@@ -1698,7 +1655,7 @@ router.post("/instant-booking/quote", async (req: Request, res: Response) => {
   try {
     const input = instantBookingRequestSchema.parse(req.body);
     const quote = await instantBookingQuote(input);
-    return res.json({ success: true, quote });
+    return res.json({ success: true, quote: publicInstantQuote(quote) });
   } catch (error) {
     if (error instanceof ZodError) return res.status(400).json({ error: "Check the booking details", details: error.errors });
     console.error("[instant-booking/quote] error:", error);
@@ -1713,9 +1670,10 @@ router.post("/instant-booking/availability", async (req: Request, res: Response)
     const result = await availableInstantBookingSlots(input);
     return res.json({
       success: true,
-      quote: result.quote,
+      quote: publicInstantQuote(result.quote),
       slots: result.slots,
-      timeZone: INSTANT_BOOKING_TIME_ZONE,
+      timeZone: input.timeZone,
+      scheduleTimeZone: INSTANT_BOOKING_TIME_ZONE,
       message: result.slots.length
         ? "Choose a start time to place a 24-hour pending hold. No payment is taken yet."
         : "No online slots are available for this date. Please request a callback so we can check alternatives.",
@@ -1724,6 +1682,21 @@ router.post("/instant-booking/availability", async (req: Request, res: Response)
     if (error instanceof ZodError) return res.status(400).json({ error: "Check the booking details", details: error.errors });
     console.error("[instant-booking/availability] error:", error);
     return res.status(500).json({ error: "We could not check crew capacity. Please try again or request a callback." });
+  }
+});
+
+// Possession of the unguessable request key is required; IDs and payment
+// redirect parameters never grant access or change payment state.
+router.post("/instant-booking/status", async (req: Request, res: Response) => {
+  try {
+    const { requestKey } = z.object({ requestKey: z.string().uuid() }).parse(req.body);
+    await ensureInstantBookingTables();
+    await expireInstantBookingHolds();
+    const status = await publicBookingStatus(pool, requestKey);
+    res.setHeader("Cache-Control", "no-store");
+    return status ? res.json(status) : res.status(404).json({ error: "Request not found" });
+  } catch (error) {
+    return res.status(error instanceof ZodError ? 400 : 503).json({ error: "Could not check request status. Please retry." });
   }
 });
 
@@ -1743,17 +1716,23 @@ router.post("/instant-booking/hold", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Choose one of the available two-hour start times." });
     }
     const chosenStart = centralDateTimeToUtc(input.requestedDate, input.startTime);
-    if (chosenStart.getTime() < Date.now() + 60 * 60_000) {
-      return res.status(409).json({ error: "That start time is no longer available. Please choose another slot." });
-    }
 
     await ensureInstantBookingTables();
     const tx = await pool.connect() as unknown as InstantBookingTransactionClient;
     client = tx;
     await tx.query("BEGIN");
-    // Serialize competing requests for this exact start. The capacity query
-    // below still counts overlaps, so a longer job cannot overbook a slot.
-    await tx.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`instant-booking:${input.requestedDate}:${input.startTime}`]);
+    if (input.requestKey) {
+      const existingLead = await lockPublicBookingRequest(tx, input.requestKey);
+      if (existingLead) {
+        await tx.query("COMMIT");
+        return res.status(200).json({ success: true, submitted: true, duplicate: true });
+      }
+    }
+    if (chosenStart.getTime() < Date.now() + 60 * 60_000) {
+      await tx.query("ROLLBACK");
+      return res.status(409).json({ error: "That start time is no longer available. Please choose another slot." });
+    }
+    await lockBookingCapacity(tx, input.requestedDate);
     const capacity = await capacityForInstantBooking(input, input.startTime, tx);
     if (!capacity.available) {
       await tx.query("ROLLBACK");
@@ -1764,14 +1743,22 @@ router.post("/instant-booking/hold", async (req: Request, res: Response) => {
     }
 
     const quote = capacity.quote;
+    if (input.requestKey && input.reviewedQuoteFingerprint !== publicInstantQuote(quote).fingerprint) {
+      await tx.query("ROLLBACK");
+      return res.status(409).json({ error: "The quote changed. Check availability and review the updated estimate before reserving.", quoteChanged: true });
+    }
     const autoBookEligible = quote.operatingEligibility?.decision === "eligible";
-    const initialHoldStatus = autoBookEligible ? "awaiting_deposit" : "pending_review";
-    const initialBookingStatus = autoBookEligible ? "awaiting_deposit" : "pending_review";
-    const initialLeadStatus = autoBookEligible ? "awaiting_deposit" : "quote_requested";
+    const initialHoldStatus: string = "pending_review";
+    const initialBookingStatus = "pending_review";
+    const initialLeadStatus = "quote_requested";
     const [firstName, ...lastNameParts] = input.customerName.split(/\s+/);
     const lastName = lastNameParts.join(" ") || "Customer";
     const details = {
       bookingFlow: "instant_booking_hold",
+      movePlan: input.movePlan || null,
+      recommendation: input.movePlan ? recommendMove(input.movePlan) : null,
+      displayTimeZone: input.timeZone,
+      attribution: { promoCode: input.promoCode, referralSlug: input.referralSlug, marketingCampaignId: input.marketingCampaignId },
       service: input.service,
       destinationAddress: input.destinationAddress || null,
       requestedDate: input.requestedDate,
@@ -1874,10 +1861,26 @@ router.post("/instant-booking/hold", async (req: Request, res: Response) => {
       !autoBookEligible,
       input.smsConsent,
       input.smsConsent ? new Date() : null,
-      autoBookEligible ? "awaiting_deposit" : "quote",
+      "quote",
     ]);
     const leadId = String(leadResult.rows[0]?.id || "");
     if (!leadId) throw new Error("Lead insert returned no id");
+    if (input.requestKey) await bindPublicBookingRequest(tx, input.requestKey, leadId);
+    const actorId = (req as any).session?.userId || (req as any).user?.id || null;
+    if (actorId) {
+      await tx.query(`UPDATE leads SET created_by_user_id=u.id FROM users u WHERE leads.id=$1 AND u.id=$2 AND u.status='approved'`, [leadId, actorId]);
+    }
+    const promo = input.promoCode.toUpperCase();
+    const rep = input.referralSlug || promo ? await tx.query(`SELECT user_id,promo_code,slug FROM marketing_reps
+      WHERE is_active=true AND (($1<>'' AND UPPER(promo_code)=$1) OR ($1='' AND slug=$2)) LIMIT 1`, [promo, input.referralSlug.toLowerCase()]) : { rows: [] };
+    const personalPromo = promo ? await resolvePersonalPromoAttribution(tx.query.bind(tx), promo) : null;
+    if (promo || input.referralSlug || input.marketingCampaignId) {
+      await tx.query(`INSERT INTO quote_attributions(lead_id,booking_id,user_id,attribution_type,promo_code,metadata)
+        VALUES($1,$2,$3,'homepage_booking',$4,$5::jsonb)`, [leadId, bookingId,
+        personalPromo?.userId || rep.rows[0]?.user_id || null, personalPromo?.code || rep.rows[0]?.promo_code || promo || null,
+        JSON.stringify({ source: "homepage_booking", referralSlug: rep.rows[0]?.slug || input.referralSlug, marketingCampaignId: input.marketingCampaignId })]);
+      await tx.query("UPDATE leads SET promo_code=$2 WHERE id=$1", [leadId, promo || rep.rows[0]?.promo_code || null]);
+    }
     const expiresAt = new Date(Date.now() + HOLD_LIFETIME_MS);
     const holdResult = await tx.query(`
       INSERT INTO booking_slot_holds
@@ -1898,6 +1901,8 @@ router.post("/instant-booking/hold", async (req: Request, res: Response) => {
       JSON.stringify(quoteSnapshot),
     ]);
     await tx.query("COMMIT");
+    tx.release();
+    client = null;
     const holdId = String(holdResult.rows[0]?.id || "");
 
     let quoteRevision: Awaited<ReturnType<typeof saveQuoteDraft>> | null = null;
@@ -1907,7 +1912,10 @@ router.post("/instant-booking/hold", async (req: Request, res: Response) => {
     let depositSquareInvoiceId: string | null = null;
     let invoiceWarning: string | null = null;
     let depositAmount: number | null = null;
+    const finalizeTx = await pool.connect();
     try {
+      await finalizeTx.query("BEGIN");
+      await lockActiveBookingHold(finalizeTx, holdId);
       quoteRevision = await saveQuoteDraft({
         leadId,
         actorUserId: null,
@@ -1926,6 +1934,9 @@ router.post("/instant-booking/hold", async (req: Request, res: Response) => {
           actor: { userId: owner.rows[0].id, email: owner.rows[0].email, isOwner: true, canApproveStandard: true },
           overrideReason: null,
         });
+        if (input.requestKey && Math.abs(approvedQuote.customerTotal - quote.minEstimate) >= 0.01) {
+          throw new Error("Canonical quote total changed; owner review is required before requesting a deposit");
+        }
         depositAmount = Math.round(approvedQuote.customerTotal * 0.3 * 100) / 100;
         const termsHash = crypto.createHash("sha256").update(`${input.termsVersion}:${approvedQuote.id}:${approvedQuote.customerTotal.toFixed(2)}`).digest("hex");
         await pool.query(
@@ -1934,17 +1945,6 @@ router.post("/instant-booking/hold", async (req: Request, res: Response) => {
            VALUES ($1,$2,$3,$4,'web_checkbox',$5)
            ON CONFLICT (lead_id, quote_revision_id, terms_hash) DO NOTHING`,
           [leadId, approvedQuote.id, input.termsVersion, termsHash, holdId],
-        );
-        await pool.query(
-          `UPDATE leads SET base_price=$2, total_price=$3, deposit_required=true,
-                  deposit_amount_gate=$4, is_quote_only=false, financial_status='awaiting_deposit',
-                  last_quote_updated_at=NOW()
-            WHERE id=$1`,
-          [leadId, approvedQuote.subtotal, approvedQuote.customerTotal, depositAmount],
-        );
-        await pool.query(
-          `UPDATE bookings SET subtotal=$2, discount_total=$3, final_total=$4, status='awaiting_deposit' WHERE id=$1`,
-          [bookingId, approvedQuote.subtotal, approvedQuote.discountTotal, approvedQuote.customerTotal],
         );
         const freshLead = await storage.getLead(leadId);
         if (!freshLead) throw new Error("Automatic booking lead could not be reloaded");
@@ -1955,7 +1955,7 @@ router.post("/instant-booking/hold", async (req: Request, res: Response) => {
           const hasCustomerEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(freshLead.email)
             && !/@jconthemove\.local$/i.test(freshLead.email);
           const invoice = await squareInvoiceService.createInvoiceForLead(
-            freshLead,
+            { ...freshLead, totalPrice: approvedQuote.customerTotal.toFixed(2), depositAmount: depositAmount.toFixed(2) },
             depositAmount,
             `30% scheduling deposit for JC ON THE MOVE ${freshLead.serviceType} job`,
             undefined,
@@ -1966,29 +1966,44 @@ router.post("/instant-booking/hold", async (req: Request, res: Response) => {
           depositSquareInvoiceId = invoice.squareInvoiceId;
           await db.update(leads).set({ squarePaymentUrl: paymentUrl }).where(eq(leads.id, leadId));
         }
+        await lockActiveBookingHold(finalizeTx, holdId);
+        await finalizeTx.query(
+          `UPDATE leads SET base_price=$2, total_price=$3, deposit_required=true,
+                  deposit_amount_gate=$4, status='awaiting_deposit', is_quote_only=false, financial_status='awaiting_deposit',
+                  last_quote_updated_at=NOW()
+            WHERE id=$1`,
+          [leadId, approvedQuote.subtotal, approvedQuote.customerTotal, depositAmount],
+        );
+        await finalizeTx.query(
+          `UPDATE bookings SET subtotal=$2, discount_total=$3, final_total=$4, status='awaiting_deposit' WHERE id=$1`,
+          [bookingId, approvedQuote.subtotal, approvedQuote.discountTotal, approvedQuote.customerTotal],
+        );
+        await finalizeTx.query("UPDATE booking_slot_holds SET status='awaiting_deposit',updated_at=NOW() WHERE id=$1", [holdId]);
+        finalStatus = "awaiting_deposit";
       }
+      await finalizeTx.query("COMMIT");
     } catch (quoteRevisionError) {
+      await finalizeTx.query("ROLLBACK");
       // The hold and lead are still useful for recovery, but they may not be
       // approved or invoiced until the revision service succeeds.
       console.error("[instant-booking/hold] quote revision creation failed:", quoteRevisionError instanceof Error ? quoteRevisionError.message : quoteRevisionError);
       if (autoBookEligible) {
         finalStatus = "pending_review";
         invoiceWarning = "Automatic approval could not finish, so the request was moved to staff review. No payment was taken.";
-        await pool.query(`UPDATE booking_slot_holds SET status='pending_review', review_required=true WHERE id=$1`, [holdId]).catch(() => undefined);
-        await pool.query(`UPDATE bookings SET status='pending_review' WHERE id=$1`, [bookingId]).catch(() => undefined);
-        await pool.query(`UPDATE leads SET status='quote_requested', financial_status='quote' WHERE id=$1`, [leadId]).catch(() => undefined);
+
       }
-    }
+    } finally { finalizeTx.release(); }
 
     // Every quote request is offered for crew-size and quote sampling. The
     // pending-hold flag keeps it distinct from a confirmed dispatch.
     const [lead] = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
     if (lead) {
       await emitJobEvent("quote_requested", lead, {
+        ownerReviewOnly: true,
         eventId: `instant-booking-quote:${leadId}`,
         source: "instant_booking_hold",
         extra: { bookingId, holdId, pendingHold: true, expiresAt: expiresAt.toISOString() },
-      });
+      }).catch(error => console.error("[instant-booking] saved request notification failed", error));
     }
     try {
       const { emitCustomerLifecycleEvent } = await import("../services/customerLifecycle");
@@ -2015,7 +2030,7 @@ router.post("/instant-booking/hold", async (req: Request, res: Response) => {
       holdId,
       status: finalStatus,
       expiresAt: expiresAt.toISOString(),
-      quote,
+      quote: publicInstantQuote(quote),
       quoteRevisionId: approvedQuote?.id || quoteRevision?.id || null,
       quoteRevision: approvedQuote?.revision || quoteRevision?.revision || null,
       depositAmount,
@@ -3296,27 +3311,35 @@ const reviewInstantBookingHoldSchema = z.object({
 
 router.patch("/admin/booking-holds/:id", isAuthenticated, async (req: any, res: Response) => {
   if (!(await requireAdmin(req, res))) return;
+  let reviewClient: InstantBookingTransactionClient | null = null;
   try {
     await ensureInstantBookingTables();
     const input = reviewInstantBookingHoldSchema.parse(req.body);
-    const { rows } = await pool.query(
-      "SELECT h.*, b.id AS parent_booking_id FROM booking_slot_holds h " +
-      "JOIN bookings b ON b.id = h.booking_id WHERE h.id = $1 LIMIT 1",
-      [req.params.id],
-    );
-    const hold = rows[0];
-    if (!hold) return res.status(404).json({ error: "Booking hold not found" });
-    if (!["pending_review", "awaiting_deposit"].includes(String(hold.status))) {
-      return res.status(409).json({ error: "This hold is already " + String(hold.status) + "." });
+    const tx = await pool.connect() as unknown as InstantBookingTransactionClient;
+    reviewClient = tx;
+    await tx.query("BEGIN");
+    let hold;
+    try { hold = await lockActiveBookingHold(tx, req.params.id); }
+    catch (error) {
+      await tx.query("ROLLBACK");
+      return res.status(409).json({ error: (error as Error).message });
     }
     const actorId = req.user?.id || req.session?.userId || null;
     if (input.decision === "release") {
-      await pool.query(
+      await tx.query(
         "UPDATE booking_slot_holds SET status='released', admin_notes=$2, reviewed_by_user_id=$3, reviewed_at=NOW(), updated_at=NOW() WHERE id=$1",
         [hold.id, input.notes || null, actorId],
       );
-      await pool.query("UPDATE bookings SET status='cancelled' WHERE id=$1", [hold.booking_id]);
+      await tx.query("UPDATE bookings SET status='cancelled' WHERE id=$1", [hold.booking_id]);
+      await tx.query("UPDATE leads SET status='quote_requested',financial_status='quote',square_payment_url=NULL WHERE id=$1", [hold.lead_id]);
+      await tx.query("COMMIT");
       return res.json({ success: true, status: "released", message: "The pending hold was released. The lead remains available for a manual follow-up." });
+    }
+
+    if (hold.status === "awaiting_deposit") {
+      await tx.query("COMMIT");
+      return res.json({ success: true, status: hold.status, duplicate: true,
+        message: "This hold is already approved. Use the existing lead payment action if its deposit link needs recovery." });
     }
 
     const [lead] = await db.select().from(leads).where(eq(leads.id, hold.lead_id)).limit(1);
@@ -3368,24 +3391,22 @@ router.patch("/admin/booking-holds/:id", isAuthenticated, async (req: any, res: 
     if (!Number.isFinite(total) || total <= 0) return res.status(400).json({ error: "Enter an approved total before requesting the deposit." });
     const depositAmount = Math.round(total * 0.3 * 100) / 100;
 
-    await pool.query(
+    await lockActiveBookingHold(tx, hold.id);
+    await tx.query(
       "UPDATE booking_slot_holds SET status='awaiting_deposit', admin_notes=$2, reviewed_by_user_id=$3, reviewed_at=NOW(), expires_at=NOW()+INTERVAL '24 hours', updated_at=NOW() WHERE id=$1",
       [hold.id, input.notes || null, actorId],
     );
-    await pool.query(
+    await tx.query(
       "UPDATE bookings SET subtotal=$2, discount_total=$3, final_total=$4, status='awaiting_deposit' WHERE id=$1",
       [hold.booking_id, approvedQuote.subtotal.toFixed(2), approvedQuote.discountTotal.toFixed(2), total.toFixed(2)],
     );
-    await db.update(leads).set({
-      basePrice: approvedQuote.subtotal.toFixed(2),
-      totalPrice: total.toFixed(2),
-      depositRequired: true,
-      depositAmount: depositAmount.toFixed(2),
-      isQuoteOnly: false,
-      financialStatus: "awaiting_deposit",
-      quoteNotes: input.notes || lead.quoteNotes,
-      lastQuoteUpdatedAt: new Date(),
-    }).where(eq(leads.id, lead.id));
+    await tx.query(`UPDATE leads SET base_price=$2,total_price=$3,deposit_required=true,
+      deposit_amount_gate=$4,is_quote_only=false,financial_status='awaiting_deposit',
+      quote_notes=$5,last_quote_updated_at=NOW() WHERE id=$1`,
+      [lead.id, approvedQuote.subtotal, total, depositAmount, input.notes || lead.quoteNotes]);
+    await tx.query("COMMIT");
+    tx.release();
+    reviewClient = null;
 
     let paymentUrl: string | null = null;
     let depositSquareInvoiceId: string | null = null;
@@ -3459,9 +3480,12 @@ router.patch("/admin/booking-holds/:id", isAuthenticated, async (req: any, res: 
         : "Hold approved and awaiting deposit. No crew notification has been sent yet.",
     });
   } catch (error) {
+    if (reviewClient) await reviewClient.query("ROLLBACK").catch(() => undefined);
     if (error instanceof ZodError) return res.status(400).json({ error: "Check the review details", details: error.errors });
     console.error("[admin/booking-holds/:id] error:", error);
     return res.status(500).json({ error: "Failed to review the booking hold" });
+  } finally {
+    if (reviewClient) { await reviewClient.query("ROLLBACK").catch(() => undefined); reviewClient.release(); }
   }
 });
 

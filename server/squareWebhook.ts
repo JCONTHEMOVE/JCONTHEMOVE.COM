@@ -1,3 +1,4 @@
+import { settleVerifiedBookingHold } from "./services/instantBookingIntegrity";
 import type { Request, Response } from 'express';
 import crypto from 'crypto';
 import { pool } from './db';
@@ -116,6 +117,19 @@ export function createSquareWebhookHandler(effects: WebhookEffects) {
         }
 
         if (squareInvoiceId) {
+          const localInvoice = await storage.getSquareInvoiceBySquareId(squareInvoiceId);
+          let verifiedBookingInvoiceStatus: string | null = null;
+          if (localInvoice?.leadId) {
+            const table = await pool.query("SELECT to_regclass('public.booking_slot_holds') AS name");
+            const holds = table.rows[0]?.name
+              ? await pool.query("SELECT id FROM booking_slot_holds WHERE lead_id=$1 LIMIT 1", [localInvoice.leadId]) : { rows: [] };
+            if (holds.rows.length) {
+              // Verify before changing even the local invoice or issuing any
+              // existing payment effects. Redirects/intents are never evidence.
+              verifiedBookingInvoiceStatus = await squareInvoiceService.getInvoiceStatus(squareInvoiceId);
+              if (verifiedBookingInvoiceStatus !== "PAID") throw new Error("Booking invoice is not server-verified paid");
+            }
+          }
           const { claimSquareInvoicePaymentEffect } = await import("./services/squareWebhookIdempotency");
           const invoiceClaim = await claimSquareInvoicePaymentEffect(squareInvoiceId, webhookEventId);
           if (invoiceClaim.status === "processed") {
@@ -157,7 +171,6 @@ export function createSquareWebhookHandler(effects: WebhookEffects) {
             throw grantErr;
           }
 
-          const localInvoice = await storage.getSquareInvoiceBySquareId(squareInvoiceId);
           if (localInvoice) {
             await storage.updateSquareInvoiceStatus(squareInvoiceId, "paid", new Date());
             try {
@@ -202,9 +215,31 @@ export function createSquareWebhookHandler(effects: WebhookEffects) {
                   invoicePurpose: localInvoice.purpose,
                 });
 
+                let holdSettlement: "not_applicable" | "confirmed" | "payment_review" = "not_applicable";
+                if (payment.kind !== "partial") {
+                  if (verifiedBookingInvoiceStatus) {
+                    const tx = await pool.connect();
+                    try {
+                      await tx.query("BEGIN");
+                      holdSettlement = await settleVerifiedBookingHold(tx, localInvoice.leadId, verifiedBookingInvoiceStatus, localInvoice.quoteRevisionId);
+                      if (holdSettlement === "payment_review" && payment.kind === "deposit") {
+                        await tx.query("UPDATE leads SET deposit_paid=true WHERE id=$1", [localInvoice.leadId]);
+                      }
+                      await tx.query("COMMIT");
+                    } catch (error) { await tx.query("ROLLBACK"); throw error; }
+                    finally { tx.release(); }
+                  }
+                }
+
                 if (payment.kind === "partial") {
                   // Keep the paid invoice for reconciliation without settling the job.
                   console.log(`[Square webhook] Invoice ${squareInvoiceId} is a partial job payment; reconciliation required`);
+                } else if (holdSettlement === "payment_review") {
+                  await emitJobEvent("quote_requested", lead, {
+                    source: "square_webhook", ownerReviewOnly: true,
+                    note: "Verified payment arrived after hold expiry/release or before approval. Reconcile payment and schedule; do not dispatch.",
+                    extra: { squareInvoiceId, paymentScope: payment.kind, amountUsd: payment.invoiceAmount, holdPaymentReview: true },
+                  });
                 } else if (payment.kind === "deposit") {
                   const updated = await pool.query<{ status: string }>(
                     `UPDATE leads
@@ -315,24 +350,7 @@ export function createSquareWebhookHandler(effects: WebhookEffects) {
                   });
                 }
 
-                if (payment.kind !== "partial") {
-                  // A paid deposit or a full payment confirms an exact-time
-                  // hold. This does not imply that the full job balance is paid.
-                  try {
-                    await pool.query(
-                      "UPDATE booking_slot_holds SET status='confirmed', updated_at=NOW() " +
-                      "WHERE lead_id=$1 AND status='awaiting_deposit'",
-                      [localInvoice.leadId],
-                    );
-                    await pool.query(
-                      "UPDATE bookings SET status='booked' WHERE id IN " +
-                      "(SELECT booking_id FROM booking_slot_holds WHERE lead_id=$1 AND status='confirmed')",
-                      [localInvoice.leadId],
-                    );
-                  } catch (holdErr) {
-                    console.warn("[Square webhook] booking hold confirmation skipped:", holdErr instanceof Error ? holdErr.message : holdErr);
-                  }
-
+                if (payment.kind !== "partial" && holdSettlement !== "payment_review") {
                   if (lead.status !== "completed") {
                     try {
                       const { dispatchJob } = await import("./dispatch");

@@ -1,3 +1,4 @@
+import { HomepageBookingChat } from "@/components/homepage-booking-chat";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { ArrowRight, ArrowUpRight, Check, Gem, Gift, Hammer, Leaf, MapPin, Package, Star, Truck } from "lucide-react";
@@ -25,8 +26,8 @@ export default function HomePage() {
           <p className="jc-eyebrow"><span /> YOUR NORTHWOODS NEIGHBORS</p>
           <h1>Five-star movers.<br /><span>More help around<br className="jc-desktop-break" /> the corner.</span></h1>
           <p className="jc-hero-description">Moving is where we started. Helping you feel at home is what we do. Tell us what you need — we'll take it from there.</p>
-          <Link href="/book" className="jc-button jc-button-large">Start my request <ArrowUpRight size={21} /></Link>
-          <p className="jc-caption"><Check size={15} /> About 60 seconds. No account needed.</p>
+          <HomepageBookingChat />
+          <p className="jc-caption"><Check size={15} /> No account needed. Review before submitting.</p>
           <div className="jc-hero-trust"><span><Star size={17} /> Five-star customer reviews</span><span><MapPin size={17} /> Ironwood & the Northwoods</span></div>
         </div>
         <div className="jc-hero-photo"><img src={crewImage} alt="The JC ON THE MOVE crew with a carefully loaded moving truck in the Northwoods" fetchPriority="high" width="750" height="1000" /><div className="jc-photo-note"><span className="jc-note-dot" /><div><strong>Real people. A helping hand.</strong><span>Your local JC ON THE MOVE crew.</span></div></div></div>

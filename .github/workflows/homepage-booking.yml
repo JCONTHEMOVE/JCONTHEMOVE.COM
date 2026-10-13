@@ -1,0 +1,40 @@
+name: Homepage booking synthetic acceptance
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ledger_test
+          POSTGRES_PASSWORD: disposable_test_only
+          POSTGRES_DB: jc_ledger_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U ledger_test -d jc_ledger_test"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: node --import tsx server/services/__tests__/homepageBooking.test.ts
+      - run: node --import tsx server/services/__tests__/homepagePaymentGate.test.ts
+      - run: node scripts/homepage-booking.test.mjs
+      - name: PostgreSQL transactions and mocked Square operations
+        env:
+          TEST_DATABASE_URL: postgresql://ledger_test:disposable_test_only@127.0.0.1:5432/jc_ledger_test
+        run: node --import tsx scripts/check-homepage-booking.ts --postgres
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/homepage-booking-browser.mjs
+      - run: npm run build
+      # Deliberately no production secrets, customer records, messaging, merge or deploy.

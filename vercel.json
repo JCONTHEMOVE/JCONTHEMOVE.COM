@@ -2,7 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
     "deploymentEnabled": {
-      "agent/open-task-completion-20260908": false
+      "agent/open-task-completion-20260908": false,
+      "feat/issue-58-homepage-booking-chat": false
     }
   }
 }
