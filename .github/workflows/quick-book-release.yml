@@ -30,6 +30,9 @@ jobs:
           node --import tsx server/services/__tests__/quickBookAvailability.test.ts
           node --import tsx server/services/__tests__/quickBookSchedule.test.ts
           node --import tsx server/services/__tests__/quickBookCommit.test.ts
+          node --import tsx server/services/__tests__/quickBookStartNow.test.ts
+      - name: Quick Book current-window and refresh controls
+        run: node --test scripts/quick-book-start-now.test.mjs scripts/quick-book-address.test.mjs
       - run: npm run test:server
       - name: Phone rewards enrollment guards
         run: |

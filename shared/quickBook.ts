@@ -38,6 +38,8 @@ export const quickBookDraftSchema = z.object({
   smsConsent: z.boolean().nullable().default(null),
   confirmedDate: z.string().trim().max(10).default(""),
   arrivalWindow: z.string().trim().max(100).default(""),
+  // An explicit staff choice; never inferred by conversational extraction.
+  startNow: z.boolean().default(false),
   pickupAddress: z.string().trim().max(500).default(""),
   destinationAddress: z.string().trim().max(500).default(""),
   pickupAccessCode: z.string().trim().max(1000).default(""),
@@ -190,7 +192,24 @@ export type QuickBookSessionResponse = {
   leadId?: string | null;
   startedAt: string;
   updatedAt: string;
+  serverNow?: string;
+  bookingBlocker?: "owner_required" | "live_booking_disabled" | null;
 };
+
+export function quickBookLocalClock(now = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone: JC_OPERATIONS_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(now).map(part => [part.type, part.value]));
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
+}
+
+/** The current Central window is [start, end); never move an old draft forward silently. */
+export function currentQuickBookWindow(now = new Date()) {
+  const clock = quickBookLocalClock(now);
+  const slot = JOB_SCHEDULE_OPTIONS.find(option => option.start?.slice(0, 2) === clock.time.slice(0, 2));
+  return slot ? { confirmedDate: clock.date, arrivalWindow: slot.value } : null;
+}
 
 export function quickBookPhoneIsComplete(value: string) {
   return normalizeCustomerPhone(value) !== null;
@@ -225,14 +244,15 @@ export function evaluateQuickBookReadiness(
   const calendarDate = new Date(`${draft.confirmedDate}T12:00:00Z`);
   const validDate = /^\d{4}-\d{2}-\d{2}$/.test(draft.confirmedDate)
     && Number.isFinite(calendarDate.getTime()) && calendarDate.toISOString().slice(0, 10) === draft.confirmedDate;
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
-    timeZone: JC_OPERATIONS_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).formatToParts(options.now || new Date()).map(part => [part.type, part.value]));
-  const today = `${parts.year}-${parts.month}-${parts.day}`;
+  const now = options.now || new Date();
+  const { date: today, time } = quickBookLocalClock(now);
+  const current = currentQuickBookWindow(now);
   const slot = JOB_SCHEDULE_OPTIONS.find(option => option.start && option.value === draft.arrivalWindow);
   if (!validDate || draft.confirmedDate < today) missingFields.push("confirmed date");
-  if (!slot || (draft.confirmedDate === today && slot.start! <= `${parts.hour}:${parts.minute}`)) missingFields.push("one-hour arrival window");
+  const currentWindowSelected = current?.confirmedDate === draft.confirmedDate && current.arrivalWindow === draft.arrivalWindow;
+  if (!slot || (draft.startNow
+    ? !currentWindowSelected
+    : draft.confirmedDate === today && slot.start! <= time)) missingFields.push("one-hour arrival window");
   if (!draft.workScope) missingFields.push("work scope");
   if (!draft.truckConfig) missingFields.push("truck or equipment choice");
   if (draft.stairsFlights === null) missingFields.push("stairs");
