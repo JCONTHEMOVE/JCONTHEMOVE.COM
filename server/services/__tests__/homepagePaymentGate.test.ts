@@ -5,7 +5,7 @@ import ts from "typescript";
 // before invoice-paid writes, reward effects or scheduling confirmation.
 const source = readFileSync("server/squareWebhook.ts", "utf8");
 const start = source.indexOf('          const localInvoice = await storage.getSquareInvoiceBySquareId(squareInvoiceId);');
-const end = source.indexOf('          const { claimSquareInvoicePaymentEffect }', start);
+const end = source.indexOf('          // Task #199', start);
 assert.ok(start > 0 && end > start);
 const compiled = ts.transpileModule(`async function run(){${source.slice(start,end)} return verifiedBookingInvoiceStatus;}`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
 for (const providerState of ["UNPAID", "DRAFT", "SCHEDULED", "PARTIALLY_PAID", "PAID"]) {

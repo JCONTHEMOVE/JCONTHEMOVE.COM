@@ -117,19 +117,6 @@ export function createSquareWebhookHandler(effects: WebhookEffects) {
         }
 
         if (squareInvoiceId) {
-          const localInvoice = await storage.getSquareInvoiceBySquareId(squareInvoiceId);
-          let verifiedBookingInvoiceStatus: string | null = null;
-          if (localInvoice?.leadId) {
-            const table = await pool.query("SELECT to_regclass('public.booking_slot_holds') AS name");
-            const holds = table.rows[0]?.name
-              ? await pool.query("SELECT id FROM booking_slot_holds WHERE lead_id=$1 LIMIT 1", [localInvoice.leadId]) : { rows: [] };
-            if (holds.rows.length) {
-              // Verify before changing even the local invoice or issuing any
-              // existing payment effects. Redirects/intents are never evidence.
-              verifiedBookingInvoiceStatus = await squareInvoiceService.getInvoiceStatus(squareInvoiceId);
-              if (verifiedBookingInvoiceStatus !== "PAID") throw new Error("Booking invoice is not server-verified paid");
-            }
-          }
           const { claimSquareInvoicePaymentEffect } = await import("./services/squareWebhookIdempotency");
           const invoiceClaim = await claimSquareInvoicePaymentEffect(squareInvoiceId, webhookEventId);
           if (invoiceClaim.status === "processed") {
@@ -141,6 +128,20 @@ export function createSquareWebhookHandler(effects: WebhookEffects) {
             throw new Error("Square invoice payment is still processing");
           }
           claimedPaymentInvoice = invoiceClaim.claim;
+          const localInvoice = await storage.getSquareInvoiceBySquareId(squareInvoiceId);
+          let verifiedBookingInvoiceStatus: string | null = null;
+          if (localInvoice?.leadId) {
+            const table = await pool.query("SELECT to_regclass('public.booking_slot_holds') AS name");
+            const holds = table.rows[0]?.name
+              ? await pool.query("SELECT id FROM booking_slot_holds WHERE lead_id=$1 LIMIT 1", [localInvoice.leadId]) : { rows: [] };
+            if (holds.rows.length) {
+              // Only the claimed attempt performs verification. Verify before
+              // changing the invoice or issuing any existing payment effects;
+              // redirects/intents are never evidence.
+              verifiedBookingInvoiceStatus = await squareInvoiceService.getInvoiceStatus(squareInvoiceId);
+              if (verifiedBookingInvoiceStatus !== "PAID") throw new Error("Booking invoice is not server-verified paid");
+            }
+          }
           // Task #199 — fire any shop-card wallet grants tied to this
           // invoice. This runs FIRST and is idempotent so duplicate
           // webhook deliveries can't double-mint. Gated on isFullyPaid
