@@ -167,8 +167,9 @@ export function mergeQuickBookDraft(args: {
   }
 
   const crewPlanKeys = ["crewSize", "estimatedHours", "confirmedDate", "arrivalWindow"];
-  if (crewPlanKeys.some((key) => next[key] !== args.current[key as keyof QuickBookDraft])
-      && !(args.source === "tap" && patch.crewConfirmed === true)) {
+  // A full-draft patch may carry a stale confirmation alongside a changed plan.
+  // Confirming the crew must happen after the server has accepted that plan.
+  if (crewPlanKeys.some((key) => next[key] !== args.current[key as keyof QuickBookDraft])) {
     next.crewConfirmed = false;
   }
   if (args.source === "tap" && Object.prototype.hasOwnProperty.call(args.patch, "crewMemberIds")

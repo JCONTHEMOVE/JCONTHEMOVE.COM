@@ -32,6 +32,17 @@ const retargeted = mergeQuickBookDraft({current:currentDraft,patch:{startNow:tru
 assert.deepEqual([retargeted.draft.confirmedDate,retargeted.draft.arrivalWindow],[current.confirmedDate,current.arrivalWindow],'Server time wins over client-supplied dates');
 const moved = mergeQuickBookDraft({current:quickBookDraftSchema.parse({...currentDraft,confirmedDate:'2026-10-14'}),patch:{startNow:true},source:'tap',now});
 assert.equal(moved.draft.crewConfirmed,false,'Moving a different date into now requires crew reconfirmation');
+for (const prior of [
+  {...currentDraft,confirmedDate:'2026-10-14'},
+  {...currentDraft,arrivalWindow:'10:00 AM – 11:00 AM'},
+]) {
+  const movedWithConfirmation = mergeQuickBookDraft({current:prior,patch:{...prior,startNow:true,crewConfirmed:true},source:'tap',now});
+  assert.equal(movedWithConfirmation.draft.crewConfirmed,false,'Start now clears a stale confirmation carried in a full-draft patch');
+  const reconfirmed = mergeQuickBookDraft({current:movedWithConfirmation.draft,patch:{crewConfirmed:true},source:'tap',now});
+  assert.equal(reconfirmed.draft.crewConfirmed,true,'The updated plan can be confirmed in a subsequent tap');
+}
+const samePlanConfirmation = mergeQuickBookDraft({current:currentDraft,patch:{...currentDraft,startNow:true,crewConfirmed:true},source:'tap',now});
+assert.equal(samePlanConfirmation.draft.crewConfirmed,true,'A full-draft patch retains confirmation when the server-selected plan is unchanged');
 const future = mergeQuickBookDraft({current:started.draft,patch:{arrivalWindow:'10:00 AM – 11:00 AM'},source:'tap',now});
 assert.equal(future.draft.startNow,false,'A schedule change clears Start now');
 assert.equal(future.draft.crewConfirmed,false);
