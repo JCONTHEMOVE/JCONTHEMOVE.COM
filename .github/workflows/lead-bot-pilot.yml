@@ -41,7 +41,7 @@ jobs:
           POSTGRES_DB: jc_ledger_test
         ports: ['5432:5432']
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres -d jc_ledger_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10

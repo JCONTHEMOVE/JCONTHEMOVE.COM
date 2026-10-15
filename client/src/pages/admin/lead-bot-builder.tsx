@@ -66,20 +66,20 @@ export default function LeadBotBuilder() {
     }} className="space-y-5">
       <label className="block text-sm">Bot name<Input className="mt-1" value={config.name} maxLength={80} onChange={e => field("name", e.target.value)} required /></label>
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="block text-sm">Representative<select className={selectClass} value={config.representativeId} required onChange={e => { field("representativeId", e.target.value); field("variantId", ""); field("campaignId", ""); field("promotionId", null); }}>
+        <label className="block text-sm">Representative<select aria-label="Representative" className={selectClass} value={config.representativeId} required onChange={e => { field("representativeId", e.target.value); field("variantId", ""); field("campaignId", ""); field("promotionId", null); }}>
           <option value="">Choose a representative</option>{data?.representatives.map(r => <option key={r.id} value={r.id} disabled={!r.user_id}>{r.display_name}{!r.user_id ? " — link a user first" : ""}</option>)}
         </select></label>
-        <label className="block text-sm">Service<select className={selectClass} value={config.service} onChange={e => { field("service", e.target.value as LeadBotConfig["service"]); field("campaignId", ""); field("variantId", ""); }}>
+        <label className="block text-sm">Service<select aria-label="Service" className={selectClass} value={config.service} onChange={e => { field("service", e.target.value as LeadBotConfig["service"]); field("campaignId", ""); field("variantId", ""); }}>
           {Object.entries(LEAD_BOT_SERVICES).map(([value, service]) => <option key={value} value={value}>{service.label}</option>)}
         </select></label>
-        <label className="block text-sm">Territory<select className={selectClass} value={config.territory} onChange={e => { field("territory", e.target.value as LeadBotConfig["territory"]); field("campaignId", ""); field("variantId", ""); }}>
+        <label className="block text-sm">Territory<select aria-label="Territory" className={selectClass} value={config.territory} onChange={e => { field("territory", e.target.value as LeadBotConfig["territory"]); field("campaignId", ""); field("variantId", ""); }}>
           {Object.entries(MARKETING_TERRITORY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select></label>
-        <label className="block text-sm">Approved promotion<select className={selectClass} value={config.promotionId || ""} onChange={e => field("promotionId", e.target.value || null)}>
+        <label className="block text-sm">Approved promotion<select aria-label="Approved promotion" className={selectClass} value={config.promotionId || ""} onChange={e => field("promotionId", e.target.value || null)}>
           <option value="">No promotion</option>{promotions.map(p => <option key={p.id} value={p.id}>{p.code} — {p.description}</option>)}
         </select></label>
       </div>
-      <label className="block text-sm">Approved campaign<select className={selectClass} value={config.variantId} required onChange={e => { const campaign = availableCampaigns.find(c => c.variant_id === e.target.value); field("variantId", campaign?.variant_id || ""); field("campaignId", campaign?.id || ""); }}>
+      <label className="block text-sm">Approved campaign<select aria-label="Approved campaign" className={selectClass} value={config.variantId} required onChange={e => { const campaign = availableCampaigns.find(c => c.variant_id === e.target.value); field("variantId", campaign?.variant_id || ""); field("campaignId", campaign?.id || ""); }}>
         <option value="">Choose the campaign for this pilot</option>{availableCampaigns.map(c => <option key={c.variant_id} value={c.variant_id}>{c.headline}</option>)}
       </select></label>
       {!availableCampaigns.length && <p className="text-sm text-slate-300">Choose a representative, service and territory with an approved campaign in the Campaigns tab. No sample campaign will be added to your live records.</p>}

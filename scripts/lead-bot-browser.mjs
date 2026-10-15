@@ -25,9 +25,10 @@ export async function runLeadBotBrowser({ app, origin, botId }) {
   app.get("/synthetic-app.css", async (_req, res) => res.type("css").send(await readFile(output.replace(/\.js$/, ".css"), "utf8")));
   app.get(["/lead-bot/:id", "/synthetic-owner-builder"], (_req, res) => res.type("html").send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/synthetic-app.css"><title>Synthetic JC lead-bot test</title></head><body style="margin:0"><div id="root"></div><script type="module" src="/synthetic-app.js"></script></body></html>`));
   const browser = await chromium.launch({ headless: true });
+  let page;
   try {
     const context = await browser.newContext({ extraHTTPHeaders: { "x-test-user": "owner" } });
-    const page = await context.newPage();
+    page = await context.newPage();
     const errors = []; page.on("pageerror", e => errors.push(e.message));
     const fill = (label, value) => page.getByLabel(label, { exact: true }).fill(value);
     const next = () => page.getByRole("button", { name: "Continue", exact: true }).click();
@@ -101,5 +102,8 @@ export async function runLeadBotBrowser({ app, origin, botId }) {
     await page.getByText("paused", { exact: true }).waitFor();
     assert.deepEqual(errors, [], "No browser runtime errors");
     console.log("PASS: actual Chromium at 320/390/1280px, owner preview, builder edit/approval/pause, canonical HTTP conversion and lost-response retry");
+  } catch (error) {
+    if (page) console.error("Synthetic browser page at failure:", await page.locator("body").innerText());
+    throw error;
   } finally { await browser.close(); }
 }
