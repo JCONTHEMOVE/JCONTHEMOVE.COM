@@ -32,6 +32,8 @@ import {
 } from "./services/quickBookAi";
 import {
   EMPTY_QUICK_BOOK_DRAFT,
+  currentQuickBookWindow,
+  quickBookLocalClock,
   evaluateQuickBookReadiness,
   quickBookDraftSchema,
   quickBookInventorySchema,
@@ -867,6 +869,12 @@ async function calculateQuickBookState(draftInput: unknown): Promise<QuickBookSt
 
 function quickBookNextPrompt(state: QuickBookState) {
   const first = state.missingFields[0];
+  const now = new Date();
+  const clock = quickBookLocalClock(now);
+  const current = currentQuickBookWindow(now);
+  const scheduleSuggestions = JOB_SCHEDULE_OPTIONS.filter(option => option.start
+    && (state.draft.confirmedDate !== clock.date || option.start > clock.time)).map(option => option.value);
+  if (current && state.draft.confirmedDate === clock.date) scheduleSuggestions.unshift("Start now");
   const prompts: Record<string, { question: string; suggestions: string[] }> = {
     "customer name": { question: "What is the customer's full name?", suggestions: [] },
     "10-digit phone": { question: "What is the customer's 10-digit phone number?", suggestions: [] },
@@ -874,7 +882,7 @@ function quickBookNextPrompt(state: QuickBookState) {
     "complete pickup address": { question: "What is the complete pickup or service address, including city/state or ZIP?", suggestions: [] },
     "complete destination address": { question: "What is the complete destination address?", suggestions: [] },
     "confirmed date": { question: "What date is the job confirmed for?", suggestions: ["Tomorrow", "This Friday"] },
-    "one-hour arrival window": { question: "Choose the one-hour Central arrival window.", suggestions: JOB_SCHEDULE_OPTIONS.slice(0, 5).map((option) => option.value) },
+    "one-hour arrival window": { question: "Choose a future Central arrival window, or tap Start now for the current window.", suggestions: scheduleSuggestions.slice(0, 5) },
     "work scope": { question: "Is the crew loading, unloading, or doing both?", suggestions: ["Load only", "Unload only", "Load and unload"] },
     "truck or equipment choice": { question: "Whose truck or equipment will be used?", suggestions: ["Customer truck", "Rental U-Haul", "JC company truck", "No truck"] },
     stairs: { question: "How many flights of stairs are involved?", suggestions: ["No stairs", "1 flight", "2 flights"] },
@@ -916,6 +924,7 @@ function quickBookSessionResponse(row: any, state: QuickBookState): QuickBookSes
     leadId: row.leadId || null,
     startedAt: new Date(row.createdAt).toISOString(),
     updatedAt: new Date(row.updatedAt).toISOString(),
+    serverNow: new Date().toISOString(),
   };
 }
 
@@ -12144,10 +12153,14 @@ Thank you for your business!
     return actor && (["admin", "business_owner"].includes(actor.role) || approvedEmployee) ? actor : null;
   }
 
+  function quickBookCompletionBlocker(actor: any): QuickBookSessionResponse["bookingBlocker"] {
+    if (actor?.role !== "admin" && actor?.role !== "business_owner") return "owner_required";
+    if (process.env.QUICK_BOOK_ENABLED !== "true" || process.env.QUICK_BOOK_LIVE_BOOKING_ENABLED !== "true") return "live_booking_disabled";
+    return null;
+  }
+
   function canCompleteQuickBooking(actor: any) {
-    return process.env.QUICK_BOOK_ENABLED === "true"
-      && process.env.QUICK_BOOK_LIVE_BOOKING_ENABLED === "true"
-      && (actor?.role === "admin" || actor?.role === "business_owner");
+    return quickBookCompletionBlocker(actor) === null;
   }
 
   function canReadQuickBookSession(actor: any, row: any) {
@@ -12160,7 +12173,7 @@ Thank you for your business!
     return res.json({
       ok: true,
       enabled: process.env.QUICK_BOOK_ENABLED === "true",
-      canComplete: canCompleteQuickBooking(actor),
+      canComplete: canCompleteQuickBooking(actor), bookingBlocker: quickBookCompletionBlocker(actor),
       rollout: {
         ownerOnly: process.env.QUICK_BOOK_OWNER_ONLY !== "false",
         staffDrafts: process.env.QUICK_BOOK_STAFF_DRAFT_ENABLED === "true",
@@ -12199,7 +12212,7 @@ Thank you for your business!
       }
       const row = await createQuickBookSession(actor.id);
       const state = await calculateQuickBookState(sessionDraft(row));
-      return res.status(201).json({ ...quickBookSessionResponse(row, state), canComplete: canCompleteQuickBooking(actor) });
+      return res.status(201).json({ ...quickBookSessionResponse(row, state), canComplete: canCompleteQuickBooking(actor), bookingBlocker: quickBookCompletionBlocker(actor) });
     } catch (error) {
       console.error("[quick-book] create session failed:", error);
       return res.status(500).json({ error: "Could not start Quick Book" });
@@ -12214,7 +12227,7 @@ Thank you for your business!
       const row = await getLatestQuickBookDraft(actor.id);
       if (!row) return res.json(null);
       const state = await calculateQuickBookState(sessionDraft(row));
-      return res.json({ ...quickBookSessionResponse(row, state), canComplete: canCompleteQuickBooking(actor) });
+      return res.json({ ...quickBookSessionResponse(row, state), canComplete: canCompleteQuickBooking(actor), bookingBlocker: quickBookCompletionBlocker(actor) });
     } catch (error) {
       console.error("[quick-book] resume lookup failed:", error);
       return res.status(500).json({ error: "Could not find your saved Quick Book draft. Please retry." });
@@ -12230,7 +12243,7 @@ Thank you for your business!
       if (!row) return res.status(404).json({ error: "Quick Book draft not found" });
       if (!canReadQuickBookSession(actor, row)) return res.status(403).json({ error: "This draft belongs to another staff member" });
       const state = await calculateQuickBookState(sessionDraft(row));
-      return res.json({ ...quickBookSessionResponse(row, state), canComplete: canCompleteQuickBooking(actor) });
+      return res.json({ ...quickBookSessionResponse(row, state), canComplete: canCompleteQuickBooking(actor), bookingBlocker: quickBookCompletionBlocker(actor) });
     } catch (error) {
       console.error("[quick-book] load session failed:", error);
       return res.status(500).json({ error: "Could not load Quick Book draft" });
@@ -12315,8 +12328,9 @@ Thank you for your business!
         },
       });
       if (!updated) return res.status(409).json({ error: "This draft changed on another screen. Reload it before continuing." });
-      return res.json({ ...quickBookSessionResponse(updated, state), canComplete: canCompleteQuickBooking(actor) });
+      return res.json({ ...quickBookSessionResponse(updated, state), canComplete: canCompleteQuickBooking(actor), bookingBlocker: quickBookCompletionBlocker(actor) });
     } catch (error) {
+      if (error instanceof Error && error.message === "START_NOW_OUTSIDE_HOURS") return res.status(400).json({ error: "Start now is available from 7:00 AM until 5:00 PM Central. Choose a future arrival window." });
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.issues[0]?.message || "Invalid Quick Book update" });
       console.error("[quick-book] message failed:", error);
       return res.status(500).json({ error: "Could not update Quick Book" });
@@ -12357,7 +12371,12 @@ Thank you for your business!
       const actor = await quickBookActor(req);
       if (!actor) return res.status(403).json({ error: "Approved staff access required" });
       if (process.env.QUICK_BOOK_ENABLED !== "true") return res.status(503).json({ error: "Quick Book is temporarily disabled" });
-      if (!canCompleteQuickBooking(actor)) return res.status(403).json({ error: "An owner or administrator must complete live Quick Book jobs. This draft is safely saved." });
+      if (!canCompleteQuickBooking(actor)) return res.status(403).json({
+        bookingBlocker: quickBookCompletionBlocker(actor),
+        error: quickBookCompletionBlocker(actor) === "live_booking_disabled"
+          ? "Live Quick Book is disabled in the server configuration. Your draft is saved; enabling booking requires a deployment configuration change."
+          : "An owner or administrator must complete live Quick Book jobs. This draft is safely saved.",
+      });
       const input = quickBookFinalizeSchema.parse(req.body);
       const row = await getQuickBookSession(req.params.id);
       if (!row) return res.status(404).json({ error: "Quick Book draft not found" });
@@ -12365,10 +12384,11 @@ Thank you for your business!
       const storedBookKey = row.agentMetadata && typeof row.agentMetadata === "object"
         ? String((row.agentMetadata as any).bookIdempotencyKey || "")
         : "";
+      let startNowBookedAt = (row.metrics as any)?.startNowBookedAt || null;
       const eventId = `quick-book:${row.id}:${storedBookKey || input.idempotencyKey}`;
       if (row.status === "booked" && row.leadId) {
         savedStatus = 200;
-        savedBooking = { success: true, alreadyBooked: true, bookingId: row.bookingId, leadId: row.leadId,
+        savedBooking = { success: true, alreadyBooked: true, bookingId: row.bookingId, leadId: row.leadId, startNowBookedAt,
           total: Number((row.pricingPreview as any)?.total || 0), rewardBasis: Number((row.pricingPreview as any)?.rewardEligibleTotal || 0),
           customerMessageSent: false, squareInvoiceCreated: false, deliveries: [] };
         const bookedDraft = sessionDraft(row);
@@ -12393,6 +12413,7 @@ Thank you for your business!
         return res.json({
           success: true,
           alreadyBooked: true,
+          startNowBookedAt,
           bookingId: row.bookingId,
           leadId: row.leadId,
           orderNumber: bookedLead?.orderNumber ?? null,
@@ -12464,6 +12485,13 @@ Thank you for your business!
         ...(quote.elevator ? [{ code: "elevator", label: "Elevator access", amount: quote.elevator }] : []),
         ...(quote.discountAmount ? [{ code: "promotion", label: quote.promotion?.code || "Promotion", amount: -quote.discountAmount }] : []),
       ];
+      // Recheck the clock after pricing/worker locks. A saved Start now choice
+      // must not silently roll into a different window while the form is idle.
+      const bookedAt = new Date();
+      if (!evaluateQuickBookReadiness(draft, { now: bookedAt }).ready) {
+        return await abortBooking(409, { error: "The selected arrival window is no longer valid. Reload the draft and select Start now or a future window." });
+      }
+      startNowBookedAt = draft.startNow ? bookedAt.toISOString() : null;
       const jobPlanDetails = {
         stairsFlights: draft.stairsFlights,
         hasElevator: draft.hasElevator,
@@ -12478,6 +12506,9 @@ Thank you for your business!
         truckConfig: effectiveTruckConfig,
         trailerRequested: effectiveTrailerRequested,
         quickBookSessionId: row.id,
+        // Booking now releases the saved crew plan. Actual dispatch, departure,
+        // arrival and work remain in their existing, separately verified flow.
+        ...(startNowBookedAt ? { startNowBookedAt } : {}),
       };
       const encryptedAccess = encryptJobAccessDetails({
         accessCode: [draft.pickupAccessCode && `Pickup: ${draft.pickupAccessCode}`, draft.destinationAccessCode && `Destination: ${draft.destinationAccessCode}`].filter(Boolean).join("\n"),
@@ -12567,10 +12598,10 @@ Thank you for your business!
                metrics=COALESCE(metrics,'{}'::jsonb) || $9::jsonb
          WHERE id=$1 AND revision=$2 AND status IN ('draft','ready')
          RETURNING revision
-      `, [row.id, input.expectedRevision, JSON.stringify(sealQuickBookDraft(draft)), JSON.stringify(quote), JSON.stringify(state.crewSuggestions), bookingId, leadId, JSON.stringify({ bookIdempotencyKey: input.idempotencyKey }), JSON.stringify({ completionSeconds: Math.max(0, Math.round((Date.now() - new Date(row.createdAt).getTime()) / 1000)), quoteParity: true, bookedAt: new Date().toISOString() })]);
+      `, [row.id, input.expectedRevision, JSON.stringify(sealQuickBookDraft(draft)), JSON.stringify(quote), JSON.stringify(state.crewSuggestions), bookingId, leadId, JSON.stringify({ bookIdempotencyKey: input.idempotencyKey }), JSON.stringify({ completionSeconds: Math.max(0, Math.round((Date.now() - new Date(row.createdAt).getTime()) / 1000)), quoteParity: true, bookedAt: bookedAt.toISOString(), startNowBookedAt })]);
       if (!sessionUpdate.rowCount) throw new Error("Quick Book revision changed while booking");
       await client.query("COMMIT");
-      savedBooking = { success: true, bookingId, leadId, orderNumber: lead.order_number ?? null,
+      savedBooking = { success: true, bookingId, leadId, orderNumber: lead.order_number ?? null, startNowBookedAt,
         total: quote.total, rewardBasis: quote.rewardEligibleTotal,
         customerMessageSent: false, squareInvoiceCreated: false, deliveries: [] };
       client.release();
@@ -12604,6 +12635,7 @@ Thank you for your business!
         success: true,
         bookingId,
         leadId,
+        startNowBookedAt,
         orderNumber: lead.order_number ?? null,
         total: quote.total,
         rewardBasis: quote.rewardEligibleTotal,

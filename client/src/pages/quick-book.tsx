@@ -43,7 +43,7 @@ import {
 import { Suggestions, Suggestion } from "@/components/ai-elements/suggestion";
 import { SpeechInput } from "@/components/ai-elements/speech-input";
 import { JOB_SCHEDULE_OPTIONS } from "@shared/jcOperations";
-import { EMPTY_QUICK_BOOK_DRAFT, type QuickBookDraft, type QuickBookSessionResponse } from "@shared/quickBook";
+import { EMPTY_QUICK_BOOK_DRAFT, currentQuickBookWindow, evaluateQuickBookReadiness, type QuickBookDraft, type QuickBookSessionResponse } from "@shared/quickBook";
 
 const QUICK_BOOK_SCHEDULE_OPTIONS = JOB_SCHEDULE_OPTIONS.filter(option => option.start);
 
@@ -67,6 +67,7 @@ type BookedResult = {
   deliveries: Delivery[];
   customerMessageSent: false;
   squareInvoiceCreated: false;
+  startNowBookedAt?: string | null;
 };
 
 function buildVisualFixtureSession(): Session {
@@ -126,7 +127,9 @@ function buildVisualFixtureSession(): Session {
     agent: { provider: "deterministic", model: "visual-fixture", fallbackUsed: false },
     startedAt: now,
     updatedAt: now,
+    serverNow: now,
     canComplete: false,
+    bookingBlocker: "live_booking_disabled",
   };
 }
 
@@ -192,12 +195,22 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
   const startedRef = useRef(false);
   const sessionRef = useRef<Session | null>(null);
   const idempotencyRef = useRef(crypto.randomUUID());
+  const serverClockOffset = useRef(0);
+  const [clockNow, setClockNow] = useState(Date.now);
 
   const applySession = useCallback((next: Session) => {
+    const serverNow = Date.parse(next.serverNow || "");
+    if (Number.isFinite(serverNow)) serverClockOffset.current = serverNow - Date.now();
+    setClockNow(Date.now() + serverClockOffset.current);
     sessionRef.current = next;
     setSession(next);
     setDraft({ ...next.draft, ...queuedAddressPatch.current });
   }, [visualFixture]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockNow(Date.now() + serverClockOffset.current), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const createSession = useCallback(async () => {
     if (visualFixture) {
@@ -215,6 +228,22 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
     setBooked(null);
     idempotencyRef.current = crypto.randomUUID();
   }, [applySession, visualFixture]);
+
+  const refreshDraft = useCallback(async () => {
+    const current = sessionRef.current;
+    if (!current || busy || visualFixture) return;
+    setBusy(true);
+    try {
+      const next = await requestJson<Session>(`/api/quick-book/sessions/${current.id}`);
+      if (next.status === "booked" && next.leadId) return navigate(`/lead/${next.leadId}`);
+      applySession(next);
+      toast({ title: "Saved draft refreshed" });
+    } catch (error) {
+      toast({ title: "Could not refresh draft", description: error instanceof Error ? error.message : "Try again.", variant: "destructive" });
+    } finally {
+      setBusy(false);
+    }
+  }, [applySession, busy, navigate, toast, visualFixture]);
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -309,7 +338,7 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
   const handleSuggestion = useCallback((suggestion: string) => {
     const missing = sessionRef.current?.missingFields[0];
     if (missing === "text-message consent") return void applyPatch({ smsConsent: /^yes/i.test(suggestion) });
-    if (missing === "one-hour arrival window") return void applyPatch({ arrivalWindow: suggestion });
+    if (missing === "one-hour arrival window") return void applyPatch(suggestion === "Start now" ? { startNow: true } : { arrivalWindow: suggestion, startNow: false });
     if (missing === "work scope") {
       const value = /unload only/i.test(suggestion) ? "unload_only" : /load and unload/i.test(suggestion) ? "load_unload" : "load_only";
       return void applyPatch({ workScope: value });
@@ -337,6 +366,15 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
   const quoteTotal = quoteAmount(quote?.total);
   const rewardBasis = quoteAmount(quote?.rewardEligibleTotal);
   const elapsedSeconds = Math.max(0, Math.round((Date.now() - new Date(session?.startedAt || Date.now()).getTime()) / 1000));
+  const currentWindow = currentQuickBookWindow(new Date(clockNow));
+  const scheduleReady = Boolean(draft && !evaluateQuickBookReadiness(draft, { now: new Date(clockNow) }).missingFields
+    .some(field => field === "confirmed date" || field === "one-hour arrival window"));
+  const bookLabel = draft?.startNow ? "Start now & Alert Crew" : "Book & Alert Crew";
+  const bookingAccessMessage = session?.bookingBlocker === "live_booking_disabled"
+    ? "Live Quick Book is turned off. Your owner/admin account can save this draft, but posting requires live booking to be enabled."
+    : session?.bookingBlocker === "owner_required"
+      ? "Your staff account can save this draft. An owner or administrator must perform the final booking."
+      : "Booking is unavailable. Your draft is saved. Refresh to check booking access.";
 
   const recommendedCrew = useMemo(() => session?.crewSuggestions.filter((worker) => worker.recommended && worker.available).slice(0, draft?.crewSize || 0) || [], [draft?.crewSize, session?.crewSuggestions]);
 
@@ -362,7 +400,7 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
 
   const bookJob = useCallback(async () => {
     const current = sessionRef.current;
-    if (!current || !current.readiness.ready || busy) return;
+    if (!current || !current.readiness.ready || !current.canComplete || !scheduleReady || busy || queuedAddressPatch.current) return;
     setBusy(true);
     try {
       const result = await requestJson<BookedResult>(`/api/quick-book/sessions/${current.id}/book`, {
@@ -376,7 +414,7 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
     } finally {
       setBusy(false);
     }
-  }, [busy, toast]);
+  }, [busy, scheduleReady, toast]);
 
   if (loading) {
     return <div className="flex min-h-[70vh] items-center justify-center bg-slate-950 text-white"><Loader2 className="h-8 w-8 animate-spin text-cyan-300" /></div>;
@@ -412,6 +450,7 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
               <CheckCircle2 className="mx-auto h-14 w-14 text-emerald-300" />
               <h1 className="mt-3 text-2xl font-black">Job booked and crew alerts attempted</h1>
               <p className="mt-1 text-sm text-slate-300">Job {booked.orderNumber ? `JC-${booked.orderNumber}` : booked.leadId} · ${booked.total ? `$${booked.total.toFixed(2)}` : "Exact quote saved"}</p>
+              {booked.startNowBookedAt && <p className="mt-2 text-sm text-cyan-200">Booked for the current window. Open the job to finish dispatch and coordinate pickup; on-site work has not been marked started.</p>}
             </div>
             <div className="rounded-xl border border-slate-700 bg-slate-950/60 p-4 text-sm">
               <p className="font-bold text-slate-200">Delivery record</p>
@@ -450,7 +489,12 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
             <p className="truncate text-xs text-slate-400">Talk or type · exact server quote · one final tap</p>
           </div>
           <Badge variant="outline" className="border-cyan-400/40 text-cyan-200"><Clock3 className="mr-1 h-3 w-3" />{elapsedSeconds}s</Badge>
-          <Button type="button" variant="outline" size="icon" className="h-11 w-11" disabled={busy} onClick={() => void createSession()} aria-label="Start a new Quick Book"><RefreshCw className="h-4 w-4" /></Button>
+          <Button type="button" variant="outline" size="icon" className="h-11 w-11 shrink-0" disabled={busy} onClick={() => void refreshDraft()} aria-label="Refresh saved draft"><RefreshCw className="h-4 w-4" /></Button>
+          <Button type="button" variant="outline" className="h-11 w-11 shrink-0 px-0 sm:w-auto sm:px-4" aria-label="Start a new Quick Book" disabled={busy} onClick={() => {
+            if (!window.confirm("Start a new Quick Book? The current draft will be set aside.")) return;
+            setBusy(true);
+            void createSession().catch(error => toast({ title: "Could not start a new draft", description: String(error), variant: "destructive" })).finally(() => setBusy(false));
+          }}><Plus className="h-4 w-4 sm:mr-1" /><span className="hidden sm:inline">New</span></Button>
         </div>
       </header>
 
@@ -532,9 +576,12 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
             <CardContent className="grid gap-3 sm:grid-cols-2">
               <FieldShell label="Pickup / service address" missing={missing("complete pickup address")}><PlacesAutocomplete value={draft.pickupAddress} onChange={(value) => setDraft(current => current ? { ...current, pickupAddress: value } : current)} onPlaceSelect={(place) => queueAddressPatch("pickupAddress", place.fullAddress)} onBlur={(event) => queueAddressPatch("pickupAddress", event.currentTarget.value)} aria-label="Pickup or service address" inputClassName="min-h-11 w-full rounded-md border border-slate-700 bg-black px-3 py-2 text-white" placeholder="Street, city, state or ZIP" /></FieldShell>
               <FieldShell label="Destination" missing={missing("complete destination address")}><PlacesAutocomplete value={draft.destinationAddress} onChange={(value) => setDraft(current => current ? { ...current, destinationAddress: value } : current)} onPlaceSelect={(place) => queueAddressPatch("destinationAddress", place.fullAddress)} onBlur={(event) => queueAddressPatch("destinationAddress", event.currentTarget.value)} aria-label="Destination address" inputClassName="min-h-11 w-full rounded-md border border-slate-700 bg-black px-3 py-2 text-white" placeholder="Required for load + unload" /></FieldShell>
-              <FieldShell label="Confirmed job date" missing={missing("confirmed date")}><Input type="date" value={draft.confirmedDate} onChange={(event) => void applyPatch({ confirmedDate: event.target.value })} className="h-11 border-slate-700 bg-black" /></FieldShell>
+              <FieldShell label="Confirmed job date" missing={missing("confirmed date")}><Input type="date" value={draft.confirmedDate} onChange={(event) => void applyPatch({ confirmedDate: event.target.value, startNow: false })} className="h-11 border-slate-700 bg-black" /></FieldShell>
               <FieldShell label="One-hour arrival window" missing={missing("one-hour arrival window")}>
-                <Select value={draft.arrivalWindow || undefined} onValueChange={(value) => void applyPatch({ arrivalWindow: value })}><SelectTrigger className="h-11 border-slate-700 bg-black"><SelectValue placeholder="Choose a window" /></SelectTrigger><SelectContent>{QUICK_BOOK_SCHEDULE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
+                <Select value={draft.arrivalWindow || undefined} onValueChange={(value) => void applyPatch({ arrivalWindow: value, startNow: false })}><SelectTrigger className="h-11 border-slate-700 bg-black"><SelectValue placeholder="Choose a window" /></SelectTrigger><SelectContent>{QUICK_BOOK_SCHEDULE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
+                <Button type="button" variant="outline" className="min-h-11 w-full border-cyan-400/60 text-cyan-200" disabled={busy || !currentWindow} onClick={() => void applyPatch({ startNow: true })}><Clock3 className="mr-2 h-4 w-4" />Start now</Button>
+                <p className="text-xs text-slate-300">{currentWindow ? `Today · ${currentWindow.arrivalWindow} Central. Review the crew and quote, then post the job now.` : "Start now is available from 7 AM until 5 PM Central."}</p>
+                {draft.startNow && <p role="status" className="text-xs text-cyan-200">Start now selected. Pickup, dispatch and on-site work are tracked separately.</p>}
               </FieldShell>
               <FieldShell label="Pickup access code"><Input value={draft.pickupAccessCode} onChange={(event) => setDraft({ ...draft, pickupAccessCode: event.target.value })} onBlur={() => void applyPatch({ pickupAccessCode: draft.pickupAccessCode })} className="h-11 border-slate-700 bg-black" placeholder="Encrypted when saved" /></FieldShell>
               <FieldShell label="Entry instructions"><Input value={draft.pickupInstructions} onChange={(event) => setDraft({ ...draft, pickupInstructions: event.target.value })} onBlur={() => void applyPatch({ pickupInstructions: draft.pickupInstructions })} className="h-11 border-slate-700 bg-black" placeholder="Gate, parking, contact" /></FieldShell>
@@ -623,8 +670,9 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
                 <Badge variant="outline" className={session.readiness.ready ? "border-emerald-400 text-emerald-200" : "border-amber-400/60 text-amber-200"}>{session.readiness.ready ? "Ready" : `${session.missingFields.length + session.reviewReasons.length} checks`}</Badge>
               </div>
               {(session.missingFields.length > 0 || session.reviewReasons.length > 0) && <div className="rounded-xl border border-amber-400/30 bg-amber-400/5 p-3 text-sm text-amber-100"><p className="flex items-center gap-2 font-bold"><AlertTriangle className="h-4 w-4" />Saved as draft — no alerts</p><ul className="mt-2 space-y-1 text-xs"><li>{session.missingFields.join(" · ")}</li>{session.reviewReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div>}
-              {!session.canComplete && <p className="rounded-xl border border-blue-400/30 bg-blue-400/10 p-3 text-sm text-blue-100">Your staff account can collect and save this draft. An owner or administrator must perform the final booking.</p>}
-              <Button type="button" className="h-14 w-full bg-emerald-400 text-base font-black text-slate-950 hover:bg-emerald-300" disabled={busy || !session.readiness.ready || !session.canComplete} onClick={() => void bookJob()}>{busy ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <CheckCircle2 className="mr-2 h-5 w-5" />}Book & Alert Crew</Button>
+              {!scheduleReady && <p role="status" className="text-sm text-amber-200">Review the arrival time. Use Start now for the current Central window, or choose a future date and window.</p>}
+              {!session.canComplete && <p className="rounded-xl border border-blue-400/30 bg-blue-400/10 p-3 text-sm text-blue-100">{bookingAccessMessage}</p>}
+              <Button type="button" className="h-14 w-full bg-emerald-400 text-base font-black text-slate-950 hover:bg-emerald-300" disabled={busy || !session.readiness.ready || !scheduleReady || !session.canComplete} onClick={() => void bookJob()}>{busy ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <CheckCircle2 className="mr-2 h-5 w-5" />}{bookLabel}</Button>
               <p className="text-center text-xs text-slate-400">One tap saves the booking and tentative crew plan. It does not message the customer or create a Square invoice.</p>
             </CardContent>
           </Card>
@@ -638,9 +686,9 @@ export default function QuickBookPage({ visualFixture = false }: { visualFixture
             <PromptInputSubmit disabled={busy} status={busy ? "submitted" : "ready"} className="h-11 w-11 bg-cyan-500 text-slate-950" />
           </PromptInputFooter>
         </PromptInput>
-        <Button type="button" className="h-14 w-full bg-emerald-400 text-base font-black text-slate-950 hover:bg-emerald-300" disabled={busy || !session.readiness.ready || !session.canComplete} onClick={() => void bookJob()}>
+        <Button type="button" className="h-14 w-full bg-emerald-400 text-base font-black text-slate-950 hover:bg-emerald-300" disabled={busy || !session.readiness.ready || !scheduleReady || !session.canComplete} onClick={() => void bookJob()}>
           {busy ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <CheckCircle2 className="mr-2 h-5 w-5" />}
-          {session.readiness.ready ? `Book & Alert Crew · $${quoteTotal.toFixed(2)}` : `Draft · ${session.missingFields.length + session.reviewReasons.length} checks left`}
+          {session.readiness.ready ? scheduleReady ? `${bookLabel} · $${quoteTotal.toFixed(2)}` : "Review arrival time" : `Draft · ${session.missingFields.length + session.reviewReasons.length} checks left`}
         </Button>
       </div>
     </main>

@@ -3,6 +3,7 @@ import { db, pool } from "../db";
 import { quickBookingSessions } from "@shared/schema";
 import {
   EMPTY_QUICK_BOOK_DRAFT,
+  currentQuickBookWindow,
   quickBookDraftSchema,
   type QuickBookDraft,
   type QuickBookExtraction,
@@ -108,6 +109,7 @@ export function mergeQuickBookDraft(args: {
   patch: Partial<QuickBookExtraction["patch"]> & Record<string, unknown>;
   source: "voice" | "typed" | "tap" | "server";
   currentMeta?: QuickBookFieldMeta;
+  now?: Date;
 }) {
   const next: Record<string, unknown> = {
     ...args.current,
@@ -115,14 +117,25 @@ export function mergeQuickBookDraft(args: {
     inventory: { ...args.current.inventory },
   };
   const meta: QuickBookFieldMeta = { ...(args.currentMeta || {}) };
-  const timestamp = new Date().toISOString();
+  const now = args.now || new Date();
+  const timestamp = now.toISOString();
+  const patch = { ...args.patch };
+  if (patch.startNow === true && args.source === "tap") {
+    const current = currentQuickBookWindow(now);
+    if (!current) throw new Error("START_NOW_OUTSIDE_HOURS");
+    // The client supplies intent only. The server owns the date and window.
+    Object.assign(patch, current);
+  } else if (["confirmedDate", "arrivalWindow"].some(key => patch[key] != null && patch[key] !== args.current[key as keyof QuickBookDraft])) {
+    next.startNow = false;
+  }
   const confidenceByKey = (args.patch as any).__confidence as Record<string, "high" | "medium" | "low"> | undefined;
 
-  for (const [key, rawValue] of Object.entries(args.patch)) {
+  for (const [key, rawValue] of Object.entries(patch)) {
     if (key === "__confidence" || rawValue === null || rawValue === undefined) continue;
     // Consent and named crew require an explicit staff tap. Conversational AI
     // may recognize those words but cannot cross either operational gate.
     if (key === "smsConsent" && args.source !== "tap") continue;
+    if (key === "startNow" && args.source !== "tap") continue;
     if (["crewMemberIds", "crewLeadUserId", "crewConfirmed"].includes(key) && args.source !== "tap") continue;
 
     if (key === "specialItems" && typeof rawValue === "object" && rawValue) {
@@ -154,8 +167,9 @@ export function mergeQuickBookDraft(args: {
   }
 
   const crewPlanKeys = ["crewSize", "estimatedHours", "confirmedDate", "arrivalWindow"];
-  if (crewPlanKeys.some((key) => Object.prototype.hasOwnProperty.call(args.patch, key))
-      && args.patch.crewConfirmed !== true) {
+  // A full-draft patch may carry a stale confirmation alongside a changed plan.
+  // Confirming the crew must happen after the server has accepted that plan.
+  if (crewPlanKeys.some((key) => next[key] !== args.current[key as keyof QuickBookDraft])) {
     next.crewConfirmed = false;
   }
   if (args.source === "tap" && Object.prototype.hasOwnProperty.call(args.patch, "crewMemberIds")

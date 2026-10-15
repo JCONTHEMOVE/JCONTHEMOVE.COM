@@ -26,7 +26,7 @@ for (const failure of ['none','commit','event','audit']) {
   const pool = {query: async (sql: string) => {queries.push(sql);if(failure==='audit' && sql.includes('job_alert_deliveries')) throw Error('audit unavailable');return {rows:[{status:'sent'}]};}};
   const deps = {client,res,pool,z,console:{error:()=>{}},
     leadId:'saved-lead',bookingId:'saved-booking',lead:{order_number:42},quote:{total:450,rewardEligibleTotal:525},
-    row:{id:'session'},actor:{id:'owner'},draft:{confirmedDate:'2030-01-01',arrivalWindow:'10:00 AM – 11:00 AM',crewMemberIds:['crew'],estimatedHours:2},eventId:'event',
+    row:{id:'session'},actor:{id:'owner'},startNowBookedAt:null,draft:{confirmedDate:'2030-01-01',arrivalWindow:'10:00 AM – 11:00 AM',crewMemberIds:['crew'],estimatedHours:2},eventId:'event',
     writeLeadHistory:async()=>{}, emitJobEvent:async()=>{alerts++;if(failure==='event') throw Error('alert unavailable');}};
   await new Function(...Object.keys(deps),compiled+'; return run();')(...Object.values(deps));
   if(failure==='commit') {
