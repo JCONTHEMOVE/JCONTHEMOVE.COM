@@ -6,7 +6,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 export async function runLeadBotBrowser({ app, origin, botId }) {
-  const { chromium } = await import("playwright").catch(() => import(pathToFileURL(path.join(process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES, "playwright/index.mjs")).href));
+  const { chromium } = process.env.LEAD_BOT_PLAYWRIGHT_MODULE
+    ? await import(pathToFileURL(process.env.LEAD_BOT_PLAYWRIGHT_MODULE).href)
+    : await import("playwright").catch(() => import(pathToFileURL(path.join(process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES, "playwright/index.mjs")).href));
   const output = path.resolve("node_modules/.cache/lead-bot-browser/app.js");
   await mkdir(path.dirname(output), { recursive: true });
   await build({ stdin: { contents: `

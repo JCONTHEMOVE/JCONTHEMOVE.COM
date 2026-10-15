@@ -55,11 +55,12 @@ jobs:
       - run: npm run check
       - name: Install isolated browser test tooling
         run: |
-          npm install --no-save --package-lock=false playwright@1.64.1
-          npx playwright install --with-deps chromium --only-shell
+          npm install --prefix /tmp/jc-lead-bot-tools --no-save --package-lock=false playwright@1.64.1
+          node /tmp/jc-lead-bot-tools/node_modules/playwright/cli.js install --with-deps chromium --only-shell
       - name: PostgreSQL race, canonical intake and browser acceptance
         env:
           TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/jc_ledger_test
+          LEAD_BOT_PLAYWRIGHT_MODULE: /tmp/jc-lead-bot-tools/node_modules/playwright/index.mjs
         run: node --import tsx server/services/__tests__/leadBotPilot.test.ts --postgres --browser
       - run: npm run build
       # Synthetic fixtures only. No production secrets, migrations or publishing.

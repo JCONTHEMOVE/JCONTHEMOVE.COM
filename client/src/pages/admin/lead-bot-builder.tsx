@@ -12,7 +12,7 @@ type Dashboard = {
   campaigns: Array<{ id: string; headline: string; service: string; territory: string; variant_id: string; rep_id: string }>;
   promotions: Array<{ id: string; code: string; description: string; referral_user_id: string | null }>;
   bot: { id: string; revision: number; status: string; config: LeadBotConfig } | null;
-  metrics: { views: number; inquiries: number }; publicEnabled: boolean; reviewIssue: string | null;
+  metrics: { views: number; inquiries: number }; publicEnabled: boolean; reviewIssue: string | null; reviewHash: string | null;
 };
 const initial: LeadBotConfig = {
   name: "Northwoods inquiry pilot", representativeId: "", campaignId: "", variantId: "", service: "junk_removal",
@@ -97,7 +97,7 @@ export default function LeadBotBuilder() {
       <p className="text-xs text-slate-400">Counts represent distinct visits and saved inquiries, not bookings or revenue.</p>
       <div className="flex flex-wrap gap-3">
         <Button asChild variant="outline"><a href={`/lead-bot/${data.bot.id}?preview=1`} target="_blank" rel="noreferrer">Preview saved conversation</a></Button>
-        <Button disabled={dirty || mutation.isPending} onClick={() => mutation.mutate({ path: `${endpoint}/${data.bot!.id}/decision`, body: { revision: data.bot!.revision, decision: "approve" } })}>Approve saved configuration</Button>
+        <Button disabled={dirty || mutation.isPending || !data.reviewHash} onClick={() => mutation.mutate({ path: `${endpoint}/${data.bot!.id}/decision`, body: { revision: data.bot!.revision, decision: "approve", reviewedHash: data.reviewHash } })}>Approve saved configuration</Button>
         <Button variant="outline" disabled={mutation.isPending} onClick={() => mutation.mutate({ path: `${endpoint}/${data.bot!.id}/decision`, body: { revision: data.bot!.revision, decision: "pause" } })}>Pause</Button>
       </div>
       <label className="block text-sm">Customer link {data.publicEnabled ? "" : "(inactive)"}<Input className="mt-1" readOnly value={`${window.location.origin}/lead-bot/${data.bot.id}`} onFocus={e => e.target.select()} /></label>

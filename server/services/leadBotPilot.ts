@@ -108,10 +108,11 @@ export async function saveLeadBot(store: Store, input: { id?: string; revision?:
   await audit(store, actor, bot, "lead_bot_draft_saved");
   return bot;
 }
-export async function decideLeadBot(store: Store, id: string, revision: number, decision: "approve" | "pause", actor: string) {
+export async function decideLeadBot(store: Store, id: string, revision: number, decision: "approve" | "pause", actor: string, reviewedHash?: string) {
   const bot = await loadBot(store, id, true);
   if (bot.revision !== revision) throw new LeadBotError("The draft changed. Reload before reviewing.");
   const approvalHash = decision === "approve" ? hash({ config: bot.config, bound: await binding(store, bot.config) }) : null;
+  if (decision === "approve" && reviewedHash !== approvalHash) throw new LeadBotError("The campaign, representative or promotion changed since you reviewed it. Reload before approving.");
   const updated = await row(store, sql`UPDATE marketing_lead_bots SET status=${decision === "approve" ? "approved" : "paused"},
     approval_hash=${approvalHash},approved_by=${decision === "approve" ? actor : null},
     approved_at=${decision === "approve" ? sql`NOW()` : sql`NULL`},updated_at=NOW() WHERE id=${id} RETURNING *`);
@@ -131,11 +132,15 @@ export async function leadBotOptions(store: Store) {
     (SELECT COUNT(*)::int FROM marketing_lead_bot_visits WHERE bot_id=${bot.id}) AS views,
     COUNT(DISTINCT lead_id)::int AS inquiries FROM marketing_lead_bot_submissions WHERE bot_id=${bot.id}`) : { views: 0, inquiries: 0 };
   let reviewIssue: string | null = null;
-  if (bot?.status === "approved") {
-    try { if (bot.approval_hash !== hash({ config: bot.config, bound: await binding(store, bot.config) })) reviewIssue = "Registry or campaign changed. Review and approve again."; }
+  let reviewHash: string | null = null;
+  if (bot) {
+    try {
+      reviewHash = hash({ config: bot.config, bound: await binding(store, bot.config) });
+      if (bot.status === "approved" && bot.approval_hash !== reviewHash) reviewIssue = "Registry or campaign changed. Review and approve again.";
+    }
     catch (error) { reviewIssue = error instanceof Error ? error.message : "Review required"; }
   }
-  return { representatives, campaigns, promotions, bot, metrics, reviewIssue,
+  return { representatives, campaigns, promotions, bot, metrics, reviewIssue, reviewHash,
     publicEnabled: Boolean(bot && bot.status === "approved" && !reviewIssue && publicLeadBotEnabled(bot.config.campaignId)), publishingEnabled: false, messagingEnabled: false };
 }
 export async function getLeadBotView(store: Store, id: string, preview = false) {

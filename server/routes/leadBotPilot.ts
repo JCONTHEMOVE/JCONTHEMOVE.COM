@@ -27,8 +27,8 @@ export function leadBotPilotRouter(requireMarketingAdmin: RequestHandler, depend
   admin.post("/:id/decision", async (req, res, next) => {
     try {
       const id = z.string().uuid().parse(req.params.id);
-      const input = z.object({ revision: z.number().int().positive(), decision: z.enum(["approve", "pause"]) }).strict().parse(req.body);
-      res.json(await db.transaction(tx => decideLeadBot(tx, id, input.revision, input.decision, (req as any).marketingActor.id)));
+      const input = z.object({ revision: z.number().int().positive(), decision: z.enum(["approve", "pause"]), reviewedHash: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict().parse(req.body);
+      res.json(await db.transaction(tx => decideLeadBot(tx, id, input.revision, input.decision, (req as any).marketingActor.id, input.reviewedHash)));
     } catch (error) { next(error); }
   });
   admin.get("/:id/preview", async (req, res, next) => {

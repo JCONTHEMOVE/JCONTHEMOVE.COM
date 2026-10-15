@@ -102,11 +102,15 @@ try {
   const created = await call(adminPath, { config }, "owner"); assert.equal(created.status, 201, JSON.stringify(created));
   const id = created.data.id;
   const publicPath = `/api/lead-bots/${id}`;
+  const approve = async (revision: number) => {
+    const reviewedHash = (await call(adminPath, undefined, "owner")).data.reviewHash;
+    return call(`${adminPath}/${id}/decision`, { revision, decision: "approve", reviewedHash }, "owner");
+  };
   assert.equal((await call(adminPath, { config }, "owner")).status, 409, "One controlled campaign only");
   assert.equal((await call(`${adminPath}/${id}/preview`)).status, 403);
   assert.equal((await call(`${adminPath}/${id}/preview`, undefined, "owner")).data.preview, true);
   assert.equal((await call(`${adminPath}/${id}/decision`, { revision: 1, decision: "approve" }, "rep")).status, 403);
-  assert.equal((await call(`${adminPath}/${id}/decision`, { revision: 1, decision: "approve" }, "owner")).status, 200);
+  assert.equal((await approve(1)).status, 200);
   delete process.env.LEAD_BOT_PUBLIC_ENABLED;
   assert.equal((await call(publicPath)).status, 404, "Approval alone cannot open public intake");
   const submission = { leadBotId: id, revision: 1, submissionKey: crypto.randomUUID(), visitorId: crypto.randomUUID(), inquiry: {
@@ -153,21 +157,24 @@ try {
   assert.equal((await call(publicPath)).status, 409, "Expired promotion fails closed");
   await query("UPDATE promo_codes SET expires_at=NULL,referral_user_id='other' WHERE id=$1", [promoId]);
   assert.equal((await call(publicPath)).status, 409, "Referral owner mismatch fails closed");
-  await query("UPDATE promo_codes SET referral_user_id='rep',description='Changed terms' WHERE id=$1", [promoId]);
+  await query("UPDATE promo_codes SET referral_user_id='rep' WHERE id=$1", [promoId]);
+  const reviewedHash = (await call(adminPath, undefined, "owner")).data.reviewHash;
+  await query("UPDATE promo_codes SET description='Changed terms' WHERE id=$1", [promoId]);
+  assert.equal((await call(`${adminPath}/${id}/decision`, { revision: 1, decision: "approve", reviewedHash }, "owner")).status, 409, "Unseen offer changes cannot be approved");
   assert.equal((await call(publicPath)).status, 409, "Changed terms invalidate approval");
-  await call(`${adminPath}/${id}/decision`, { revision: 1, decision: "approve" }, "owner");
+  await approve(1);
   await query("UPDATE marketing_bot_campaigns SET revision=revision+1 WHERE id=$1", [campaignId]);
   assert.equal((await call(publicPath)).status, 409, "Campaign edits invalidate approval");
-  await call(`${adminPath}/${id}/decision`, { revision: 1, decision: "approve" }, "owner");
+  await approve(1);
   const saved = await call(adminPath, { id, revision: 1, config: { ...config, questions: ["access"] } }, "owner");
   assert.equal(saved.status, 200); assert.equal(saved.data.status, "draft"); assert.equal(saved.data.approval_hash, null);
-  assert.equal((await call(`${adminPath}/${id}/decision`, { revision: 1, decision: "approve" }, "owner")).status, 409, "Stale owner screen cannot approve");
-  await call(`${adminPath}/${id}/decision`, { revision: 2, decision: "approve" }, "owner");
+  assert.equal((await approve(1)).status, 409, "Stale owner screen cannot approve");
+  await approve(2);
   assert.equal((await call("/api/leads/quick-request", submission)).status, 409, "Stale customer screen cannot submit");
   await call(`${adminPath}/${id}/decision`, { revision: 2, decision: "pause" }, "owner");
   assert.equal((await call(publicPath)).status, 404);
   if (process.argv.includes("--browser")) {
-    await call(`${adminPath}/${id}/decision`, { revision: 2, decision: "approve" }, "owner");
+    await approve(2);
     const before = (await query("SELECT count(*)::int n FROM leads")).rows[0].n;
     const { runLeadBotBrowser } = await import("../../../scripts/lead-bot-browser.mjs");
     await runLeadBotBrowser({ app, origin, botId: id });
@@ -176,7 +183,7 @@ try {
     assert.equal(browserCredit.user_id, "rep");
   }
   if (process.argv.includes("--dom")) {
-    await call(`${adminPath}/${id}/decision`, { revision: 2, decision: "approve" }, "owner");
+    await approve(2);
     const before = (await query("SELECT count(*)::int n FROM leads")).rows[0].n;
     const { runLeadBotDom } = await import("../../../scripts/lead-bot-dom.mjs");
     await runLeadBotDom({ origin, botId: id });

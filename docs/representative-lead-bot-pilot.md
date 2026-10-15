@@ -17,7 +17,8 @@ representative, guessed phone number, discount, or availability is copied into
 production. The default four-town list is an editable draft suggestion.
 
 Saving creates a draft. The owner can preview the exact saved conversation, then
-approve that revision or pause it. Every edit clears approval. Campaign revision,
+approve that revision or pause it. Approval also verifies the review fingerprint
+returned to the owner, so unseen registry changes cannot be silently approved. Every edit clears approval. Campaign revision,
 representative mapping or offer-term changes invalidate approval. Expired,
 exhausted, inactive and other-representative promotions fail closed. No prices
 are calculated and no discounts are redeemed by intake.
