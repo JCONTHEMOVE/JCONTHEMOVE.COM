@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { leadBotPilotRouter } from "./leadBotPilot";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -91,6 +92,8 @@ async function requireMarketingEmployee(req: Request, res: Response, next: NextF
 function actorId(req: Request) {
   return String((req as any).marketingActor?.id || "");
 }
+
+router.use(leadBotPilotRouter(requireMarketingAdmin));
 
 function repError(res: Response, error: unknown, fallback: string) {
   if (error instanceof z.ZodError) return res.status(400).json({ error: fallback, issues: error.issues });

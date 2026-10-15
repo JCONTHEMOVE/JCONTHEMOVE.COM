@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import AdminMarketingBotPage from "./marketing-bot";
+import LeadBotBuilder from "./lead-bot-builder";
 
 type Market = {
   id: string; slug: string; city: string; state_code: string; postal_code: string; profile_url: string;
@@ -192,7 +193,7 @@ export default function NorthwoodsMarketingPage() {
 
       <Tabs defaultValue="today" className="space-y-4">
         <TabsList className="h-auto flex-wrap bg-slate-900 p-1">
-          <TabsTrigger value="today">Today</TabsTrigger><TabsTrigger value="markets">Markets</TabsTrigger><TabsTrigger value="jobs">U-Haul Jobs</TabsTrigger><TabsTrigger value="campaigns">Campaigns</TabsTrigger><TabsTrigger value="connections">Connections</TabsTrigger>
+          <TabsTrigger value="today">Today</TabsTrigger><TabsTrigger value="markets">Markets</TabsTrigger><TabsTrigger value="jobs">U-Haul Jobs</TabsTrigger><TabsTrigger value="campaigns">Campaigns</TabsTrigger><TabsTrigger value="lead-bot">Lead-bot pilot</TabsTrigger><TabsTrigger value="connections">Connections</TabsTrigger>
         </TabsList>
 
         <TabsContent value="today" className="grid gap-4 xl:grid-cols-2">
@@ -247,6 +248,7 @@ export default function NorthwoodsMarketingPage() {
         </TabsContent>
 
         <TabsContent value="campaigns"><AdminMarketingBotPage /></TabsContent>
+        <TabsContent value="lead-bot"><LeadBotBuilder /></TabsContent>
 
         <TabsContent value="connections" className="grid gap-4 lg:grid-cols-3">
           <Card className="border-slate-800 bg-slate-900/70"><CardHeader><CardTitle className="flex items-center gap-2 text-white"><MailCheck className="h-5 w-5 text-emerald-300" />Dedicated Gmail</CardTitle></CardHeader><CardContent className="space-y-3 text-sm text-slate-300"><div className="flex justify-between"><span>OAuth configured</span>{statusBadge(dashboard?.gmail.configured ? "verified" : "pending")}</div><div className="flex justify-between"><span>Polling enabled</span>{statusBadge(dashboard?.gmail.enabled ? "enabled" : "disabled")}</div><p className="text-xs text-slate-500">Last message: {when(dashboard?.gmail.last_processed_at)}</p><Button className="w-full" variant="outline" disabled={!dashboard?.gmail.configured || action.isPending} onClick={() => action.mutate({ method: "POST", url: "/api/admin/northwoods-marketing/email/sync", success: "Dedicated inbox synced" })}><RefreshCw className="mr-2 h-4 w-4" />Sync now</Button></CardContent></Card>

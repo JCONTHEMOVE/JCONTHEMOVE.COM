@@ -1,4 +1,5 @@
 import { createSquareWebhookHandler } from './squareWebhook';
+import { commitLeadBotInquiry, LeadBotError, prepareLeadBotSubmission } from "./services/leadBotPilot";
 import { recordJobRevenue } from "./services/jobRevenueAllocation";
 import { creditJobCash } from "./services/jobCashCredit";
 import { validateCustomerPhoneSubmission } from "./services/customerPhoneValidation";
@@ -5691,7 +5692,9 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     }),
     async (req, res) => {
       try {
-        const parsed = quickRequestSchema.parse(req.body);
+        const leadBotContext = req.body && Object.prototype.hasOwnProperty.call(req.body, "leadBotId")
+          ? await prepareLeadBotSubmission(req.body) : null;
+        const parsed = quickRequestSchema.parse(leadBotContext?.canonicalInput || req.body);
         const phoneDigits = parsed.phone.replace(/\D/g, "");
         const service = QUICK_REQUEST_SERVICE_MAP[parsed.serviceCode] || {
           serviceType: parsed.serviceCode,
@@ -5786,6 +5789,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
 
         // The transaction lock serializes identical retries across app instances.
         const result = await db.transaction(async tx => {
+          if (leadBotContext) return commitLeadBotInquiry(tx, leadBotContext, leadData);
           await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${leadSource}), hashtext(${phoneDigits}))`);
         const recentQuickRequest = await tx.select()
           .from(leads)
@@ -5805,6 +5809,12 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         });
         const lead = result.lead;
 
+        // Pilot inquiries stop at the owner queue. No scheduler, creator reward,
+        // email, SMS or event broadcaster runs. Never expose another lead's data
+        // to a content-matched retry; the public response is only a receipt.
+        if (leadBotContext) return res.status(result.duplicate ? 200 : 201).json({
+          success: true, submitted: true, duplicate: result.duplicate,
+        });
 
         if (result.duplicate) {
           const existingLead = lead;
@@ -6057,6 +6067,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
           } : null,
         });
       } catch (error) {
+        if (error instanceof LeadBotError) return res.status(error.status).json({ error: error.message });
         return respondLeadError(res, error, {
           route: "leads_quick_request",
           errorCode: "QUICK_REQUEST_CREATE_FAILED",

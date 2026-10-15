@@ -1,3 +1,4 @@
+import LeadBotPage from "./pages/lead-bot";
 import { Component as ReactComponent, ReactNode, lazy, Suspense } from "react";
 import { Switch, Route, Redirect, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
@@ -832,6 +833,7 @@ function PageViewTracker() {
 }
 
 const PUBLIC_PATH_PREFIXES = [
+  "/lead-bot",
   "/carpet-removal",
   "/",
   "/get-started",
@@ -904,6 +906,7 @@ function Router() {
         <Route path="/home">{() => <PublicHomePage />}</Route>
         <Route path="/marketing-onboarding" component={MarketingOnboardingPage} />
         <Route path="/network/:slug" component={MarketingRepPage} />
+        <Route path="/lead-bot/:id" component={LeadBotPage} />
       <Route path="/rep/:slug" component={MarketingRepPage} />
       <Route path="/matt"><Redirect to="/network/matt" /></Route>
       <Route path="/troy"><Redirect to="/network/troy" /></Route>

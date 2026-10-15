@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import crypto from "node:crypto";
 import ts from "typescript";
 import { quickRequestSchema, projectIntakeInput } from "../quickRequest";
+import { LeadBotError } from "../leadBotPilot";
 import { projectIntakeSchema, projectScheduleError, projectScheduleLabel, projectServiceLabel, readProjectIntake, projectEntry } from "../../../shared/projectRequest";
 import { insertLeadSchema, leads, formatOrderNumber } from "../../../shared/schema";
 import { updateCustomerNotes } from "../../../shared/leadDetails";
@@ -79,7 +80,7 @@ const db = { transaction: async (work: any) => {
   catch (error) { rows = before; throw error; } finally { unlock(); }
 } };
 const deps = {
-  quickRequestSchema, projectIntakeInput, projectIntakeSchema, projectScheduleLabel, projectServiceLabel, insertLeadSchema, leads, formatOrderNumber, crypto, db, sql,
+  quickRequestSchema, projectIntakeInput, projectIntakeSchema, projectScheduleLabel, projectServiceLabel, insertLeadSchema, leads, formatOrderNumber, crypto, db, sql, LeadBotError,
   safeMarketingTracking: (value: any) => value,
   QUICK_REQUEST_SERVICE_MAP: { moving: { serviceType: "residential", label: "Moving" }, painting: { serviceType: "painting", label: "Painting" } },
   and: (...filters: any[]) => (row: any) => filters.every(filter => typeof filter === "function" ? filter(row) : filter.phoneExpression && String(row.phone).replace(/\D/g, "") === filter.values[1]),
