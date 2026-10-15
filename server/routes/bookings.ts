@@ -16,6 +16,7 @@ import { leadPhoneNumberSchema } from "@shared/schema";
 // upcoming frontend can import the same types.
 
 import { Router, Request, Response } from "express";
+import { ipRateLimit } from "../lib/persistentRateLimit";
 import crypto from "crypto";
 import { eq, and, asc, desc, or, inArray, ilike, gte, lte, sql } from "drizzle-orm";
 import { disburseBookingTokens, loadBookingRewardSettings } from "../services/disburseBookingTokens";
@@ -1700,8 +1701,17 @@ router.post("/instant-booking/status", async (req: Request, res: Response) => {
   }
 });
 
-router.post("/instant-booking/hold", async (req: Request, res: Response) => {
+router.post("/instant-booking/hold", ipRateLimit({
+  scope: "instant_booking_hold_ip",
+  windowMs: 10 * 60_000,
+  maxHits: 5,
+  message: "Too many booking attempts from this network. Please wait a few minutes or request a callback.",
+}), async (req: Request, res: Response) => {
   let client: InstantBookingTransactionClient | null = null;
+  // Honeypot: real visitors never see or fill this hidden field.
+  if (String((req.body || {}).website || "").trim()) {
+    return res.status(400).json({ success: false, error: "We could not hold that time. Please request a callback." });
+  }
   try {
     const input = instantBookingRequestSchema.parse(req.body);
     await expireInstantBookingHolds();

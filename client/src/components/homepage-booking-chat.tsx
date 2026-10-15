@@ -66,6 +66,7 @@ export function HomepageBookingChat() {
   const [statusChecked, setStatusChecked] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const generation = useRef(0);
+  const honeypot = useRef<HTMLInputElement>(null);
   const submitting = useRef(false);
   const a = draft.answers;
   const step = steps[draft.step];
@@ -178,7 +179,7 @@ export function HomepageBookingChat() {
         });
       } else {
         if (!quote || !slot || !terms) throw Error("Review the quote, choose an available time and accept the service terms.");
-        await post("/api/instant-booking/hold", { ...payload(), startTime: slot.time, termsAccepted: terms, reviewedQuoteFingerprint: quote.fingerprint });
+        await post("/api/instant-booking/hold", { ...payload(), startTime: slot.time, termsAccepted: terms, reviewedQuoteFingerprint: quote.fingerprint, website: honeypot.current?.value || "" });
       }
       setDraft(d => ({ ...d, submitted: true }));
       setResult(await post("/api/instant-booking/status", { requestKey: draft.key }));
@@ -211,6 +212,7 @@ export function HomepageBookingChat() {
       {result.paymentUrl && <a className="jc-chat-primary" href={result.paymentUrl}>View existing Square deposit request{result.depositAmount != null ? ` · $${result.depositAmount.toFixed(2)}` : ""}</a>}
       <button className="jc-chat-secondary" type="button" disabled={busy} onClick={refreshStatus}>Refresh status</button>
     </div> : a.path && <form onSubmit={next} className="jc-chat-body">
+      <input type="text" name="website" tabIndex={-1} autoComplete="off" aria-hidden="true" ref={honeypot} style={{ position: "absolute", left: "-10000px", width: 1, height: 1, opacity: 0 }} />
       <p className="jc-chat-caption">{a.path === "callback" ? "Callback request · no deposit" : "Moving request · availability checked before holding"}</p>
       <h2 ref={heading} tabIndex={-1}>{titles[step]}</h2>
       <fieldset disabled={busy}>
