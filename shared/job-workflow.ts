@@ -9,6 +9,7 @@ export function businessDateString() {
 export type RepairTarget = "customer" | "details" | "schedule" | "quote" | "confirmation" | "payment" | "crew";
 export type WorkflowBlocker = { code: string; message: string; target: RepairTarget; field?: string };
 export type DeliveryOutcome = { status: "not_requested" | "pending" | "sent" | "failed" | "unavailable" | "unknown"; message?: string; reference?: string };
+export type OwnerApprovalRequestState = { version: string; approved: boolean; current: boolean; canRequest: boolean };
 export type WorkflowQuote = {
   id: string | null; revision: number; status: string; total: number; subtotal: number;
   discount: number; lines: Array<{ name: string; quantity: number; unitPrice: number; total: number }>;
@@ -26,7 +27,8 @@ export type JobWorkflow = {
   confirmation: { current: boolean; recordedAt?: string; method?: string };
   payment: { ready: boolean; label: string };
   crew: { needed: number; selected: number; accepted: number };
-  capabilities: { approve: boolean; manage: boolean; sms: boolean };
+  capabilities: { approve: boolean; manage: boolean; sms: boolean; requestApproval?: boolean };
+  approvalRequest?: { id: string; current: boolean; requestedAt: string; pushStatus?: string };
   delivery?: { email?: DeliveryOutcome; sms?: DeliveryOutcome; invoice?: DeliveryOutcome; quoteAccessUrl?: string };
 };
 
@@ -107,6 +109,8 @@ export function projectJobWorkflow(input: { lead: any; quote: WorkflowQuote; ver
     payment: { ready: !blockers.some(b => b.code === "payment_required"), label: lead.paymentPaidAt ? "Paid in full" : lead.depositPaid ? "Deposit recorded" : lead.paymentPlan === "pay_on_completion" ? "Pay on completion" : lead.paymentPlan === "cash_or_btc" ? "Cash on site" : "Payment pending" },
     crew: { needed: Number(lead.crewSize || 0), selected: selected.size, accepted: accepted.size }, capabilities, delivery: input.delivery,
   };
+  const request = lead.jobPlanDetails?.ownerApprovalRequest;
+  if (request?.id) result.approvalRequest = { id: request.id, current: request.version === input.version && !["approved", "sent"].includes(quote.status), requestedAt: request.requestedAt, pushStatus: request.pushStatus };
   const set = (stage: JobWorkflow["stage"], label: string, key: string, action: string, target?: RepairTarget) => Object.assign(result, { stage, label, nextAction: { key, label: action, target } });
   if (lead.archivedAt || ["closed", "cancelled", "archived"].includes(lead.status)) return set("closed", "Closed", "done", "View history");
   if (lead.completedAt || ["completed", "customer_approved", "payout_calculated", "payout_sent"].includes(lead.status)) return set("closeout", "Work completed", "closeout", "Review closeout");
@@ -114,7 +118,7 @@ export function projectJobWorkflow(input: { lead: any; quote: WorkflowQuote; ver
   if (["in_progress", "dispatched", "accepted"].includes(lead.status)) return set("work", lead.status === "in_progress" ? "Work in progress" : "Crew dispatched", lead.status === "in_progress" ? "complete" : "start", lead.status === "in_progress" ? "Complete job" : "Start job");
   const details = workflowDetailsBlockers(lead);
   if (details.length) return set("details", "Details needed", "edit", "Complete job details", details[0].target);
-  if (!quote.matches || !["approved", "sent"].includes(quote.status)) return set("quote", capabilities.approve ? "Quote review needed" : "Awaiting approval", "review", capabilities.approve ? "Review quote" : "View quote", "quote");
+  if (!quote.matches || !["approved", "sent"].includes(quote.status)) return set("quote", capabilities.approve ? "Quote review needed" : result.approvalRequest?.current ? "Owner approval requested" : "Awaiting owner approval", "review", capabilities.approve ? "Review quote" : capabilities.requestApproval ? result.approvalRequest?.current ? "View approval request" : "Request owner approval" : "View quote", "quote");
   if (!capabilities.manage) return set("confirmation", "Staff coordination pending", "done", "Awaiting staff coordination");
   if (!current) return set("confirmation", "Awaiting customer agreement", "confirm", "Record customer confirmation", "confirmation");
   if (blockers.length) return set("dispatch", "Finish dispatch setup", "fix", "Finish dispatch setup", blockers[0].target);

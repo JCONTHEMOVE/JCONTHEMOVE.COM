@@ -5,13 +5,15 @@ import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
 import { build } from "esbuild";
+import express from "express";
 
 // Actual PostgreSQL queries and transactions, isolated from production and all
 // outbound providers. The provider mocks deliberately exercise partial success.
 const db = new PGlite();
 const directory = await mkdtemp(path.join(process.cwd(), ".workflow-test-"));
 const originalEnv = { ...process.env };
-const state = { emails: 0, texts: 0, invoices: 0, crew: 0, emailOk: true, smsOk: true, invoiceOk: true, emailThrows: false, failAudit: false };
+const state = { emails: 0, texts: 0, invoices: 0, crew: 0, emailOk: true, smsOk: true, invoiceOk: true, emailThrows: false, failAudit: false, pushes: [] as any[], pushStatus: "sent" };
+let httpServer: ReturnType<ReturnType<typeof express>["listen"]> | undefined;
 let lease = Promise.resolve();
 const query = async (text: string, values: any[] = []) => {
   if (state.failAudit && text.startsWith("INSERT INTO lead_history")) throw new Error("Injected audit failure");
@@ -39,7 +41,8 @@ try {
       quote_sent_at timestamp,last_quote_updated_at timestamp,created_at timestamp DEFAULT now(),
       deposit_required boolean DEFAULT false,deposit_paid boolean DEFAULT false,payment_paid_at timestamp,payment_plan text,
       dispatch_override_reason text,sms_consent boolean DEFAULT false,sms_consent_recorded_at timestamp,sms_consent_source text,sms_consent_recorded_by varchar,
-      square_payment_url text,dispatch_sent_at timestamp,archived_at timestamp);
+      square_payment_url text,dispatch_sent_at timestamp,archived_at timestamp,assigned_to_user_id varchar);
+    CREATE TABLE notifications(id varchar PRIMARY KEY DEFAULT gen_random_uuid(),user_id varchar,type text,title text,message text,data jsonb,read boolean DEFAULT false,created_at timestamp DEFAULT now());
     CREATE TABLE quote_approvals(id serial PRIMARY KEY,lead_id varchar,booking_id varchar,submitted_by_user_id varchar,approved_by_user_id varchar,approval_role text,status text,notes text,created_at timestamp DEFAULT now());
     CREATE TABLE lead_history(id serial,lead_id varchar,from_status text,to_status text,changed_by_user_id varchar,note text);
     CREATE TABLE customer_job_events(id varchar PRIMARY KEY DEFAULT gen_random_uuid(),lead_id varchar,event_type text,event_key text UNIQUE,title text,message text,payload jsonb);
@@ -47,15 +50,19 @@ try {
     CREATE TABLE idempotency_keys(key text PRIMARY KEY,scope text);
     CREATE TABLE wallet_credit_grants(id varchar PRIMARY KEY,source_type text,source_id varchar,status text,amount_usd numeric,metadata jsonb,square_invoice_id text);
     INSERT INTO users(id,role,email,status,is_approved) VALUES('owner','business_owner','upmichiganstatemovers@gmail.com','active',true),('worker','employee','worker@example.test','active',true);
+    INSERT INTO users(id,role,email,status,is_approved) VALUES('customer','customer','customer@example.test','active',true),('bronze','employee','bronze@example.test','active',true);
+    INSERT INTO worker_profiles VALUES('worker','silver'),('bronze','worker');
   `);
   const outfile = path.join(directory, "workflow.mjs");
-  await build({ entryPoints: ["server/services/jobWorkflow.ts"], bundle: true, platform: "node", format: "esm", packages: "external", outfile,
+  await build({ stdin: { contents: 'export * from "./server/services/jobWorkflow"; export {default as workflowRouter} from "./server/routes/jobWorkflow";', resolveDir: process.cwd() }, bundle: true, platform: "node", format: "esm", packages: "external", outfile,
     plugins: [{ name: "workflow-fixtures", setup(builder) {
-      builder.onResolve({ filter: /^(\.\.\/db|\.\/pricingVersions|\.\/quoteGeography|\.\/regionalAutomationMigration|\.\/square-invoice|\.\/email|\.\/sms|\.\/jobEventBus)$/ }, args => ({ path: args.path, namespace: "fixture" }));
+      builder.onResolve({ filter: /^(\.\.\/db|\.\.\/auth|\.\/notification|\.\/pricingVersions|\.\/quoteGeography|\.\/regionalAutomationMigration|\.\/square-invoice|\.\/email|\.\/sms|\.\/jobEventBus)$/ }, args => ({ path: args.path, namespace: "fixture" }));
       builder.onLoad({ filter: /.*/, namespace: "fixture" }, args => {
         const pre = 'const {pool,state}=globalThis.__jobWorkflowTest;';
         const sources: Record<string,string> = {
           "../db": pre + 'export {pool};',
+          "../auth": 'export const isAuthenticated=(req,res,next)=>{const id=req.headers["x-test-user"];if(!id)return res.status(401).json({error:"Login required"});req.currentUser={id};next()};',
+          "./notification": pre + 'export const notificationService={sendPushNotification:async(userId,notification)=>{state.pushes.push({userId,...notification});return {status:state.pushStatus}}};',
           "./pricingVersions": 'export async function getActivePricingSnapshot(){return {versionId:null,snapshot:{version:"test_legacy",currency:"USD",offers:{totalPercentageCap:100}}}}',
           "./quoteGeography": 'export async function resolveQuoteRouteEvidence(){return {verified:true,stopCoordinates:[],oneWayMinutes:5,oneWayMiles:2}}',
           "./regionalAutomationMigration": 'export async function ensureRegionalAutomationSchema(){}',
@@ -171,8 +178,91 @@ try {
   assert.equal((await query("SELECT count(*) FROM quote_revisions WHERE lead_id='concurrent'")).rows[0].count, 1);
   assert.equal(await workflow.workflowActor("missing"), null);
   assert.equal((await workflow.workflowActor("worker")).canApproveStandard, false);
+  // Real HTTP authorization + service + PostgreSQL request and approval flow.
+  const app = express(); app.use(express.json()); app.use("/api", workflow.workflowRouter);
+  httpServer = app.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => httpServer!.once("listening", resolve));
+  const address = httpServer.address() as { port: number };
+  const call = async (user: string | null, id: string, action: string, body?: any) => {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/leads/${id}/${action}`, { method: body ? "POST" : "GET", headers: { "Content-Type": "application/json", ...(user ? { "x-test-user": user } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: response.status, data: await response.json() as any };
+  };
+  await seed("remote");
+  const workerFlow = await call("worker", "remote", "workflow");
+  assert.equal(workerFlow.status, 200); assert.equal(workerFlow.data.capabilities.requestApproval, true);
+  const remoteVersion = workerFlow.data.version;
+  for (const user of [null, "customer", "bronze"]) {
+    const denied = await call(user, "remote", "request-owner-approval", { version: remoteVersion });
+    assert.equal(denied.status, user ? 403 : 401);
+  }
+  assert.equal((await call("worker", "one", "request-owner-approval", { version: remoteVersion })).status, 403, "Employees cannot request approval outside the existing job access rules");
+  const requested = await call("worker", "remote", "request-owner-approval", { version: remoteVersion });
+  assert.equal(requested.status, 200); assert.equal(requested.data.inApp, "sent");
+  const notificationRows = (await query("SELECT * FROM notifications WHERE data->>'leadId'='remote'")).rows;
+  assert.equal(notificationRows.length, 1); assert.equal(notificationRows[0].user_id, "owner");
+  assert.match(notificationRows[0].message, /\$472\.50.*3 movers.*2 hours.*2099-10-02/);
+  assert.equal(notificationRows[0].data.url, `/lead/remote?approvalRequest=${requested.data.requestId}`);
+  assert.equal(state.pushes.length, 1); assert.equal(state.pushes[0].userId, "owner");
+  assert.equal((await workflow.getJobWorkflow("remote", actor)).approvalRequest.current, true);
+  assert.equal((await call("worker", "remote", "request-owner-approval", { version: remoteVersion })).data.alreadyRequested, true);
+  assert.equal(state.pushes.length, 1, "Lost-response retries do not repeat notifications");
+  const ownerReview = await call("owner", "remote", "quote-review", { deliveryMethod: "none" });
+  const approveInput = { version: ownerReview.data.version, reviewHash: ownerReview.data.reviewHash, idempotencyKey: randomUUID(), deliveryMethod: "none" };
+  assert.equal((await call("worker", "remote", "approve-and-send", approveInput)).status, 403);
+  const beforeProviders = [state.emails, state.texts, state.invoices, state.crew];
+  const approvalOnly = await call("owner", "remote", "approve-and-send", approveInput);
+  assert.equal(approvalOnly.status, 200); assert.equal(approvalOnly.data.workflow.quote.status, "approved");
+  assert.equal(approvalOnly.data.workflow.quote.total, 472.5);
+  assert.equal(approvalOnly.data.workflow.confirmation.current, false);
+  assert.equal(approvalOnly.data.workflow.approvalRequest.current, false);
+  assert.equal((await call("owner", "remote", "approve-and-send", { ...approveInput, deliveryMethod: "email" })).status, 200);
+  assert.deepEqual([state.emails, state.texts, state.invoices, state.crew], beforeProviders, "Approval-only and its retries do not send messages, create invoices, or dispatch");
+  assert.equal((await call("worker", "remote", "customer-confirmation", { version: approvalOnly.data.workflow.version, method: "phone", attested: true })).status, 403);
+  assert.equal((await call("worker", "remote", "request-owner-approval", { version: approvalOnly.data.workflow.version })).status, 409);
+
+  await seed("request-race");
+  const raceVersion = (await workflow.getJobWorkflow("request-race", actor)).version;
+  // PGlite serializes the transactions; these callers still exercise duplicate locking paths.
+  const worker = { userId: "worker", isOwner: false, manage: false, canApproveStandard: false, tier: "silver" };
+  const race = await Promise.all([workflow.requestOwnerApproval("request-race", worker, raceVersion), workflow.requestOwnerApproval("request-race", worker, raceVersion)]);
+  assert.equal(race[0].requestId, race[1].requestId);
+  assert.equal((await query("SELECT count(*) FROM notifications WHERE data->>'leadId'='request-race'")).rows[0].count, 1);
+  const staleOwnerReview = await prepare("request-race", "none");
+  await query("UPDATE leads SET confirmed_date='2099-10-03' WHERE id='request-race'");
+  assert.equal((await workflow.getJobWorkflow("request-race", actor)).approvalRequest.current, false);
+  await assert.rejects(workflow.approveAndSend("request-race", actor, staleOwnerReview), /changed/);
+  await assert.rejects(workflow.requestOwnerApproval("request-race", worker, raceVersion), /changed/);
+
+  await seed("request-rollback");
+  const rollbackVersion = (await workflow.getJobWorkflow("request-rollback", actor)).version;
+  state.failAudit = true;
+  await assert.rejects(workflow.requestOwnerApproval("request-rollback", worker, rollbackVersion), /Injected audit failure/);
+  state.failAudit = false;
+  assert.equal((await query("SELECT count(*) FROM notifications WHERE data->>'leadId'='request-rollback'")).rows[0].count, 0);
+  assert.equal((await workflow.getJobWorkflow("request-rollback", actor)).approvalRequest, undefined);
+  state.pushStatus = "failed";
+  const pushFailure = await workflow.requestOwnerApproval("request-rollback", worker, rollbackVersion);
+  assert.equal(pushFailure.inApp, "sent"); assert.equal(pushFailure.pushStatus, "failed");
+  assert.equal((await query("SELECT count(*) FROM notifications WHERE data->>'leadId'='request-rollback'")).rows[0].count, 1);
+  await seed("restricted-worker");
+  await query("UPDATE leads SET crew_members=ARRAY['bronze'] WHERE id='restricted-worker'");
+  assert.equal((await call("bronze", "restricted-worker", "workflow")).status, 403, "Request permission does not grant quote-viewing permission");
+  const restrictedStatus = await call("bronze", "restricted-worker", "owner-approval-request");
+  assert.equal(restrictedStatus.status, 200);
+  assert.deepEqual(Object.keys(restrictedStatus.data).sort(), ["approved", "canRequest", "current", "version"]);
+  const restrictedRequest = await call("bronze", "restricted-worker", "request-owner-approval", { version: restrictedStatus.data.version });
+  assert.equal(restrictedRequest.status, 200);
+  for (const secret of ["472.5", "Test Customer", "test@example.test", "workflow", "phone", "crewMembers"]) assert.equal(JSON.stringify(restrictedRequest.data).includes(secret), false, `Request result leaked ${secret}`);
+  assert.equal((await call("bronze", "restricted-worker", "approve-and-send", approveInput)).status, 403);
+  assert.equal((await call("bronze", "remote", "owner-approval-request")).status, 403, "An unassigned worker cannot inspect another request");
+  await query("UPDATE leads SET confirmed_date='2099-10-04' WHERE id='remote'");
+  const staleReplay = await call("owner", "remote", "approve-and-send", approveInput);
+  assert.equal(staleReplay.data.approved, false);
+  assert.match(staleReplay.data.warning, /job has changed/);
+  console.log("Remote approval HTTP/SQL passed: owner-only notifications, role checks, retry deduplication, rollback, stale requests, and approval without external side effects.");
   console.log("Workflow database integration passed: approval, discounts, stale writes, copy links, confirmation, dispatch, concurrent retries and partial/unknown delivery.");
 } finally {
+  if (httpServer) await new Promise<void>((resolve, reject) => httpServer!.close(error => error ? reject(error) : resolve()));
   process.env = originalEnv;
   delete (globalThis as any).__jobWorkflowTest;
   await db.close();
