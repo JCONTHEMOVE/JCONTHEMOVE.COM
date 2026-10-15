@@ -2,32 +2,38 @@ import { Router } from "express";
 import { z } from "zod";
 import { isAuthenticated } from "../auth";
 import { pool } from "../db";
-import { approveAndSend, confirmCustomer, executeCrewAction, getJobWorkflow, reviewJobQuote, workflowActor, WorkflowError } from "../services/jobWorkflow";
+import { approveAndSend, confirmCustomer, executeCrewAction, getJobWorkflow, getOwnerApprovalRequest, requestOwnerApproval, reviewJobQuote, workflowActor, WorkflowError } from "../services/jobWorkflow";
 
 const router = Router();
-const deliveryMethod = z.enum(["email", "sms", "both", "copy"]);
+const deliveryMethod = z.enum(["none", "email", "sms", "both", "copy"]);
 const approvalSchema = z.object({
   version: z.string().length(64), reviewHash: z.string().length(64), idempotencyKey: z.string().uuid(),
   deliveryMethod, message: z.string().trim().max(2000).optional(), recordSmsConsent: z.boolean().optional(), overrideReason: z.string().trim().max(2000).optional(),
 });
 
 router.use("/leads/:id", isAuthenticated, async (req: any, res, next) => {
-  if (!/\/(workflow|quote-review|approve-and-send|customer-confirmation|crew-action)$/.test(req.path)) return next();
+  if (!/\/(workflow|quote-review|approve-and-send|owner-approval-request|request-owner-approval|customer-confirmation|crew-action)$/.test(req.path)) return next();
   try {
     const userId = req.currentUser?.id || req.user?.id || req.session?.userId;
     const actor = userId ? await workflowActor(userId) : null;
-    if (!actor || !actor.canApproveStandard && !actor.manage && actor.tier !== "silver") return res.status(403).json({ error: "Quote or job management authority is required." });
+    const requestOnly = /\/(owner-approval-request|request-owner-approval)$/.test(req.path);
+    if (!actor || !requestOnly && !actor.canApproveStandard && !actor.manage && actor.tier !== "silver") return res.status(403).json({ error: "Quote or job management authority is required." });
     if (!actor.manage) {
       const { rows } = await pool.query("SELECT status,crew_members,accepted_by_employees,assigned_to_user_id FROM leads WHERE id=$1", [req.params.id]);
       const lead = rows[0];
       if (!lead) return res.status(404).json({ error: "Job not found" });
       const assigned = lead.assigned_to_user_id === userId || [...(lead.crew_members || []), ...(lead.accepted_by_employees || [])].includes(userId);
       const quoteTask = ["new", "contacted", "quote_requested", "chatbot_pending", "pending_quote_approval", "quoted"].includes(lead.status);
-      if (!quoteTask && !(assigned && actor.canApproveStandard)) return res.status(403).json({ error: "This job is outside your assigned work." });
+      const canAccess = requestOnly ? assigned || quoteTask && (actor.canApproveStandard || actor.tier === "silver") : quoteTask || assigned && actor.canApproveStandard;
+      if (!canAccess) return res.status(403).json({ error: "This job is outside your assigned work." });
     }
     req.workflowActor = actor;
     next();
   } catch (error) { next(error); }
+});
+
+router.get("/leads/:id/owner-approval-request", async (req: any, res) => {
+  try { res.json(await getOwnerApprovalRequest(req.params.id, req.workflowActor)); } catch (error) { failure(res, error); }
 });
 
 function failure(res: any, error: unknown) {
@@ -55,9 +61,17 @@ router.post("/leads/:id/quote-review", async (req: any, res) => {
     res.json({ version: review.version, reviewHash: review.reviewHash, quote: review.quote, blockers: review.blockers,
       recipient: review.recipient, smsConsent: review.smsConsent, invoiceAvailable: review.invoiceAvailable,
       schedule: { date: review.lead.confirmedDate || review.lead.moveDate, window: review.lead.arrivalWindow },
+      crew: { size: Number(review.lead.crewSize || 0), hours: Number(review.lead.confirmedHours || 0), selected: new Set(review.lead.crewMembers || []).size },
       fromAddress: review.lead.confirmedFromAddress || review.lead.fromAddress,
       toAddress: review.lead.confirmedToAddress || review.lead.toAddress,
       service: review.lead.serviceType, ownerReasons: review.policy?.travelEligibility?.reasons || [] });
+  } catch (error) { failure(res, error); }
+});
+
+router.post("/leads/:id/request-owner-approval", async (req: any, res) => {
+  try {
+    const input = z.object({ version: z.string().length(64) }).parse(req.body);
+    res.json(await requestOwnerApproval(req.params.id, req.workflowActor, input.version));
   } catch (error) { failure(res, error); }
 });
 

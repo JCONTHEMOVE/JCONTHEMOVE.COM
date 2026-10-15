@@ -42,6 +42,8 @@ jobs:
         run: npm run check
       - name: Server behavior and authorization tests
         run: npm run test:server
+      - name: Quote approval repair navigation
+        run: node --test scripts/job-workflow-report.test.mjs
       - name: Payment and reward concurrency in disposable PostgreSQL
         env:
           TEST_DATABASE_URL: postgresql://ledger_test:disposable_test_only@127.0.0.1:5432/jc_ledger_test

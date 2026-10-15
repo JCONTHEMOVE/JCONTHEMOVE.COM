@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -49,6 +49,14 @@ export function NotificationList({ open, onOpenChange }: NotificationListProps) 
   const handleNotificationClick = (notification: Notification) => {
     if (!notification.read) {
       markAsReadMutation.mutate(notification.id);
+    }
+    if (notification.type === 'quote_approval_request') {
+      const data = notification.data as { leadId?: string; requestId?: string } | null;
+      if (data?.leadId && data.requestId) {
+        onOpenChange(false);
+        navigate(`/lead/${encodeURIComponent(data.leadId)}?approvalRequest=${encodeURIComponent(data.requestId)}`);
+      }
+      return;
     }
     const training = notification.data as { type?: string; scenarioId?: string } | null;
     if (training?.type === 'training_daily_prize') {
@@ -109,6 +117,7 @@ export function NotificationList({ open, onOpenChange }: NotificationListProps) 
             </Button>
           )}
         </SheetHeader>
+        <SheetDescription className="sr-only">Review job updates and approval requests.</SheetDescription>
 
         <ScrollArea className="flex-1 mt-4">
           {isLoading ? (
@@ -132,6 +141,9 @@ export function NotificationList({ open, onOpenChange }: NotificationListProps) 
                       !notification.read ? 'bg-blue-50 dark:bg-blue-950/20 border-l-4 border-l-blue-500' : ''
                     }`}
                     onClick={() => handleNotificationClick(notification)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); handleNotificationClick(notification); } }}
                     data-testid={`notification-${notification.id}`}
                   >
                     <div className="flex items-start gap-3">
@@ -150,6 +162,7 @@ export function NotificationList({ open, onOpenChange }: NotificationListProps) 
                         <p className="text-sm text-muted-foreground line-clamp-2">
                           {notification.message}
                         </p>
+                        {notification.type === 'quote_approval_request' && <p className="mt-2 text-sm font-semibold text-blue-600 dark:text-blue-400">Review and approve quote</p>}
                         <div className="text-xs text-muted-foreground mt-1">
                           {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true })}
                         </div>
