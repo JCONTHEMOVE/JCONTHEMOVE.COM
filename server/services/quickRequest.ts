@@ -1,3 +1,4 @@
+import { movePlanSchema, bookingTimeZoneSchema, recommendMove } from "@shared/homepageBooking";
 import { z } from "zod";
 import { leadPhoneNumberSchema } from "@shared/schema";
 import { projectIntakeSchema, projectScheduleError } from "@shared/projectRequest";
@@ -21,6 +22,10 @@ export function projectIntakeInput(value: IntakeInput) {
   };
 }
 export const quickRequestSchema = z.object({
+    requestKey: z.string().uuid().optional(),
+    movePlan: movePlanSchema.optional(),
+    timeZone: bookingTimeZoneSchema.optional(),
+    callbackWhen: z.string().trim().max(200).optional(),
     requestType: z.enum(["callback", "scheduled", "project"]).optional().default("callback"),
     firstName: z.string().trim().min(1).max(80),
     lastName: z.string().trim().min(1).max(80),
@@ -70,6 +75,9 @@ export const quickRequestSchema = z.object({
       }
     })).max(5).optional().default([]),
   }).superRefine((value, ctx) => {
+    if (value.movePlan && recommendMove(value.movePlan).overridden && !value.movePlan.overrideReason) {
+      ctx.addIssue({ code: "custom", path: ["movePlan", "overrideReason"], message: "Explain the change to the recommendation." });
+    }
     if (value.requestType === "project") {
       if (value.photos.reduce((total, photo) => total + Math.max(photo.size, Math.ceil(photo.url.length * 0.75)), 0) > 10 * 1024 * 1024) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["photos"], message: "Keep project photos under 10 MB total." });
