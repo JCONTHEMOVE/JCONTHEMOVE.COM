@@ -202,7 +202,7 @@ interface JobSetupWorkspaceProps {
   lead: JobSetupLead;
   employees: JobSetupEmployee[];
   canManageSetup: boolean;
-  onSaved: () => void;
+  onSaved: (action?: "review") => void;
   expectedVersion?: string;
   onDirtyChange?: (dirty: boolean) => void;
   closeoutRepair?: JobCloseoutRepair | null;
@@ -245,7 +245,7 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
   };
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (_action?: "review") => {
       if (closeoutRepair === "date" && !isPastJobDate(draft.confirmedDate)) {
         onSectionChange("schedule");
         window.setTimeout(() => document.getElementById("setup-closeout-date")?.focus(), 0);
@@ -291,12 +291,12 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
         } : {}),
       });
     },
-    onSuccess: () => {
+    onSuccess: (_response, action) => {
       toast({ title: "Job details saved", description: "No customer or crew messages were sent." });
       setSaveError("");
       setQuoteDirty(false);
       onSectionChange("");
-      onSaved();
+      onSaved(action);
     },
     onError: (error: Error) => {
       let message = error.message;
@@ -627,11 +627,15 @@ export function JobSetupWorkspace({ lead, employees, canManageSetup, onSaved, ac
             <Button type="button" variant="outline" className="min-h-11 whitespace-normal" disabled={saveMutation.isPending}
               onClick={onReturnToCloseout}>Return without saving</Button>
             <Button type="button" className="min-h-11 whitespace-normal" disabled={!hasChanges || saveMutation.isPending || quoteIsUpdating || quoteCannotSave || (closeoutRepair === "date" && !isPastJobDate(draft.confirmedDate))}
-              onClick={() => saveMutation.mutate()} data-testid="button-save-return-closeout">{saveMutation.isPending ? "Saving…" : "Save and return to closeout"}</Button>
+              onClick={() => saveMutation.mutate(undefined)} data-testid="button-save-return-closeout">{saveMutation.isPending ? "Saving…" : "Save and return to closeout"}</Button>
           </> : <>
           <Button type="button" variant="outline" className="min-h-11" onClick={() => { setEditingVersion(expectedVersion); setRecalculateQuote(false); setSaveError(""); setDraft(setupDraftFromLead(lead)); setQuoteDraft(savedQuote(lead)); setQuoteDirty(false); setQuotePricingSource(lead.quoteSnapshot?.manualQuoteOverride ? "manual_override" : "rate_card_auto"); }} disabled={saveMutation.isPending}>Reset</Button>
           {stepIndex>0&&<Button type="button" variant="outline" disabled={saveMutation.isPending} onClick={()=>changeStep(steps[stepIndex-1].id)}>Back</Button>}
-          <Button type="button" onClick={() => saveMutation.mutate()} disabled={!hasChanges || saveMutation.isPending || quoteIsUpdating || quoteCannotSave} className="min-h-11 bg-blue-600 hover:bg-blue-700" data-testid="button-save-job-setup">{saveMutation.isPending || quoteIsUpdating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}{quoteIsUpdating ? "Updating Quote" : "Save and return"}</Button>
+          {step === "quote" && <Button type="button" className="min-h-11 whitespace-normal" disabled={saveMutation.isPending || quoteIsUpdating || quoteCannotSave}
+            onClick={() => hasChanges ? saveMutation.mutate("review") : onSaved("review")}>
+            {hasChanges ? "Save and review quote" : canManageSetup ? "Review and approve quote" : "Request owner approval"}
+          </Button>}
+          <Button type="button" onClick={() => saveMutation.mutate(undefined)} disabled={!hasChanges || saveMutation.isPending || quoteIsUpdating || quoteCannotSave} className="min-h-11 bg-blue-600 hover:bg-blue-700" data-testid="button-save-job-setup">{saveMutation.isPending || quoteIsUpdating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}{quoteIsUpdating ? "Updating Quote" : "Save and return"}</Button>
           </>}
         </TaskActionBar>
       </CardContent>

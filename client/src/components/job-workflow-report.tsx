@@ -11,8 +11,8 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
-type Review = { version: string; reviewHash: string; quote: WorkflowQuote; blockers: WorkflowBlocker[]; recipient: { name: string; email: string; phone: string }; smsConsent: boolean; invoiceAvailable: boolean; schedule: { date: string; window: string }; fromAddress: string; toAddress?: string; service: string; ownerReasons: string[] };
-type Props = { lead: any; employees: Array<{ id: string; firstName?: string; lastName?: string }>; dirty: boolean; onEdit: (section: "customer" | "details" | "schedule" | "quote", field?: string) => void; onPayment: () => void; onCloseout: () => void; onStart: () => void; onComplete: () => void; onVersion: (version: string) => void };
+type Review = { version: string; reviewHash: string; quote: WorkflowQuote; blockers: WorkflowBlocker[]; recipient: { name: string; email: string; phone: string }; smsConsent: boolean; invoiceAvailable: boolean; schedule: { date: string; window: string }; crew?: { size: number; hours: number; selected: number }; fromAddress: string; toAddress?: string; service: string; ownerReasons: string[] };
+type Props = { approvalRequestId?: string; lead: any; employees: Array<{ id: string; firstName?: string; lastName?: string }>; dirty: boolean; onEdit: (section: "customer" | "details" | "schedule" | "quote", field?: string) => void; onPayment: () => void; onCloseout: () => void; onStart: () => void; onComplete: () => void; onVersion: (version: string) => void };
 const money = (n: unknown) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(n) || 0);
 const stages = ["Details", "Quote", "Confirmation", "Crew & dispatch", "Closeout"];
 
@@ -21,11 +21,11 @@ function errorDetail(error: unknown): { message: string; blockers: WorkflowBlock
   try { const data = JSON.parse(message.slice(message.indexOf("{"))); return { message: data.error || message, blockers: data.blockers || [] }; } catch { return { message, blockers: [] }; }
 }
 
-export function JobWorkflowReport({ lead, employees, dirty, onEdit, onPayment, onCloseout, onStart, onComplete, onVersion }: Props) {
+export function JobWorkflowReport({ approvalRequestId, lead, employees, dirty, onEdit, onPayment, onCloseout, onStart, onComplete, onVersion }: Props) {
   const queryKey = ["/api/leads", lead.id, "workflow"];
-  const { data: flow, isError, refetch, isFetching } = useQuery<JobWorkflow>({ queryKey, retry: false });
+  const { data: flow, isError, refetch, isFetching } = useQuery<JobWorkflow>({ queryKey, retry: false, refetchInterval: query => query.state.data?.approvalRequest?.current ? 15_000 : false });
   const [panel, setPanel] = useState<"" | "quote" | "confirmation" | "crew" | "payment">("");
-  const [method, setMethod] = useState<"email" | "sms" | "both" | "copy">(/@/.test(lead.email || "") && !/\.local$|\.internal$/.test(lead.email || "") ? "email" : "copy");
+  const [method, setMethod] = useState<"none" | "email" | "sms" | "both" | "copy">("none");
   const [note, setNote] = useState("");
   const [consent, setConsent] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
@@ -41,6 +41,7 @@ export function JobWorkflowReport({ lead, employees, dirty, onEdit, onPayment, o
   const [crewResults, setCrewResults] = useState<Array<{recipient: string; outcome: {status: string; message?: string}}>>([]);
   const panelVersion = useRef("");
   const resume = useRef<"" | "quote" | "confirmation" | "crew" | "payment">("");
+  const openedRequest = useRef("");
   const operation = useRef(crypto.randomUUID());
   const crewOperation = useRef(crypto.randomUUID());
   const invalidate = async () => {
@@ -60,7 +61,7 @@ export function JobWorkflowReport({ lead, employees, dirty, onEdit, onPayment, o
   const preview = useMutation({ mutationFn: async (chosen: typeof method) => (await apiRequest("POST", `/api/leads/${lead.id}/quote-review`, { deliveryMethod: chosen })).json() as Promise<Review>, onSuccess: data => { setReview(data); setError(null); }, onError: e => setError(errorDetail(e)) });
   const openQuote = () => { if (dirty) { onEdit("quote"); return; } setPanel("quote"); setDelivery(undefined); setReview(null); setError(null); operation.current = crypto.randomUUID(); preview.mutate(method); };
   useEffect(() => {
-    const saved = async () => { await invalidate(); if (resume.current) { const target = resume.current; resume.current = ""; setPanel(target); if (target === "quote") { setReview(null); operation.current = crypto.randomUUID(); preview.mutate(method); } } };
+    const saved = async (event: Event) => { if ((event as CustomEvent).detail?.action === "review") resume.current = "quote"; await invalidate(); if (resume.current) { const target = resume.current; resume.current = ""; setPanel(target); if (target === "quote") { setReview(null); operation.current = crypto.randomUUID(); preview.mutate(method); } } };
     const requestReview = () => openQuote();
     const requestPayment = () => { setPanel("payment"); setPaymentAttested(false); setError(null); };
     window.addEventListener("jc:job-setup-saved", saved); window.addEventListener("jc:review-quote", requestReview); window.addEventListener("jc:record-job-payment", requestPayment);
@@ -70,18 +71,44 @@ export function JobWorkflowReport({ lead, employees, dirty, onEdit, onPayment, o
     setError(null);
     if (target === "confirmation") { setPanel("confirmation"); return; }
     if (target === "payment") { setPanel("payment"); return; }
+    // Approval needs the quote review, not the setup editor's saved estimate.
+    // Field-specific pricing repairs still belong in setup, as do unsaved edits.
+    if (target === "quote" && !field) {
+      resume.current = dirty ? "quote" : "";
+      if (dirty) { setPanel(""); onEdit("quote"); }
+      else openQuote();
+      return;
+    }
     resume.current = panel || (target === "quote" ? "quote" : "");
     setPanel("");
     onEdit(target === "crew" ? "schedule" : target, field);
   };
+  useEffect(() => {
+    if (approvalRequestId && flow && openedRequest.current !== approvalRequestId) {
+      openedRequest.current = approvalRequestId;
+      openQuote();
+    }
+  }, [approvalRequestId, flow?.version]);
+  const requestApproval = useMutation({
+    mutationFn: async () => {
+      if (!review || dirty) throw Error("Save and review the current job before requesting approval.");
+      return (await apiRequest("POST", `/api/leads/${lead.id}/request-owner-approval`, { version: review.version })).json();
+    },
+    onSuccess: async data => {
+      setPanel(""); setError(null);
+      setNotice(data.pushStatus === "sent" ? "Owner approval requested. Saved in the owner's notifications; phone push sent to the provider." : "Owner approval requested and saved in the owner's notifications. Phone push was not confirmed; the request is available in the notification bell.");
+      await invalidate();
+    },
+    onError: async error => { setError(errorDetail(error)); await invalidate(); },
+  });
   const approve = useMutation({ mutationFn: async () => {
     if (!review || dirty) throw Error("Save and review the current job before sending.");
     return (await apiRequest("POST", `/api/leads/${lead.id}/approve-and-send`, { version: review.version, reviewHash: review.reviewHash, idempotencyKey: operation.current, deliveryMethod: method, message: note, recordSmsConsent: consent, overrideReason })).json();
-  }, onSuccess: async data => { setDelivery(data.delivery); setError(data.warning ? { message: data.warning, blockers: [] } : null); await invalidate(); }, onError: async e => { setError(errorDetail(e)); await invalidate(); } });
+  }, onSuccess: async data => { setDelivery(data.approved === false ? undefined : data.delivery); if (data.approved === false) setReview(null); setError(data.warning ? { message: data.warning, blockers: [] } : null); await invalidate(); }, onError: async e => { setError(errorDetail(e)); await invalidate(); } });
   const confirm = useMutation({ mutationFn: async () => (await apiRequest("POST", `/api/leads/${lead.id}/customer-confirmation`, { version: panelVersion.current, method: agreementMethod, attested, note: agreementNote })).json(), onSuccess: async () => { setPanel(""); setError(null); setAttested(false); setNotice("Customer agreement recorded."); await invalidate(); }, onError: e => setError(errorDetail(e)) });
   const payment = useMutation({ mutationFn: async () => (await apiRequest("POST", `/api/leads/${lead.id}/mark-paid`, { dispatch: false, paymentConfirmed: paymentAttested, method: paymentMethod, expectedVersion: panelVersion.current })).json(), onSuccess: async data => { setPanel(""); setPaymentAttested(false); setNotice(data.accountingPending ? "Payment recorded. Accounting needs review; crew has not been dispatched." : "Payment recorded. Crew has not been dispatched."); await invalidate(); }, onError: e => setError(errorDetail(e)) });
   const crew = useMutation({ mutationFn: async (action: "notify" | "dispatch") => (await apiRequest("POST", `/api/leads/${lead.id}/crew-action`, { version: panelVersion.current, action, idempotencyKey: crewOperation.current })).json(), onSuccess: async data => { setCrewResults(data.notifications || []); setError(null); setNotice(data.alreadyPerformed ? "This crew action was already recorded." : "Crew action saved. Payment was unchanged."); await invalidate(); }, onError: e => setError(errorDetail(e)) });
-  const busy = preview.isPending || approve.isPending || confirm.isPending || crew.isPending || payment.isPending;
+  const busy = requestApproval.isPending || preview.isPending || approve.isPending || confirm.isPending || crew.isPending || payment.isPending;
   const primary = () => {
     setError(null);
     if (dirty) { resume.current = flow?.nextAction.key === "review" ? "quote" : ""; onEdit("quote"); return; }
@@ -121,6 +148,7 @@ export function JobWorkflowReport({ lead, employees, dirty, onEdit, onPayment, o
       {flow?.delivery && <details className="border-t px-4 py-2 sm:px-5"><summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">Quote delivery{[flow.delivery.email, flow.delivery.sms, flow.delivery.invoice].some(item => item && ["failed", "unknown", "unavailable"].includes(item.status)) ? " · needs attention" : ""}</summary><div className="space-y-2 pb-3 text-sm">{(["invoice", "email", "sms"] as const).map(channel => { const item = flow.delivery?.[channel]; return item && item.status !== "not_requested" ? <p key={channel}><span className="capitalize">{channel === "sms" ? "Text" : channel}</span>: {item.status === "sent" ? channel === "invoice" ? "Created" : "Accepted by provider" : item.status}{item.message ? ` · ${item.message}` : ""}</p> : null; })}<Button className="no-print min-h-11" variant="outline" onClick={openQuote} disabled={dirty || busy}>Review delivery</Button></div></details>}
       <footer className="no-print border-t bg-muted/20 p-4 sm:px-5">
         {isError && <div role="alert" className="mb-3 text-sm">Job readiness could not load. <Button variant="link" onClick={() => refetch()}>Retry status</Button></div>}
+        {flow?.approvalRequest?.current && <p className="mb-3 text-sm">Owner approval requested. The saved quote is waiting for review.</p>}
         {notice && <p role="status" className="mb-3 text-sm">{notice}</p>}
         {error && !panel && <div role="alert" className="mb-3"><p className="mb-2 text-sm text-red-500">{error.message}</p>{blockers(error.blockers)}</div>}
         {flow?.capabilities.manage && !["work", "closeout", "closed"].includes(flow.stage) && flow.blockers.length > 0 && <details className="mb-3"><summary className="cursor-pointer py-2 text-sm">{flow.blockers.length} item{flow.blockers.length === 1 ? "" : "s"} to finish before dispatch</summary>{blockers(flow.blockers)}</details>}
@@ -131,13 +159,14 @@ export function JobWorkflowReport({ lead, employees, dirty, onEdit, onPayment, o
         </div>
       </footer>
     </article>
-    <Dialog open={Boolean(panel)} onOpenChange={open => { if (!open && !busy) setPanel(""); }}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg"><DialogHeader><DialogTitle>{panel === "quote" ? "Review and share quote" : panel === "confirmation" ? "Record customer confirmation" : panel === "payment" ? "Record payment received" : "Crew plan"}</DialogTitle><DialogDescription>{panel === "quote" ? "Approve the exact quote below, then share it with the customer." : panel === "confirmation" ? "Record the customer's agreement to this quote, scope, and schedule." : panel === "payment" ? "Record a verified full cash or check payment. This does not dispatch the crew." : "Review the saved crew and schedule before notifying or dispatching."}</DialogDescription></DialogHeader>
+    <Dialog open={Boolean(panel)} onOpenChange={open => { if (!open && !busy) setPanel(""); }}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg"><DialogHeader><DialogTitle>{panel === "quote" ? "Review and share quote" : panel === "confirmation" ? "Record customer confirmation" : panel === "payment" ? "Record payment received" : "Crew plan"}</DialogTitle><DialogDescription>{panel === "quote" ? flow?.capabilities.approve ? "Save and approve this exact quote. Customer sharing is optional." : "Review the saved quote, then request approval from the business owner." : panel === "confirmation" ? "Record the customer's agreement to this quote, scope, and schedule." : panel === "payment" ? "Record a verified full cash or check payment. This does not dispatch the crew." : "Review the saved crew and schedule before notifying or dispatching."}</DialogDescription></DialogHeader>
       {error && <div role="alert"><p className="mb-2 text-sm text-red-500">{error.message}</p>{blockers(error.blockers)}{!error.blockers.length && panel !== "quote" && <Button variant="outline" onClick={async () => { const latest = await refetch(); panelVersion.current = latest.data?.version || ""; setAttested(false); setPaymentAttested(false); setError(null); }}>Review current details</Button>}{!error.blockers.length && panel === "quote" && <Button variant="outline" onClick={() => { operation.current = crypto.randomUUID(); setDelivery(undefined); preview.mutate(method); }}>Refresh review</Button>}</div>}
       {panel === "quote" && <>
-        {!delivery && <><Label htmlFor="workflow-delivery">Share by</Label><select id="workflow-delivery" className="min-h-11 w-full rounded-md border bg-background px-3" value={method} disabled={busy} onChange={e => { const chosen = e.target.value as typeof method; setMethod(chosen); setReview(null); operation.current = crypto.randomUUID(); preview.mutate(chosen); }}><option value="email">Email</option>{flow?.capabilities.sms && <><option value="sms">Text message</option><option value="both">Email and text message</option></>}<option value="copy">Copy quote link</option></select></>}
+        {approvalRequestId && (!flow?.approvalRequest?.current || flow.approvalRequest.id !== approvalRequestId) && <p role="status" className="text-sm text-amber-500">This approval request changed or was already handled. Review the current saved quote below.</p>}
+        {!delivery && <><Label htmlFor="workflow-delivery">Approval and sharing</Label><select id="workflow-delivery" className="min-h-11 w-full rounded-md border bg-background px-3" value={method} disabled={busy || !flow?.capabilities.approve} onChange={e => { const chosen = e.target.value as typeof method; setMethod(chosen); setReview(null); operation.current = crypto.randomUUID(); preview.mutate(chosen); }}><option value="none">Approve only — no customer message</option><option value="email">Email</option>{flow?.capabilities.sms && <><option value="sms">Text message</option><option value="both">Email and text message</option></>}<option value="copy">Copy quote link</option></select></>}
         {preview.isPending && <p role="status">Checking the saved quote…</p>}
-        {review && <><div className="rounded-lg border p-3 text-sm"><p className="font-semibold">{review.recipient.name}</p><p className="mt-1">{review.schedule.date || "Date to confirm"}{review.schedule.window ? ` · ${review.schedule.window}` : ""}</p><p className="mt-1">{review.fromAddress}{review.toAddress ? ` → ${review.toAddress}` : ""}</p><p className="mt-1 break-all text-muted-foreground">{method === "email" ? review.recipient.email : method === "sms" ? review.recipient.phone : method === "both" ? `${review.recipient.email} · ${review.recipient.phone}` : "Link for you to share"}</p></div>{quoteLines(review.quote)}
-          {!delivery && <>{blockers(review.blockers)}{!review.invoiceAvailable && <p className="text-sm text-muted-foreground">Online payment setup is pending. You can still share this quote.</p>}{["sms", "both"].includes(method) && !review.smsConsent && <label className="flex items-start gap-3 rounded-lg border p-3 text-sm"><Checkbox checked={consent} onCheckedChange={v => setConsent(v === true)}/>The customer agreed to receive this quote by text.</label>}{review.quote.requiresOwner && <div><Label htmlFor="workflow-owner-reason">Owner exception reason</Label><p className="my-2 text-sm">{review.ownerReasons.join(" ")}</p><Input id="workflow-owner-reason" value={overrideReason} onChange={e => setOverrideReason(e.target.value)}/></div>}<details><summary className="cursor-pointer py-2 text-sm">Add a personal note</summary><Textarea aria-label="Personal note" value={note} onChange={e => setNote(e.target.value)}/></details><Button className="min-h-11 bg-blue-600 text-white" onClick={() => approve.mutate()} disabled={busy || dirty || Boolean(review.blockers.length) || !flow?.capabilities.approve || (["sms", "both"].includes(method) && !review.smsConsent && !consent) || (review.quote.requiresOwner && !overrideReason.trim())}>{approve.isPending ? "Saving and sharing…" : method === "copy" ? "Approve and prepare link" : ["approved", "sent"].includes(review.quote.status) ? "Send approved quote" : "Approve and send"}</Button></>}
+        {review && <><div className="rounded-lg border p-3 text-sm"><p className="font-semibold">{review.recipient.name}</p><p className="mt-1">{review.schedule.date || "Date to confirm"}{review.schedule.window ? ` · ${review.schedule.window}` : ""}</p><p className="mt-1">{review.fromAddress}{review.toAddress ? ` → ${review.toAddress}` : ""}</p><p className="mt-1 break-all text-muted-foreground">{method === "none" ? "Approval only. No invoice or customer message." : method === "email" ? review.recipient.email : method === "sms" ? review.recipient.phone : method === "both" ? `${review.recipient.email} · ${review.recipient.phone}` : "Link for you to share"}</p></div>{quoteLines(review.quote)}{review.crew && <p className="text-sm">{review.crew.size} movers · {review.crew.hours} hours · {review.crew.selected} selected</p>}
+          {!delivery && <>{blockers(review.blockers.filter(b => b.code !== "owner_approval" || !flow?.capabilities.requestApproval))}{flow?.capabilities.requestApproval && (!review.quote.matches || !["approved", "sent"].includes(review.quote.status)) && <Button className="min-h-11" onClick={() => requestApproval.mutate()} disabled={busy || dirty || Boolean(flow.approvalRequest?.current) || review.blockers.some(b => b.code !== "owner_approval")}>{requestApproval.isPending ? "Requesting…" : flow.approvalRequest?.current ? "Awaiting owner approval" : "Request owner approval"}</Button>}{method !== "none" && !review.invoiceAvailable && <p className="text-sm text-muted-foreground">Online payment setup is pending. You can still share this quote.</p>}{["sms", "both"].includes(method) && !review.smsConsent && <label className="flex items-start gap-3 rounded-lg border p-3 text-sm"><Checkbox checked={consent} onCheckedChange={v => setConsent(v === true)}/>The customer agreed to receive this quote by text.</label>}{flow?.capabilities.approve && review.quote.requiresOwner && <div><Label htmlFor="workflow-owner-reason">Owner exception reason</Label><p className="my-2 text-sm">{review.ownerReasons.join(" ")}</p><Input id="workflow-owner-reason" value={overrideReason} onChange={e => setOverrideReason(e.target.value)}/></div>}{method !== "none" && <details><summary className="cursor-pointer py-2 text-sm">Add a personal note</summary><Textarea aria-label="Personal note" value={note} onChange={e => setNote(e.target.value)}/></details>}{flow?.capabilities.approve && <Button className="min-h-11 bg-blue-600 text-white" onClick={() => approve.mutate()} disabled={busy || dirty || Boolean(review.blockers.length) || !flow?.capabilities.approve || (["sms", "both"].includes(method) && !review.smsConsent && !consent) || (review.quote.requiresOwner && !overrideReason.trim())}>{approve.isPending ? "Saving…" : method === "none" ? "Save and approve" : method === "copy" ? "Approve and prepare link" : ["approved", "sent"].includes(review.quote.status) ? "Send approved quote" : "Approve and send"}</Button>}</>}
         </>}
         {delivery && <div role="status" className="space-y-3 rounded-lg border p-4"><p className="font-semibold text-emerald-500">Quote saved and approved</p>{(["invoice", "email", "sms"] as const).map(channel => delivery[channel]?.status !== "not_requested" && <p key={channel} className="text-sm"><span className="capitalize">{channel === "sms" ? "Text" : channel}</span>: {delivery[channel]?.status === "sent" ? channel === "invoice" ? "Created" : "Sent to provider" : delivery[channel]?.status || "Not requested"}{delivery[channel]?.message ? ` · ${delivery[channel]?.message}` : ""}</p>)}{delivery.quoteAccessUrl && <><Label htmlFor="workflow-share-link">Quote link</Label><Input id="workflow-share-link" readOnly value={delivery.quoteAccessUrl} onFocus={e => e.target.select()}/><Button variant="outline" onClick={async () => { try { await navigator.clipboard.writeText(delivery.quoteAccessUrl!); setNotice("Quote link copied. Delivery is not recorded automatically."); } catch { setNotice("Select the quote link above and copy it."); } }}>Copy link</Button></>}{[delivery.email, delivery.sms].some(d => d?.status === "failed") && <Button variant="outline" disabled={busy} onClick={() => approve.mutate()}>Retry failed delivery</Button>}<Button className="w-full" onClick={() => setPanel("")}>Return to job</Button></div>}
       </>}

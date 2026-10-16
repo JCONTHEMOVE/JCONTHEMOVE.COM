@@ -1,3 +1,4 @@
+import { OwnerApprovalRequest } from "@/components/owner-approval-request";
 import { JobWorkflowReport } from "@/components/job-workflow-report";
 import { ProjectIntakeSummary } from "@/components/project-intake-summary";
 import { manualDispatchMissingSetup } from "@shared/manualDispatchReadiness";
@@ -990,10 +991,10 @@ export default function LeadDetailPage() {
 
   const computeEffectiveCrewSize = () => Math.max(1, selectedCrewMembers.length);
 
-  const handleJobSetupSaved = () => {
+  const handleJobSetupSaved = (action?: "review") => {
     setSetupDirty(false);
     setShowJobSetup(false);
-    window.dispatchEvent(new Event("jc:job-setup-saved"));
+    window.dispatchEvent(new CustomEvent("jc:job-setup-saved", { detail: { action } }));
     queryClient.invalidateQueries({ queryKey: ["/api/leads"] });
     queryClient.invalidateQueries({ queryKey: ["/api/leads", params?.id] });
     queryClient.invalidateQueries({ queryKey: ["/api/jobs/planner"] });
@@ -1519,11 +1520,14 @@ export default function LeadDetailPage() {
         </div>
 
         {(hasAdminAccess || isEmployee && lead.workerVisibility?.pricing && ["new", "contacted", "quote_requested", "chatbot_pending", "pending_quote_approval", "quoted"].includes(statusKey)) ? <JobWorkflowReport key={lead.id} lead={lead} employees={employees} dirty={setupDirty}
+          approvalRequestId={new URLSearchParams(queryString).get("approvalRequest") || undefined}
           onEdit={openJobSetup} onVersion={setWorkflowVersion}
           onPayment={() => window.dispatchEvent(new Event("jc:record-job-payment"))}
           onCloseout={returnToCloseout}
           onStart={() => updateStatus.mutate("in_progress")} onComplete={() => updateStatus.mutate("completed")} />
           : <JobOrderTicket order={{ ...lead, customerName: lead.workerVisibility?.customerIdentity === false ? "Customer details protected" : [lead.firstName, lead.lastName].filter(Boolean).join(" ") }} detailPage viewer="crew" action={canClaimJob ? ticketAction : isEmployee && ["start", "complete"].includes(nextStep.key) ? <Button disabled={actionPending} onClick={handleNextStep}>{nextStep.button}</Button> : undefined} className="mb-4" />}
+
+        {!hasAdminAccess && isEmployee && !lead.workerVisibility?.pricing && <OwnerApprovalRequest key={lead.id} leadId={lead.id} />}
 
         {packageDraft && (
           <details open className="mb-4 rounded-xl border" data-testid="selected-package-summary"><summary className="min-h-12 cursor-pointer px-4 py-3 text-sm font-medium">Customer-selected package</summary><Card className="border-0 shadow-none">

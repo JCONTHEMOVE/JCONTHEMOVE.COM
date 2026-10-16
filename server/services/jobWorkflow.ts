@@ -84,7 +84,7 @@ export async function getJobWorkflow(leadId: string, actor: WorkflowActor) {
     delivery = { ...delivery };
     for (const row of outcomes.rows) if (["email", "sms", "invoice"].includes(row.channel)) delivery[row.channel] = { status: row.status === "pending" ? "unknown" : row.status, message: row.error || undefined, reference: row.provider_reference || undefined };
   }
-  const workflow = projectJobWorkflow({ ...state, capabilities: { approve: actor.canApproveStandard, manage: actor.manage, sms: smsConfigured() }, delivery });
+  const workflow = projectJobWorkflow({ ...state, capabilities: { approve: actor.canApproveStandard, manage: actor.manage, sms: smsConfigured(), requestApproval: !actor.manage }, delivery });
   if (!actor.manage) { workflow.delivery = undefined; workflow.payment = { ready: false, label: "Managed by staff" }; }
   return workflow;
 }
@@ -115,6 +115,76 @@ export async function reviewJobQuote(leadId: string, actor: WorkflowActor, deliv
 
 async function audit(client: Queryable, lead: any, actorId: string, note: string) {
   await client.query("INSERT INTO lead_history (lead_id, from_status, to_status, changed_by_user_id, note) VALUES ($1,$2,$2,$3,$4)", [lead.id, lead.status, actorId, note]);
+}
+
+/** Request and in-app alerts commit together. The locked saved version deduplicates
+ * retries and coworkers requesting the same quote. Push is only a wake-up hint. */
+function assertApprovalRequestAccess(lead: any, actor: WorkflowActor) {
+  const assigned = lead.assignedToUserId === actor.userId || [...(lead.crewMembers || []), ...(lead.acceptedByEmployees || [])].includes(actor.userId);
+  const quoteTask = ["new", "contacted", "quote_requested", "chatbot_pending", "pending_quote_approval", "quoted"].includes(lead.status);
+  if (!actor.manage && !assigned && !(quoteTask && (actor.canApproveStandard || actor.tier === "silver"))) throw new WorkflowError(403, "This job is outside your assigned work.");
+}
+const approvalRequestClosed = (lead: any) => Boolean(lead.archivedAt) || ["dispatched", "accepted", "in_progress", "completed", "closed", "cancelled", "archived", "customer_approved", "payout_calculated", "payout_sent"].includes(lead.status);
+
+/** Assigned coworkers may ask for review without receiving protected prices,
+ * customer information, payment data, or owner contact details. */
+export async function getOwnerApprovalRequest(leadId: string, actor: WorkflowActor) {
+  await ensureQuoteRevisionInfrastructure();
+  const state = await loadState(leadId);
+  assertApprovalRequestAccess(state.lead, actor);
+  const approved = state.quote.matches && ["approved", "sent"].includes(state.quote.status);
+  const current = !approved && state.lead.jobPlanDetails?.ownerApprovalRequest?.version === state.version;
+  return { version: state.version, approved, current, canRequest: !approved && !approvalRequestClosed(state.lead) && state.quote.total > 0 };
+}
+
+export async function requestOwnerApproval(leadId: string, actor: WorkflowActor, version: string) {
+  const review = await reviewJobQuote(leadId, actor, "none");
+  assertApprovalRequestAccess(review.lead, actor);
+  if (review.version !== version) throw new WorkflowError(409, "The job changed. Review the current quote before requesting approval.");
+  const blockers = review.blockers.filter(b => b.code !== "owner_approval");
+  if (blockers.length) throw new WorkflowError(409, "The owner needs to finish the saved quote before approval can be requested.", actor.manage || actor.canApproveStandard ? blockers : []);
+  const client = await pool.connect();
+  let request: { id: string; version: string; requestedAt: string; requestedByUserId: string; pushStatus?: string };
+  let recipients: string[] = [];
+  let message = "";
+  let alreadyRequested = false;
+  try {
+    await client.query("BEGIN");
+    const state = await loadState(leadId, client, true);
+    assertApprovalRequestAccess(state.lead, actor);
+    if (state.version !== version) throw new WorkflowError(409, "The job changed. Review it again before requesting approval.");
+    if (state.quote.matches && ["approved", "sent"].includes(state.quote.status)) throw new WorkflowError(409, "This quote is already approved.");
+    if (approvalRequestClosed(state.lead)) throw new WorkflowError(409, "This job is no longer awaiting quote approval.");
+    const prior = state.lead.jobPlanDetails?.ownerApprovalRequest;
+    if (prior?.version === version) { request = prior; alreadyRequested = true; }
+    else {
+      const owners = await client.query("SELECT id FROM users WHERE role='business_owner' OR (email='upmichiganstatemovers@gmail.com' AND (role='admin' OR (role='employee' AND (is_approved=true OR status IN ('active','approved')))))");
+      recipients = owners.rows.map((owner: { id: string }) => owner.id);
+      if (!recipients.length) throw new WorkflowError(409, "No business owner account is available to receive this request.");
+      request = { id: crypto.randomUUID(), version, requestedAt: new Date().toISOString(), requestedByUserId: actor.userId, pushStatus: "pending" };
+      message = `JC-${state.lead.orderNumber}: $${state.quote.total.toFixed(2)} · ${state.lead.crewSize || 0} movers · ${state.lead.confirmedHours || 0} hours · ${state.lead.confirmedDate || state.lead.moveDate || "Date to arrange"} · ${state.lead.arrivalWindow || "Time to arrange"} Central. Review and approve this saved quote.`;
+      const data = { type: "quote_approval_request", leadId, requestId: request.id, url: `/lead/${encodeURIComponent(leadId)}?approvalRequest=${encodeURIComponent(request.id)}` };
+      for (const userId of recipients) await client.query("INSERT INTO notifications(user_id,type,title,message,data) VALUES($1,'quote_approval_request','Quote needs your approval',$2,$3::jsonb)", [userId, message, JSON.stringify(data)]);
+      await client.query("UPDATE leads SET job_plan_details=COALESCE(job_plan_details,'{}'::jsonb) || $2::jsonb WHERE id=$1", [leadId, JSON.stringify({ ownerApprovalRequest: request })]);
+      await audit(client, state.lead, actor.userId, `Owner approval requested for quote revision ${state.quote.revision}.`);
+    }
+    await client.query("COMMIT");
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+  if (!alreadyRequested) {
+    let pushStatus = "unknown";
+    try {
+      const { notificationService } = await import("./notification");
+      const outcomes = await Promise.all(recipients.map(userId => notificationService.sendPushNotification(userId, {
+        title: "Quote needs your approval", body: message, tag: `quote-approval-${request.id}`, requireInteraction: true,
+        data: { url: `/lead/${encodeURIComponent(leadId)}?approvalRequest=${encodeURIComponent(request.id)}` },
+      })));
+      pushStatus = outcomes.every(outcome => outcome.status === "sent") ? "sent" : outcomes.some(outcome => outcome.status === "failed") ? "failed" : "skipped";
+    } catch { /* The durable in-app request is still available; do not resend on retry. */ }
+    // Never overwrite a newer request if the quote changed during push delivery.
+    await pool.query("UPDATE leads SET job_plan_details=jsonb_set(job_plan_details,'{ownerApprovalRequest,pushStatus}',$3::jsonb) WHERE id=$1 AND job_plan_details->'ownerApprovalRequest'->>'id'=$2", [leadId, request.id, JSON.stringify(pushStatus)]).catch(() => {});
+    request.pushStatus = pushStatus;
+  }
+  return { requested: true, alreadyRequested, requestId: request.id, inApp: "sent", pushStatus: request.pushStatus || "unknown" };
 }
 
 /** Called from the setup transaction through a query adapter. */
@@ -150,7 +220,7 @@ export function readWorkflowQuoteToken(token: string) {
   } catch { return null; }
 }
 
-export async function approveAndSend(leadId: string, actor: WorkflowActor, input: { version: string; reviewHash: string; idempotencyKey: string; deliveryMethod: "email" | "sms" | "both" | "copy"; message?: string; recordSmsConsent?: boolean; overrideReason?: string }) {
+export async function approveAndSend(leadId: string, actor: WorkflowActor, input: { version: string; reviewHash: string; idempotencyKey: string; deliveryMethod: "none" | "email" | "sms" | "both" | "copy"; message?: string; recordSmsConsent?: boolean; overrideReason?: string }) {
   if (!actor.canApproveStandard) throw new WorkflowError(403, "Quote approval authority is required.");
   await ensureRegionalAutomationSchema();
   const operationKey = `job-quote:${leadId}:${input.idempotencyKey}`;
@@ -194,6 +264,16 @@ export async function approveAndSend(leadId: string, actor: WorkflowActor, input
 }
 
 async function finishQuoteDelivery(leadId: string, actor: WorkflowActor, input: { deliveryMethod: string; message?: string }, operationKey: string, quoteId: string) {
+  // Honor the original operation on retries. Approval alone must never create
+  // an invoice, send a message, record customer agreement, or dispatch a crew.
+  const operation = (await pool.query("SELECT payload FROM customer_job_events WHERE event_key=$1", [operationKey])).rows[0];
+  if (operation?.payload.deliveryMethod === "none") {
+    const workflow = await getJobWorkflow(leadId, actor);
+    const approved = workflow.quote.id === quoteId && workflow.quote.matches && ["approved", "sent"].includes(workflow.quote.status);
+    return { saved: true, approved, quoteRevisionId: quoteId,
+      warning: approved ? undefined : "The earlier quote was approved, but this job has changed. Review the current quote.",
+      delivery: { email: { status: "not_requested" as const }, sms: { status: "not_requested" as const }, invoice: { status: "not_requested" as const } }, workflow };
+  }
   try { return await deliverApprovedQuote(leadId, actor, input, operationKey, quoteId); }
   catch (error) {
     if (error instanceof WorkflowError) return { saved: true, approved: true, quoteRevisionId: quoteId, warning: error.message, delivery: { email: { status: "not_requested" as const }, sms: { status: "not_requested" as const }, invoice: { status: "not_requested" as const } }, workflow: await getJobWorkflow(leadId, actor).catch(() => undefined) };
