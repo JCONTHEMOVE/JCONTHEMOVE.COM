@@ -1,3 +1,5 @@
+import { PUBLIC_BOOKING_REQUEST_SCHEMA, publicRequestHash } from "./services/publicBookingRequests";
+import { recommendMove } from "@shared/homepageBooking";
 import { createSquareWebhookHandler } from './squareWebhook';
 import { recordJobRevenue } from "./services/jobRevenueAllocation";
 import { creditJobCash } from "./services/jobCashCredit";
@@ -5692,6 +5694,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
     async (req, res) => {
       try {
         const parsed = quickRequestSchema.parse(req.body);
+        if (parsed.requestKey) await pool.query(PUBLIC_BOOKING_REQUEST_SCHEMA);
         const phoneDigits = parsed.phone.replace(/\D/g, "");
         const service = QUICK_REQUEST_SERVICE_MAP[parsed.serviceCode] || {
           serviceType: parsed.serviceCode,
@@ -5709,6 +5712,8 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         const projectIntake = projectRequest ? projectIntakeSchema.parse(projectIntakeInput(parsed)) : null;
         const leadSource = projectRequest ? "project_request" : scheduledRequest ? "scheduled_request" : "quick_request";
         const detailsText = [
+          parsed.movePlan ? `Move plan: ${JSON.stringify({ ...parsed.movePlan, recommendation: recommendMove(parsed.movePlan) })}` : "",
+          parsed.callbackWhen ? `Customer timing preference: ${parsed.callbackWhen} (${parsed.timeZone || "America/Chicago"})` : "",
           projectIntake ? "[PROJECT REQUEST - CONFIRMATION REQUIRED]" : "",
           projectIntake ? projectScheduleLabel(projectIntake) : "",
           projectIntake?.additionalServices.length ? "Also interested in: " + projectIntake.additionalServices.map(projectServiceLabel).join(", ") : "",
@@ -5749,12 +5754,13 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
           // was deterministic, so retrying the same number could collide with
           // a production uniqueness constraint. This stays synthetic but is
           // unique for every lead.
-          email: scheduledRequest || (projectRequest && parsed.email)
+          email: scheduledRequest || ((projectRequest || parsed.requestKey) && parsed.email)
             ? parsed.email
             : `quick-request+${phoneDigits || "callback"}-${crypto.randomUUID()}@jconthemove.local`,
           phone: parsed.phone,
           serviceType: service.serviceType,
-          fromAddress: scheduledRequest || projectRequest ? parsed.serviceAddress : "Callback requested",
+          createdByUserId: parsed.requestKey ? (req.session as any)?.userId || req.user?.id || null : undefined,
+          fromAddress: scheduledRequest || projectRequest || parsed.requestKey ? parsed.serviceAddress : "Callback requested",
           toAddress: projectIntake?.destinationAddress || "",
           moveDate: "",
           propertySize: scheduledRequest
@@ -5775,8 +5781,9 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
           urgency: "normal",
           source: leadSource,
           promoCode: normalizedPromoCode || null,
-          quoteSnapshot: marketingCampaignId || Object.keys(marketingTracking).length
+          quoteSnapshot: parsed.movePlan || marketingCampaignId || Object.keys(marketingTracking).length
             ? {
+                ...(parsed.movePlan ? { homepageBooking: { movePlan: parsed.movePlan, recommendation: recommendMove(parsed.movePlan), timeZone: parsed.timeZone, callbackWhen: parsed.callbackWhen } } : {}),
                 marketingCampaignId: marketingCampaignId || null,
                 marketingTracking,
               }
@@ -5786,6 +5793,15 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
 
         // The transaction lock serializes identical retries across app instances.
         const result = await db.transaction(async tx => {
+          if (parsed.requestKey) {
+            const hash = publicRequestHash(parsed.requestKey);
+            await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`public-booking:${hash}`}))`);
+            const existing = await tx.execute(sql`SELECT lead_id FROM public_booking_requests WHERE key_hash=${hash}`);
+            if (existing.rows[0]) {
+              const [lead] = await tx.select().from(leads).where(eq(leads.id, String(existing.rows[0].lead_id))).limit(1);
+              return { lead, duplicate: true };
+            }
+          }
           await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${leadSource}), hashtext(${phoneDigits}))`);
         const recentQuickRequest = await tx.select()
           .from(leads)
@@ -5798,15 +5814,21 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
           ))
           .orderBy(desc(leads.createdAt))
           .limit(1);
-          if (recentQuickRequest[0]) return { lead: recentQuickRequest[0], duplicate: true };
+          if (recentQuickRequest[0]) {
+            // A new capability may not attach itself to somebody else's earlier
+            // callback just because their phone/details happen to match.
+            if (!parsed.requestKey) return { lead: recentQuickRequest[0], duplicate: true };
+          }
           const [lead] = await tx.insert(leads).values({ ...leadData, status: "quote_requested" }).returning();
           if (!lead) throw new Error("Quick request lead insert returned no record");
+          if (parsed.requestKey) await tx.execute(sql`INSERT INTO public_booking_requests(key_hash,lead_id) VALUES(${publicRequestHash(parsed.requestKey)},${lead.id})`);
           return { lead, duplicate: false };
         });
         const lead = result.lead;
 
 
         if (result.duplicate) {
+          if (parsed.requestKey) return res.status(200).json({ success: true, submitted: true, duplicate: true });
           const existingLead = lead;
           const existingSchedule = scheduledRequest
             ? await import("./services/jcOperations").then(async ({ createLeadScheduleRequest, rotateScheduleManageToken }) => (
@@ -6020,7 +6042,7 @@ export async function registerRoutes(app: Express, httpServer: Server = createSe
         await emitJobEvent("quote_requested", lead, {
           actorId: creatorUserId,
           source: leadSource,
-          ...(projectRequest ? { ownerReviewOnly: true } : {}),
+          ...(projectRequest || parsed.requestType === "callback" ? { ownerReviewOnly: true } : {}),
           extra: {
             displayOrderNumber: formatOrderNumber(lead.orderNumber),
             serviceCode: parsed.serviceCode,
